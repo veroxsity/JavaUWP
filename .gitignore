@@ -1,0 +1,67 @@
+# Build outputs
+/PackageContent/
+/MC_Java_*.appx
+/MC.Xbox/*.obj
+/MC.Xbox/*.exe
+/glfw_shim/*.obj
+/glfw_shim/*.lib
+/glfw_shim/*.exp
+/glfw_shim/*.dll
+/compat_mod/build/
+
+# Local IDE / workspace state
+/.vs/
+/.local/
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+
+# Logs and runtime output
+/logs/
+*.log
+*.log.gz
+/java_output.log
+/mc_launch.log
+/glfw_uwp.log
+/hwnd.txt
+
+# Certificates / signed artifacts
+*.pfx
+*.p12
+
+# Downloaded or generated game/runtime content
+/gameDir/
+/assets/
+/libraries/
+/1.12.2/
+/natives/
+/natives-1.21/
+/fabric-installer.jar
+
+# Packaged / bundled runtimes
+/jre/
+/PackageContent/jre/
+
+# Patch scratch directories
+/patch/glfw_jar_tmp/
+/patch/jar_tmp/
+/patch/tmp/
+/patch/tmp2/
+/patch/orig/
+/patch/orig_class/
+/patch/sigtmp/
+/patch/logcfg/
+/patch/search_mc/
+/patch/*.jar
+/patch/user32.dll
+/patch/user32_shim.obj
+
+# Python
+__pycache__/
+*.pyc
+
+# Local-only docs and notes
+/PLAN.md
+/fix_doc.md
+/run_fabric.ps1

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Package IgnorableNamespaces="uap mp rescap build"
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:build="http://schemas.microsoft.com/developer/appx/2015/build">
+
+  <Identity Name="BanditVault.JavaPort" Publisher="CN=BanditVault" Version="1.0.0.0" ProcessorArchitecture="x64"/>
+  <mp:PhoneIdentity PhoneProductId="a1b2c3d4-0000-0000-0000-000000000002" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+
+  <Properties>
+    <DisplayName>Java Port</DisplayName>
+    <PublisherDisplayName>BanditVault</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.15063.0" MaxVersionTested="10.0.26100.0"/>
+    <PackageDependency Name="Microsoft.VCLibs.140.00" MinVersion="14.0.0.0" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"/>
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="EN-US"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="MC.Xbox.exe" EntryPoint="MC.App">
+      <uap:VisualElements
+        DisplayName="Java Port"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Description="Java game port"
+        BackgroundColor="transparent">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#000000"/>
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient"/>
+    <Capability Name="internetClientServer"/>
+    <Capability Name="privateNetworkClientServer"/>
+    <rescap:Capability Name="runFullTrust"/>
+    <rescap:Capability Name="broadFileSystemAccess"/>
+    <rescap:Capability Name="expandedResources"/>
+  </Capabilities>
+
+</Package>

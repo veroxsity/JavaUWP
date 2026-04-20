@@ -62,11 +62,7 @@ function Resolve-RetroArchDir {
         if (-not (Test-Path $root)) { continue }
 
         $candidate = Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
-            Where-Object {
-                Test-Path (Join-Path $_.FullName "libEGL.dll") -and
-                Test-Path (Join-Path $_.FullName "opengl32.dll") -and
-                Test-Path (Join-Path $_.FullName "libgallium_wgl.dll")
-            } |
+            Where-Object { (Test-Path (Join-Path $_.FullName "libEGL.dll")) -and (Test-Path (Join-Path $_.FullName "opengl32.dll")) -and (Test-Path (Join-Path $_.FullName "libgallium_wgl.dll")) } |
             Select-Object -First 1
         if ($candidate) {
             return $candidate.FullName
@@ -152,21 +148,33 @@ if (Test-Path $jnaJar) {
 }
 
 Write-Host "Injecting GLFW shim into LWJGL JAR..."
-$glfwJar = Join-Path $pkg "game\libraries\org\lwjgl\lwjgl-glfw\3.3.3\lwjgl-glfw-3.3.3-natives-windows.jar"
-$jarTmpDir = Join-Path $root "patch\glfw_jar_tmp"
-$shimDll = Join-Path $root "glfw_shim\glfw.dll"
-$glfwInJar = Get-ChildItem -Recurse $jarTmpDir -Filter "glfw.dll" | Select-Object -First 1
-if ($glfwInJar) {
-    Copy-Item $shimDll $glfwInJar.FullName -Force
-    Write-Host "  Replaced $($glfwInJar.FullName)"
-    $jarExe = Join-Path $pkg "jre\bin\jar.exe"
-    if (-not (Test-Path $jarExe)) { $jarExe = "jar" }
+$glfwJar  = Join-Path $pkg "game\libraries\org\lwjgl\lwjgl-glfw\3.3.3\lwjgl-glfw-3.3.3-natives-windows.jar"
+$shimDll  = Join-Path $root "glfw_shim\glfw.dll"
+$jarExe   = Join-Path $pkg "jre\bin\jar.exe"
+if (-not (Test-Path $jarExe)) { $jarExe = "jar" }
+
+if (Test-Path $glfwJar) {
+    # Extract JAR into a fresh temp dir, replace glfw.dll, repack
+    $jarTmpDir = Join-Path $root "patch\glfw_jar_tmp"
+    Remove-Item -Recurse -Force $jarTmpDir -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $jarTmpDir | Out-Null
     Push-Location $jarTmpDir
-    & $jarExe cf $glfwJar .
+    & $jarExe xf $glfwJar
     Pop-Location
-    Write-Host "  JAR repacked: $glfwJar"
+
+    $glfwInJar = Get-ChildItem -Recurse $jarTmpDir -Filter "glfw.dll" | Select-Object -First 1
+    if ($glfwInJar) {
+        Copy-Item $shimDll $glfwInJar.FullName -Force
+        Write-Host "  Replaced $($glfwInJar.FullName)"
+        Push-Location $jarTmpDir
+        & $jarExe cf $glfwJar .
+        Pop-Location
+        Write-Host "  JAR repacked: $glfwJar"
+    } else {
+        Write-Warning "  glfw.dll entry not found inside JAR after extraction"
+    }
 } else {
-    Write-Warning "  glfw.dll not found in $jarTmpDir - skipping JAR injection"
+    Write-Warning "  LWJGL GLFW JAR not found: $glfwJar"
 }
 Copy-Item $shimDll (Join-Path $pkg "natives\glfw.dll") -Force
 

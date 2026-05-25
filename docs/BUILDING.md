@@ -127,7 +127,7 @@ $javaArgs = @(
 )
 & "$env:JAVA_HOME\bin\java.exe" @javaArgs
 ```
-This generates the minecraft assets so the build script doesn't crash.
+This generates the remaining missing files so the build script doesn't crash.
 
 ## Build Package
 

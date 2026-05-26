@@ -19,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <fstream>
 
 #include "runtime_config.h"
 
@@ -323,6 +324,69 @@ static std::wstring GetEnvVarString(const wchar_t* name) {
     return value;
 }
 
+struct LaunchAuthConfig {
+    std::string username = "DevPlayer";
+    std::string uuid = "00000000-0000-0000-0000-000000000000";
+    std::string accessToken = "0";
+};
+
+static std::string ExtractJsonStringValue(const std::string& content, const char* key) {
+    if (!key || !*key) return {};
+    const std::string needle = std::string("\"") + key + "\"";
+    const size_t keyPos = content.find(needle);
+    if (keyPos == std::string::npos) return {};
+
+    size_t colonPos = content.find(':', keyPos + needle.size());
+    if (colonPos == std::string::npos) return {};
+    size_t valueStart = content.find('"', colonPos + 1);
+    if (valueStart == std::string::npos) return {};
+    ++valueStart;
+
+    std::string value;
+    for (size_t i = valueStart; i < content.size(); ++i) {
+        const char c = content[i];
+        if (c == '\\') {
+            if (i + 1 < content.size()) {
+                value.push_back(content[i + 1]);
+                ++i;
+            }
+            continue;
+        }
+        if (c == '"') {
+            return value;
+        }
+        value.push_back(c);
+    }
+
+    return {};
+}
+
+static LaunchAuthConfig LoadLaunchAuthConfig(const std::wstring& path) {
+    LaunchAuthConfig config;
+    std::ifstream file(path);
+    if (!file.good()) {
+        WriteLogF(L"Auth config not found at %s; using defaults", path.c_str());
+        return config;
+    }
+
+    const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (content.empty()) {
+        WriteLogF(L"Auth config empty at %s; using defaults", path.c_str());
+        return config;
+    }
+
+    const std::string username = ExtractJsonStringValue(content, "username");
+    const std::string uuid = ExtractJsonStringValue(content, "uuid");
+    const std::string accessToken = ExtractJsonStringValue(content, "accessToken");
+
+    if (!username.empty()) config.username = username;
+    if (!uuid.empty()) config.uuid = uuid;
+    if (!accessToken.empty()) config.accessToken = accessToken;
+
+    WriteLogF(L"Loaded auth config from %s", path.c_str());
+    return config;
+}
+
 static bool RedirectStdStreams(const std::wstring& path) {
     int fd = -1;
     if (_wsopen_s(&fd, path.c_str(), _O_CREAT | _O_APPEND | _O_WRONLY | _O_TEXT,
@@ -516,6 +580,7 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const std::wstring lwjglTmpDir = exeDir;
     const std::wstring logConfigPath = gameDir + L"\\log_configs\\client-uwp.xml";
     const std::wstring fabricLogPath = gameDir + L"\\logs\\fabric-loader.log";
+    const LaunchAuthConfig authConfig = LoadLaunchAuthConfig(exeDir + L"\\launch_auth.json");
 
     EnsureDirectoryTree(gameDir + L"\\logs");
     EnsureDirectoryTree(gameDir + L"\\crash-reports");
@@ -566,13 +631,13 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Dlog4j.configurationFile=" + w2a(fwd(logConfigPath)));
 
     const std::vector<std::string> appArgs = {
-        "--username", "DevPlayer",
+        "--username", authConfig.username,
         "--version", kFabricLaunchVersion,
         "--gameDir", w2a(fwd(gameDir)),
         "--assetsDir", w2a(fwd(assetsDir)),
         "--assetIndex", kMinecraftAssetIndex,
-        "--uuid", "00000000-0000-0000-0000-000000000000",
-        "--accessToken", "0",
+        "--uuid", authConfig.uuid,
+        "--accessToken", authConfig.accessToken,
         "--versionType", "release"
     };
 

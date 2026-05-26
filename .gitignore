@@ -70,3 +70,6 @@ __pycache__/
 
 .local/
 *.appx
+
+# Local auth config
+/MC.Xbox/launch_auth.json

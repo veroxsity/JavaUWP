@@ -108,8 +108,8 @@ public abstract class FabricLauncherBase implements FabricLauncher {
         try {
             Class<?> mixinEnvironmentClass = Class.forName("org.spongepowered.asm.mixin.MixinEnvironment");
             Class<?> phaseClass = Class.forName("org.spongepowered.asm.mixin.MixinEnvironment$Phase");
-            Object initPhase = Enum.valueOf((Class<Enum>) phaseClass.asSubclass(Enum.class), "INIT");
-            Object defaultPhase = Enum.valueOf((Class<Enum>) phaseClass.asSubclass(Enum.class), "DEFAULT");
+            Object initPhase = phaseClass.getField("INIT").get(null);
+            Object defaultPhase = phaseClass.getField("DEFAULT").get(null);
             Method m = mixinEnvironmentClass.getDeclaredMethod("gotoPhase", phaseClass);
             m.setAccessible(true);
             m.invoke(null, initPhase);

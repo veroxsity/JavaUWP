@@ -15,6 +15,7 @@ output\MC_Java_1.0.0.0.appx
 - Windows 10 or Windows 11 SDK.
 - JDK 21 or newer. Set `JAVA_HOME` if auto detection does not find it.
 - Python 3 with Pillow.
+- Desktop install of Git `https://git-scm.com/install/windows`
 - Fabric installer JAR at `staging\cache\tools\fabric-installer.jar`.
 - Minecraft native DLLs in `staging\cache\natives-1.21`.
 - Mesa UWP runtime DLLs in `mesa-runtime\`, or another folder passed to the build.
@@ -110,7 +111,6 @@ To obtain those, use the official Minecraft launcher, create a 1.21.11 instance,
 ```text
 glfw.dll
 jemalloc.dll
-jna13953121187917853598.dll
 lwjgl.dll
 lwjgl_opengl.dll
 lwjgl_stb.dll
@@ -173,6 +173,8 @@ staging\cache\gameDir\.fabric\remappedJars\minecraft-1.21.11-0.19.2\client-inter
 staging\cache\assets\indexes\29.json
 staging\cache\natives-1.21\
 ```
+
+If all of those are there, download Fabric API, Controlify and YetAnotherConfigLib, and put the .jar files into `staging\cache\gameDir\mods`
 
 ## Patch Fabric Loader
 

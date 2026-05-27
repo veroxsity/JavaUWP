@@ -45,7 +45,10 @@ save(os.path.join(assets, "Square44x44Logo.png"), resize_cover(icon, 44, 44))
 save(os.path.join(assets, "Square150x150Logo.png"), resize_cover(icon, 150, 150))
 save(os.path.join(assets, "Wide310x150Logo.png"), resize_contain(icon, 310, 150))
 
-splash = Image.new("RGBA", (620, 300), (0, 0, 0, 255))
-draw = ImageDraw.Draw(splash)
-draw.text((260, 140), "Java Port", fill=(255, 255, 255, 255))
-save(os.path.join(assets, "SplashScreen.png"), splash)
+splash_source = os.path.join(repo, "MC.Xbox", "Assets", "SplashScreen.png")
+
+if not os.path.isfile(splash_source):
+    raise FileNotFoundError(f"Splash source not found: {splash_source}")
+
+splash = Image.open(splash_source).convert("RGBA")
+save(os.path.join(assets, "SplashScreen.png"), resize_cover(splash, 620, 300))

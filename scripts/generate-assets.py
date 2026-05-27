@@ -51,4 +51,4 @@ if not os.path.isfile(splash_source):
     raise FileNotFoundError(f"Splash source not found: {splash_source}")
 
 splash = Image.open(splash_source).convert("RGBA")
-save(os.path.join(assets, "SplashScreen.png"), resize_cover(splash, 620, 300))
+save(os.path.join(assets, "SplashScreen.png"), resize_cover(splash, 1240, 600))

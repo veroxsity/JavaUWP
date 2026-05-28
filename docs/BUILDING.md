@@ -77,6 +77,40 @@ $env:MESA_UWP_DIR = "C:\path\to\mesa-runtime"
 
 `RETROARCH_UWP_DIR` is still accepted as a fallback search path. RetroArch is not required.
 
+## Xbox One graphics runtime
+
+Series consoles keep using the Mesa runtime above. Xbox One can use a separate
+runtime packaged under `graphics\xboxone\`. The repo-level source folder is:
+
+```text
+xboxone-runtime\
+```
+
+You can use a different source folder with:
+
+```powershell
+.\build.ps1 -XboxOneGraphicsRuntimeDir "C:\path\to\xboxone-graphics-runtime"
+```
+
+Or:
+
+```powershell
+$env:XBOX_ONE_GRAPHICS_RUNTIME_DIR = "C:\path\to\xboxone-graphics-runtime"
+```
+
+That folder must contain at least:
+
+```text
+opengl32.dll
+libEGL.dll
+libGLESv2.dll
+```
+
+The RetroArch Xbox One package provides ANGLE `libEGL.dll` and `libGLESv2.dll`,
+but not `opengl32.dll`. A UWP-built MobileGlues `opengl32.dll` is expected to
+fill that role. If the Xbox One runtime is incomplete, the build still succeeds
+and the app falls back to the Series/Mesa path at runtime.
+
 ## Fresh setup
 
 Create the local cache folders and place the Fabric installer here:

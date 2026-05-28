@@ -1,6 +1,7 @@
 # build.ps1 - Build and package MC Java UWP
 param(
     [string]$MesaRuntimeDir = $env:MESA_UWP_DIR,
+    [string]$XboxOneGraphicsRuntimeDir = $env:XBOX_ONE_GRAPHICS_RUNTIME_DIR,
     [string]$McVersion,
     [string]$FabricLoader,
     [string]$AssetIndex,
@@ -290,6 +291,8 @@ Write-Host "=== Assembling PackageContent ==="
 Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "Assets") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "natives") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg "graphics\mesa") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg "graphics\xboxone") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "assets") | Out-Null
 # runtime/ holds the immutable game stack (libraries, versions, fabric remapped
 # jars, bundled mods, log configs). Writable state (saves, mods folder,
@@ -379,7 +382,30 @@ foreach ($dll in Get-MesaRuntimeDllNames) {
     if (Test-Path $source) {
         Copy-Item $source (Join-Path $pkg $dll) -Force
         Copy-Item $source (Join-Path $pkg "natives\$dll") -Force
+        Copy-Item $source (Join-Path $pkg "graphics\mesa\$dll") -Force
         Write-Host "Mesa: $dll"
+    }
+}
+
+Write-Host "Copying Xbox One graphics runtime..."
+$xboxOneRuntime = Resolve-XboxOneGraphicsRuntimeDir -XboxOneGraphicsRuntimeDir $XboxOneGraphicsRuntimeDir
+if ($xboxOneRuntime) {
+    Write-Host "Xbox One graphics runtime source: $xboxOneRuntime"
+    foreach ($dll in Get-XboxOneGraphicsRuntimeDllNames) {
+        $source = Join-Path $xboxOneRuntime $dll
+        if (Test-Path $source) {
+            Copy-Item $source (Join-Path $pkg "graphics\xboxone\$dll") -Force
+            Write-Host "Xbox One graphics: $dll"
+        }
+    }
+} else {
+    $partialXboxOneRuntime = @($XboxOneGraphicsRuntimeDir, $env:XBOX_ONE_GRAPHICS_RUNTIME_DIR, (Get-ConfigPath "XboxOneGraphicsRuntimeDir")) |
+        Where-Object { $_ -and (Test-Path $_) } |
+        Select-Object -First 1
+    if ($partialXboxOneRuntime) {
+        Write-Warning "Xbox One graphics runtime found at '$partialXboxOneRuntime', but it is missing opengl32.dll, libEGL.dll, or libGLESv2.dll. Package will keep the Series/Mesa runtime only until a MobileGlues opengl32.dll is added."
+    } else {
+        Write-Warning "Xbox One graphics runtime not found. Set -XboxOneGraphicsRuntimeDir or XBOX_ONE_GRAPHICS_RUNTIME_DIR after building/adding MobileGlues opengl32.dll."
     }
 }
 

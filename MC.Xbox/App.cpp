@@ -23,6 +23,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <functional>
 #include <cmath>
 #include <d2d1_1.h>
@@ -35,6 +36,7 @@
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Security.Credentials.h>
+#include <winrt/Windows.Security.ExchangeActiveSyncProvisioning.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Web.Http.h>
 #include <winrt/Windows.Web.Http.Headers.h>
@@ -241,7 +243,9 @@ static bool IsLocalRuntimeSeedCurrent(const std::wstring& packageDir, const std:
     const bool hasGame = GetFileAttributesW((localDir + L"\\game").c_str()) != INVALID_FILE_ATTRIBUTES;
     const bool hasAssets = GetFileAttributesW((localDir + L"\\assets").c_str()) != INVALID_FILE_ATTRIBUTES;
     const bool hasNatives = GetFileAttributesW((localDir + L"\\natives").c_str()) != INVALID_FILE_ATTRIBUTES;
-    return hasGame && hasAssets && hasNatives;
+    const bool hasGraphics = GetFileAttributesW((localDir + L"\\graphics").c_str()) != INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW((localDir + L"\\natives\\opengl32.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+    return hasGame && hasAssets && hasNatives && hasGraphics;
 }
 
 static void MarkLocalRuntimeSeedCurrent(const std::wstring& packageDir, const std::wstring& localDir) {
@@ -317,6 +321,7 @@ static bool SeedLocalRuntime(
         progress(L"Copying native libraries", L"Preparing graphics and input runtime", 0.84f);
     }
     CopyDirectoryContentsIfNeeded(packageDir + L"\\natives", localDir + L"\\natives");
+    CopyDirectoryContentsIfNeeded(packageDir + L"\\graphics", localDir + L"\\graphics");
     if (progress) {
         progress(L"Finalizing runtime", L"Writing launch configuration", 0.96f);
     }
@@ -444,6 +449,58 @@ static std::wstring GetEnvVarString(const wchar_t* name) {
     if (GetEnvironmentVariableW(name, value.data(), len) == 0) return std::wstring();
     if (!value.empty() && value.back() == L'\0') value.pop_back();
     return value;
+}
+
+static bool ContainsInsensitive(const std::wstring& value, const wchar_t* needle) {
+    if (!needle || !*needle) return false;
+
+    std::wstring haystack = value;
+    std::wstring target = needle;
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
+        [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+    std::transform(target.begin(), target.end(), target.begin(),
+        [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+    return haystack.find(target) != std::wstring::npos;
+}
+
+static std::wstring DetectGraphicsRuntimeName() {
+    const std::wstring overrideValue = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");
+    if (!overrideValue.empty()) {
+        WriteLogF(L"Graphics runtime override: %s", overrideValue.c_str());
+        return overrideValue;
+    }
+
+    try {
+        using namespace winrt::Windows::Security::ExchangeActiveSyncProvisioning;
+        EasClientDeviceInformation info;
+        const std::wstring manufacturer = info.SystemManufacturer().c_str();
+        const std::wstring productName = info.SystemProductName().c_str();
+        const std::wstring sku = info.SystemSku().c_str();
+        const std::wstring friendlyName = info.FriendlyName().c_str();
+        const std::wstring probe = manufacturer + L" " + productName + L" " + sku + L" " + friendlyName;
+
+        WriteLogF(L"Device manufacturer: %s", manufacturer.c_str());
+        WriteLogF(L"Device product: %s", productName.c_str());
+        WriteLogF(L"Device SKU: %s", sku.c_str());
+        WriteLogF(L"Device friendly name: %s", friendlyName.c_str());
+
+        if (ContainsInsensitive(probe, L"xbox one") ||
+            ContainsInsensitive(probe, L"xboxone") ||
+            ContainsInsensitive(probe, L"durango")) {
+            return L"xboxone";
+        }
+
+        if (ContainsInsensitive(probe, L"xbox series") ||
+            ContainsInsensitive(probe, L"scarlett") ||
+            ContainsInsensitive(probe, L"anaconda") ||
+            ContainsInsensitive(probe, L"lockhart")) {
+            return L"mesa";
+        }
+    } catch (...) {
+        WriteLog(L"Device graphics runtime detection failed; defaulting to Mesa");
+    }
+
+    return L"mesa";
 }
 
 struct LaunchAuthConfig {
@@ -2269,6 +2326,11 @@ public:
         EnsureDirectoryTree(g_logDir);
         SetCurrentDirectoryW(exeDir.c_str());
         SetEnvironmentVariableW(L"MC_RUNTIME_DIR", exeDir.c_str());
+        const std::wstring graphicsRuntime = DetectGraphicsRuntimeName();
+        SetEnvironmentVariableW(L"MC_GRAPHICS_RUNTIME", graphicsRuntime.c_str());
+        const std::wstring mobileGluesDir = exeDir + L"\\mobileglues";
+        EnsureDirectoryTree(mobileGluesDir);
+        SetEnvironmentVariableW(L"MG_DIR_PATH", mobileGluesDir.c_str());
 
         wchar_t lp[MAX_PATH];
         swprintf_s(lp, L"%s\\mc_launch.log", exeDir.c_str());
@@ -2277,6 +2339,8 @@ public:
         if (clf) fclose(clf);
 
         WriteLog(L"=== MC.App Run() started ===");
+        WriteLogF(L"graphicsRuntime=%s", graphicsRuntime.c_str());
+        WriteLogF(L"MG_DIR_PATH=%s", mobileGluesDir.c_str());
         WriteLogF(L"SetWindow called=%d", g_setWindowCalled ? 1 : 0);
         WriteLogF(L"SetWindow QueryInterface hr=0x%08X", g_windowInteropHr);
         WriteLogF(L"SetWindow get_WindowHandle hr=0x%08X", g_getWindowHandleHr);

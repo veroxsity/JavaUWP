@@ -26,6 +26,7 @@ $ProjectConfig = [ordered]@{
     AssetsDir                = "staging/cache/assets"
     NativesDir               = "staging/cache/natives-1.21"
     MesaRuntimeDir           = "mesa-runtime"
+    XboxOneGraphicsRuntimeDir = "xboxone-runtime"
     ToolsDir                 = "staging/cache/tools"
     NotesDir                 = "staging/notes"
     PackageContentDir        = "staging/package"

@@ -1,6 +1,7 @@
 # build.ps1 - Build and package MC Java UWP
 param(
     [string]$MesaRuntimeDir = $env:MESA_UWP_DIR,
+    [string]$XboxOneGraphicsRuntimeDir = $env:XBOX_ONE_GRAPHICS_RUNTIME_DIR,
     [string]$McVersion,
     [string]$FabricLoader,
     [string]$AssetIndex,
@@ -269,10 +270,10 @@ Push-Location (Join-Path $root "MC.Xbox")
 $env:INCLUDE = "$mcBuildDir;$($tools.MsvcRoot)\include;${sdkRoot}Include\$sdkVer\ucrt;${sdkRoot}Include\$sdkVer\shared;${sdkRoot}Include\$sdkVer\um;${sdkRoot}Include\$sdkVer\winrt;${sdkRoot}Include\$sdkVer\cppwinrt;$jreSrc\include;$jreSrc\include\win32"
 $env:LIB = "$($tools.MsvcRoot)\lib\x64;${sdkRoot}Lib\$sdkVer\ucrt\x64;${sdkRoot}Lib\$sdkVer\um\x64"
 
-& $tools.ClExe App.cpp /std:c++17 /EHsc /W3 /O2 /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /Fo"$mcBuildDir\" `
+& $tools.ClExe App.cpp /std:c++17 /EHsc /W3 /O2 /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /Fo"$mcBuildDir\" `
     /DWINAPI_FAMILY=WINAPI_FAMILY_APP `
     /link /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /MACHINE:X64 `
-    /OUT:"$mcExe" kernel32.lib shell32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib
+    /OUT:"$mcExe" kernel32.lib shell32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib d2d1.lib dwrite.lib d3d11.lib dxgi.lib windowscodecs.lib
 if ($LASTEXITCODE -ne 0) { throw "Compile failed" }
 Pop-Location
 Write-Host "MC.Xbox.exe built"
@@ -290,6 +291,8 @@ Write-Host "=== Assembling PackageContent ==="
 Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "Assets") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "natives") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg "graphics\mesa") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $pkg "graphics\xboxone") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "assets") | Out-Null
 # runtime/ holds the immutable game stack (libraries, versions, fabric remapped
 # jars, bundled mods, log configs). Writable state (saves, mods folder,
@@ -379,7 +382,30 @@ foreach ($dll in Get-MesaRuntimeDllNames) {
     if (Test-Path $source) {
         Copy-Item $source (Join-Path $pkg $dll) -Force
         Copy-Item $source (Join-Path $pkg "natives\$dll") -Force
+        Copy-Item $source (Join-Path $pkg "graphics\mesa\$dll") -Force
         Write-Host "Mesa: $dll"
+    }
+}
+
+Write-Host "Copying Xbox One graphics runtime..."
+$xboxOneRuntime = Resolve-XboxOneGraphicsRuntimeDir -XboxOneGraphicsRuntimeDir $XboxOneGraphicsRuntimeDir
+if ($xboxOneRuntime) {
+    Write-Host "Xbox One graphics runtime source: $xboxOneRuntime"
+    foreach ($dll in Get-XboxOneGraphicsRuntimeDllNames) {
+        $source = Join-Path $xboxOneRuntime $dll
+        if (Test-Path $source) {
+            Copy-Item $source (Join-Path $pkg "graphics\xboxone\$dll") -Force
+            Write-Host "Xbox One graphics: $dll"
+        }
+    }
+} else {
+    $partialXboxOneRuntime = @($XboxOneGraphicsRuntimeDir, $env:XBOX_ONE_GRAPHICS_RUNTIME_DIR, (Get-ConfigPath "XboxOneGraphicsRuntimeDir")) |
+        Where-Object { $_ -and (Test-Path $_) } |
+        Select-Object -First 1
+    if ($partialXboxOneRuntime) {
+        Write-Warning "Xbox One graphics runtime found at '$partialXboxOneRuntime', but it is missing opengl32.dll, libEGL.dll, or libGLESv2.dll. Package will keep the Series/Mesa runtime only until a MobileGlues opengl32.dll is added."
+    } else {
+        Write-Warning "Xbox One graphics runtime not found. Set -XboxOneGraphicsRuntimeDir or XBOX_ONE_GRAPHICS_RUNTIME_DIR after building/adding MobileGlues opengl32.dll."
     }
 }
 
@@ -387,10 +413,63 @@ Write-Host "Copying assets..."
 Copy-Item -Recurse -Force (Join-Path $assetsDir "*") (Join-Path $pkg "assets\")
 Copy-Item -Force (Join-Path $root "log_configs\client-uwp.xml") (Join-Path $pkg "runtime\log_configs\client-uwp.xml")
 
+$panoramaSource = Join-Path $root "MC.Xbox\Assets\panorama"
+if (Test-Path $panoramaSource) {
+    $panoramaTarget = Join-Path $pkg "Assets\panorama"
+    New-Item -ItemType Directory -Force -Path $panoramaTarget | Out-Null
+    Copy-Item -Force (Join-Path $panoramaSource "panorama_*.png") $panoramaTarget
+    if (Test-Path (Join-Path $panoramaSource "panorama_overlay.png")) {
+        Copy-Item -Force (Join-Path $panoramaSource "panorama_overlay.png") $panoramaTarget
+    }
+    Write-Host "Copied menu panorama assets from $panoramaSource"
+}
+
 Write-Host "Copying JRE..."
 Write-Host "JRE source: $jreSrc"
 Copy-Item -Recurse $jreSrc (Join-Path $pkg "jre")
-Copy-Item (Join-Path $root "xbox_security.properties") (Join-Path $pkg "jre\conf\security\xbox.properties")
+$xboxSecurityProperties = Join-Path $root "xbox_security.properties"
+Copy-Item $xboxSecurityProperties (Join-Path $pkg "xbox_security.properties") -Force
+Copy-Item $xboxSecurityProperties (Join-Path $pkg "jre\conf\security\xbox.properties") -Force
+Copy-Item $xboxSecurityProperties (Join-Path $pkg "jre\conf\security\java.security") -Force
+
+Write-Host "Building Java security realpath patch..."
+$javacExe = Join-Path $jreSrc "bin\javac.exe"
+if (-not (Test-Path $javacExe)) { throw "javac.exe not found at $javacExe; Java security patch requires a JDK, not a JRE." }
+$srcZip = Join-Path $jreSrc "lib\src.zip"
+if (-not (Test-Path $srcZip)) { throw "JDK source archive not found at $srcZip; Java security patch cannot be generated." }
+$javaSecurityPatchDir = Join-Path $buildDir "java_security_realpath_patch"
+$javaSecurityPatchSrcDir = Join-Path $javaSecurityPatchDir "src"
+$javaSecurityPatchClassesDir = Join-Path $javaSecurityPatchDir "classes"
+$javaSecurityPatchJar = Join-Path $pkg "java-base-security-realpath.jar"
+Remove-Item -Recurse -Force $javaSecurityPatchDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path (Join-Path $javaSecurityPatchSrcDir "java\security"), $javaSecurityPatchClassesDir | Out-Null
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$srcArchive = [System.IO.Compression.ZipFile]::OpenRead($srcZip)
+try {
+    $securityEntry = $srcArchive.Entries | Where-Object { $_.FullName -eq "java.base/java/security/Security.java" } | Select-Object -First 1
+    if (-not $securityEntry) { throw "Security.java not found inside $srcZip" }
+    $reader = [System.IO.StreamReader]::new($securityEntry.Open())
+    try {
+        $securitySource = $reader.ReadToEnd()
+    } finally {
+        $reader.Dispose()
+    }
+} finally {
+    $srcArchive.Dispose()
+}
+$oldSecurityLine = "path = path.toRealPath();"
+$newSecurityLine = "try { path = path.toRealPath(); } catch (IOException realPathFailure) { path = path.toAbsolutePath(); }"
+if (-not $securitySource.Contains($oldSecurityLine)) { throw "Security.java patch target not found." }
+$securitySource = $securitySource.Replace($oldSecurityLine, $newSecurityLine)
+$securitySourcePath = Join-Path $javaSecurityPatchSrcDir "java\security\Security.java"
+[System.IO.File]::WriteAllText($securitySourcePath, $securitySource)
+& $javacExe --patch-module "java.base=$javaSecurityPatchSrcDir" -d $javaSecurityPatchClassesDir $securitySourcePath
+if ($LASTEXITCODE -ne 0) { throw "Java security patch compile failed" }
+Push-Location $javaSecurityPatchClassesDir
+& $jarExe cf $javaSecurityPatchJar .
+Pop-Location
+if ($LASTEXITCODE -ne 0) { throw "Java security patch jar creation failed" }
+Write-Host "Java security patch: $javaSecurityPatchJar"
 
 Write-Host "Generating UWP tile assets..."
 & $pythonExe (Join-Path $root "scripts\generate-assets.py") $pkg

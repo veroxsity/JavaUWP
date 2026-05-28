@@ -5,7 +5,7 @@ This page covers a clean local build from the repo root.
 The build produces a signed UWP package at:
 
 ```text
-output\MC_Java_1.0.0.0.appx
+output\BanditLauncher_1.0.0.0.appx
 ```
 
 ## Requirements
@@ -77,6 +77,40 @@ $env:MESA_UWP_DIR = "C:\path\to\mesa-runtime"
 
 `RETROARCH_UWP_DIR` is still accepted as a fallback search path. RetroArch is not required.
 
+## Xbox One graphics runtime
+
+Series consoles keep using the Mesa runtime above. Xbox One can use a separate
+runtime packaged under `graphics\xboxone\`. The repo-level source folder is:
+
+```text
+xboxone-runtime\
+```
+
+You can use a different source folder with:
+
+```powershell
+.\build.ps1 -XboxOneGraphicsRuntimeDir "C:\path\to\xboxone-graphics-runtime"
+```
+
+Or:
+
+```powershell
+$env:XBOX_ONE_GRAPHICS_RUNTIME_DIR = "C:\path\to\xboxone-graphics-runtime"
+```
+
+That folder must contain at least:
+
+```text
+opengl32.dll
+libEGL.dll
+libGLESv2.dll
+```
+
+The RetroArch Xbox One package provides ANGLE `libEGL.dll` and `libGLESv2.dll`,
+but not `opengl32.dll`. A UWP-built MobileGlues `opengl32.dll` is expected to
+fill that role. If the Xbox One runtime is incomplete, the build still succeeds
+and the app falls back to the Series/Mesa path at runtime.
+
 ## Fresh setup
 
 Create the local cache folders and place the Fabric installer here:
@@ -117,21 +151,19 @@ lwjgl_stb.dll
 OpenAL.dll
 ```
 
-## Obtain your account credentials
+## Microsoft sign-in
 
-**THIS WILL ONLY BE NECESSARY UNTIL WE IMPLEMENT PROPER AUTHENTICATION.**
+The packaged app signs in dynamically. You no longer need to create or bundle a
+local auth JSON file.
 
-- Go to https://kqzz.github.io/mc-bearer-token/ and follow the instructions listed on there to obtain your accessToken
-- Go to https://mcuuid.net/ to obtain your account UUID
-- copy launch_auth.example.json and rename to launch_auth.json, then input the details below in this format.
+On first launch, the app shows a Microsoft device-code screen before Minecraft
+starts. Go to `https://www.microsoft.com/link`, enter the displayed code, and
+sign in with the Microsoft account that owns Minecraft Java Edition. The QR code
+on that screen opens the same Microsoft link flow.
 
-
-```cpp
-# replace these with your credentials
-"--username", "DevPlayer",                              # replace with your username
-"--uuid", "00000000-0000-0000-0000-000000000000",       # replace with your account uuid
-"--accessToken", "0",                                   # replace with your bearer token
-```
+After sign-in, the app exchanges the Microsoft token through Xbox Live, XSTS,
+and Minecraft Services, checks Java Edition ownership, and passes the resolved
+Minecraft username, UUID, and access token into the embedded JVM.
 
 ## Generate Fabric remapped jars
 
@@ -213,7 +245,7 @@ The build script:
 7. Copies Minecraft libraries, versions, Fabric data, assets, natives, bundled mods, Mesa DLLs, and the JRE.
 8. Injects the custom `glfw.dll` into the LWJGL GLFW native JAR.
 9. Generates UWP tile and splash assets from `MC.Xbox\Assets\Java_UWP_Icon.png`.
-10. Creates and signs `output\MC_Java_1.0.0.0.appx`.
+10. Creates and signs `output\BanditLauncher_1.0.0.0.appx`.
 11. Deletes `staging\package` unless `-KeepStaging` is set.
 
 ## Clean outputs

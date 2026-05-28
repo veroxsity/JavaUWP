@@ -1,6 +1,6 @@
-# Minecraft Java on Xbox UWP
+# Bandit Launcher for Minecraft: Java Edition on Xbox Series X/S
 
-`MinecraftJavaUWP` is an experimental port of modern Minecraft Java Edition to an Xbox Developer Mode UWP app.
+`Bandit Launcher` is an experimental launcher for Minecraft: Java Edition to use on Xbox Dev Mode.
 
 The app embeds a real JDK, starts Fabric inside the UWP process, and presents Minecraft through a custom GLFW layer backed by UWP `CoreWindow` and Mesa EGL on D3D12.
 

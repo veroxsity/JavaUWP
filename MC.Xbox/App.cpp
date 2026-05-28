@@ -1057,7 +1057,7 @@ private:
     ComPtr<IDWriteTextFormat> codeFormat_;
     ComPtr<IDWriteTextFormat> bodyFormat_;
     ComPtr<IDWriteTextFormat> smallFormat_;
-    ComPtr<ID2D1Bitmap1> panoramaFaces_[6];
+    ComPtr<ID2D1Bitmap1> panoramaFaces_[4];
     ComPtr<ID2D1Bitmap1> panoramaOverlay_;
     bool panoramaLoadAttempted_ = false;
     bool panoramaLoaded_ = false;
@@ -1162,7 +1162,7 @@ private:
 
         const std::wstring dir = GetExecutableDir() + L"\\Assets\\panorama";
         int loaded = 0;
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 4; ++i) {
             const std::wstring path = dir + L"\\panorama_" + std::to_wstring(i) + L".png";
             if (LoadBitmapFromFile(path, panoramaFaces_[i])) {
                 ++loaded;
@@ -1170,7 +1170,7 @@ private:
         }
 
         LoadBitmapFromFile(dir + L"\\panorama_overlay.png", panoramaOverlay_);
-        panoramaLoaded_ = loaded == 6;
+        panoramaLoaded_ = loaded == 4;
         WriteLogF(L"Panorama loaded faces=%d overlay=%d",
             loaded,
             panoramaOverlay_ ? 1 : 0);
@@ -1245,8 +1245,8 @@ private:
 
         const float segmentSeconds = 7.0f;
         const float raw = fmodf(animation / segmentSeconds, 6.0f);
-        const int face = static_cast<int>(floorf(raw)) % 6;
-        const int nextFace = (face + 1) % 6;
+        const int face = static_cast<int>(floorf(raw)) % 4;
+        const int nextFace = (face + 1) % 4;
         const float phase = raw - floorf(raw);
         const float fade = phase > 0.82f ? (phase - 0.82f) / 0.18f : 0.0f;
         const float easedFade = fade * fade * (3.0f - 2.0f * fade);

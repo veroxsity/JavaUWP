@@ -1248,7 +1248,7 @@ private:
         d2dContext_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
 
         const float segmentSeconds = 7.0f;
-        const float raw = fmodf(animation / segmentSeconds, 6.0f);
+        const float raw = fmodf(animation / segmentSeconds, 4.0f);
         const int face = static_cast<int>(floorf(raw)) % 4;
         const int nextFace = (face + 1) % 4;
         const float phase = raw - floorf(raw);

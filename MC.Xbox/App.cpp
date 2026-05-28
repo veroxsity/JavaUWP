@@ -19,6 +19,8 @@
 #include <errno.h>
 #include <atomic>
 #include <chrono>
+#include <ctime>
+#include <cstdlib>
 #include <thread>
 #include <fstream>
 #include <algorithm>
@@ -1159,8 +1161,10 @@ private:
     void EnsurePanoramaLoaded() {
         if (panoramaLoadAttempted_) return;
         panoramaLoadAttempted_ = true;
-
-        const std::wstring dir = GetExecutableDir() + L"\\Assets\\panorama";
+		
+		int x = time(0);
+		srand(x);
+        const std::wstring dir = GetExecutableDir() + L"\\Assets\\panorama_" + std::to_wstring(rand() % 2);
         int loaded = 0;
         for (int i = 0; i < 4; ++i) {
             const std::wstring path = dir + L"\\panorama_" + std::to_wstring(i) + L".png";

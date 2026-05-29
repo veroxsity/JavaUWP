@@ -2759,13 +2759,15 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
 
     if (CheckAndLogJavaException(env, L"CallStaticVoidMethod(main)")) {
         LogTextFileTail(javaLog, L"java_output.log");
+        WriteLog(L"Embedded JVM failed after startup; terminating host process to avoid JVM/native reuse");
+        ExitProcess(1);
         return false;
     }
 
     WriteLog(L"KnotClient.main returned");
     g_minecraftRunning.store(false);
-    const jint destroyResult = vm->DestroyJavaVM();
-    WriteLogF(L"DestroyJavaVM => %d", destroyResult);
+    WriteLog(L"Minecraft exited; terminating host process to avoid JVM/native reuse on relaunch");
+    ExitProcess(0);
     return true;
 }
 

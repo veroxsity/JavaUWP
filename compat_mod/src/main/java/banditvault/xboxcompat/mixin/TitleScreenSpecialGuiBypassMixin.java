@@ -15,13 +15,10 @@ public abstract class TitleScreenSpecialGuiBypassMixin {
     @Unique
     private static boolean banditvault$loggedTitleBypass = false;
 
-    @Unique
-    private static boolean banditvault$titleBypassConsumed = false;
-
     @Inject(method = "method_70893", at = @At("HEAD"), cancellable = true)
     private void banditvault$skipTitleSpecialGuiElements(CallbackInfo ci) {
         class_310 client = class_310.method_1551();
-        if (banditvault$titleBypassConsumed || client == null || !(client.field_1755 instanceof class_442)) {
+        if (client == null || !(client.field_1755 instanceof class_442)) {
             return;
         }
 
@@ -29,7 +26,6 @@ public abstract class TitleScreenSpecialGuiBypassMixin {
             XboxCompatLog.log("Bypassing title-screen special GUI elements");
             banditvault$loggedTitleBypass = true;
         }
-        banditvault$titleBypassConsumed = true;
         ci.cancel();
     }
 }

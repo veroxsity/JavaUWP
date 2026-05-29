@@ -1,28 +1,33 @@
-# Minecraft Java on Xbox UWP
+# Bandit Launcher
 
-`MinecraftJavaUWP` is an experimental port of modern Minecraft Java Edition to an Xbox Developer Mode UWP app.
+`Bandit Launcher` is an experimental Minecraft Java Edition launcher for Xbox Developer Mode UWP.
 
-The app embeds a real JDK, starts Fabric inside the UWP process, and presents Minecraft through a custom GLFW layer backed by UWP `CoreWindow` and Mesa EGL on D3D12.
+The app signs in with Microsoft, verifies Minecraft Java ownership, prepares the local runtime, then starts Fabric/Minecraft inside the UWP process. Rendering and input still use a custom GLFW layer backed by UWP `CoreWindow`; Series consoles use the Mesa EGL/D3D12 runtime, while Xbox One can use a separate MobileGlues/ANGLE-style runtime when packaged.
 
 ## Current state
 
-The project is usable for active development:
+The project is usable for active launcher development:
 
 - Minecraft 1.21.11 with Fabric Loader 0.19.2 boots in Xbox Developer Mode.
+- Dynamic Microsoft device-code auth works and persists the session in the UWP Credential Locker.
+- The launcher shows a signed-in menu with Play, Mods placeholder, and Sign out.
+- Sign out clears the saved Microsoft refresh token and returns to the device-code sign-in flow.
+- The host skips the LocalState runtime copy on warm launches when the installed package has not changed.
 - Menus render through Mesa on the Xbox GPU.
 - Keyboard and basic text input work.
 - Single player reaches gameplay.
 - Multiplayer and skin loading have recent fixes.
 - Xbox controller input is exposed through GameInput in the GLFW shim.
 - The app includes generated UWP tile assets from the checked in icon.
-- The host seeds writable game state into `LocalState` on launch.
+- The launcher menu can display packaged panorama assets from `MC.Xbox\Assets\panorama`.
+- The host seeds writable game state into `LocalState` when needed.
 
-Expect rough edges. This is still a research port and development tool, not a release launcher.
+Expect rough edges. This is still a development launcher, not a finished release product.
 
 ## Repo layout
 
 - `MC.Xbox/`
-  UWP host app. It starts the JVM, publishes the `CoreWindow` for EGL, prepares writable state, and launches Fabric.
+  UWP host and launcher app. It handles Microsoft auth, the launcher menu, runtime preparation, JVM startup, `CoreWindow` publishing for EGL, and Fabric launch.
 - `glfw_shim/`
   Replacement `glfw.dll` for LWJGL. It maps GLFW window, input, gamepad, and EGL calls onto UWP APIs.
 - `compat_mod/`
@@ -47,7 +52,7 @@ java -jar .\staging\cache\tools\fabric-installer.jar client -dir .\staging\cache
 .\build.ps1
 ```
 
-The build script compiles the UWP host, builds the GLFW shim, builds the compatibility mod, patches the local Fabric Loader JAR, copies assets and runtime files, injects the shim into the LWJGL GLFW native JAR, creates UWP tile assets, then signs `output\MC_Java_1.0.0.0.appx`.
+The build script compiles the UWP host, builds the GLFW shim, builds the compatibility mod, patches the local Fabric Loader JAR, copies launcher assets and runtime files, injects the shim into the LWJGL GLFW native JAR, creates UWP tile assets, then signs `output\BanditLauncher_1.0.0.0.appx`.
 
 Generated files live under `staging` and `output`. They are ignored by git.
 
@@ -68,15 +73,19 @@ The Mesa UWP runtime DLLs needed by the build are tracked in `mesa-runtime/`.
 ## How it works
 
 1. `MC.Xbox.exe` starts as a UWP app.
-2. The app publishes the live `CoreWindow` through app properties.
-3. The app seeds `LocalState` with runtime files that need writable paths.
-4. The app loads `jvm.dll` and starts Java in the same process.
-5. Fabric launches Minecraft from the embedded JVM.
-6. LWJGL loads the custom `glfw.dll`.
-7. The GLFW shim creates an EGL surface for the UWP window.
-8. Mesa translates OpenGL calls to D3D12.
+2. The launcher checks for a saved Microsoft refresh token.
+3. If needed, it shows a device-code sign-in screen with a QR code for `microsoft.com/link`.
+4. The launcher verifies Xbox/Minecraft Services ownership and loads the Minecraft profile.
+5. The signed-in menu opens with Play, Mods placeholder, and Sign out.
+6. Play prepares `LocalState` only when the packaged runtime has changed.
+7. The app publishes the live `CoreWindow` through app properties.
+8. The app loads `jvm.dll` and starts Java in the same process.
+9. Fabric launches Minecraft from the embedded JVM.
+10. LWJGL loads the custom `glfw.dll`.
+11. The GLFW shim creates an EGL surface for the UWP window.
+12. Mesa translates OpenGL calls to D3D12.
 
-The main compatibility work is around Xbox sandbox paths, packaged app file access, native library loading, GLFW behavior, input, and Fabric remapping.
+The main launcher work is around Microsoft auth, ownership verification, UWP package identity, Xbox sandbox paths, packaged app file access, native library loading, GLFW behavior, input, and Fabric remapping.
 
 ## Status and limits
 
@@ -84,6 +93,8 @@ Known limits include:
 
 - Xbox Developer Mode is the only supported target.
 - Retail mode is not supported.
+- Mods menu is currently only a placeholder.
+- Runtime/game files are still prepared from local build inputs; dynamic first-run downloading is planned but not complete.
 - Path handling is still the most sensitive area.
 - Some Java platform diagnostics can still warn or fail because the sandbox does not look like desktop Windows.
 - Controller support exists through GameInput, but game controls still need testing and tuning.
@@ -111,4 +122,4 @@ Then apply when the preview looks right:
 
 Original project code in this repository is available under the custom terms in [LICENSE](LICENSE). Use is allowed with credit. Redistribution requires prior written permission from veroxsity / BanditVault.
 
-Minecraft, Fabric, Mojang assets, Mesa, LWJGL, Java, and other third party components remain under their own licenses and terms.
+Minecraft, Fabric, Mojang assets, Mesa, LWJGL, Java, and other third-party components remain under their own licenses and terms.

@@ -241,9 +241,13 @@ typedef uint32_t EGLenum;
 #define EGL_RENDERABLE_TYPE 0x3040
 #define EGL_WINDOW_BIT 0x0004
 #define EGL_OPENGL_BIT 0x0008
+#define EGL_OPENGL_ES2_BIT 0x0004
+#define EGL_OPENGL_ES3_BIT_KHR 0x00000040
 #define EGL_OPENGL_API 0x30A2
+#define EGL_OPENGL_ES_API 0x30A0
 #define EGL_VENDOR 0x3053
 #define EGL_VERSION 0x3054
+#define EGL_CONTEXT_CLIENT_VERSION 0x3098
 #define EGL_CONTEXT_MAJOR_VERSION_KHR 0x3098
 #define EGL_CONTEXT_MINOR_VERSION_KHR 0x30FB
 #define EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR 0x30FD
@@ -268,6 +272,7 @@ typedef void* (WINAPI* PFN_eglGetProcAddress)(const char*);
 typedef EGLint (WINAPI* PFN_eglGetError)(void);
 typedef EGLBoolean (WINAPI* PFN_eglGetConfigAttrib)(EGLDisplay, EGLConfig, EGLint, EGLint*);
 typedef const unsigned char* (APIENTRY* PFN_glGetString)(unsigned int);
+typedef void (*PFN_proc_init)(void);
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -279,8 +284,11 @@ static EGLDisplay g_eglDisplay = EGL_NO_DISPLAY;
 static EGLSurface g_eglSurface = EGL_NO_SURFACE;
 static EGLContext g_eglContext = EGL_NO_CONTEXT;
 static EGLConfig  g_eglConfig = nullptr;
+static DWORD g_eglContextThreadId = 0;
 static HMODULE g_libEGL = NULL;
 static HMODULE g_opengl32 = NULL;
+static HMODULE g_libGLESv2 = NULL;
+static BOOL g_graphicsRuntimeUsesGles = FALSE;
 static BOOL g_initialised = FALSE;
 static BOOL g_should_close = FALSE;
 static int g_width = 1920;
@@ -292,6 +300,9 @@ static int g_wait_log_count = 0;
 static int g_key_log_count = 0;
 static int g_controller_log_count = 0;
 static int g_gamepad_query_log_count = 0;
+static int g_current_context_log_count = 0;
+static int g_window_attrib_log_count = 0;
+static int g_extension_log_count = 0;
 
 static PFN_eglGetDisplay p_eglGetDisplay = nullptr;
 static PFN_eglGetPlatformDisplay p_eglGetPlatformDisplay = nullptr;
@@ -397,6 +408,101 @@ static void GetRuntimeDir(wchar_t* out, int cch) {
     DWORD len = GetEnvironmentVariableW(L"MC_RUNTIME_DIR", out, cch);
     if (len > 0 && len < (DWORD)cch) return;
     GetExeDir(out, cch);
+}
+
+static void JoinPath(wchar_t* out, int cch, const wchar_t* dir, const wchar_t* name) {
+    if (!dir || !*dir) {
+        swprintf_s(out, cch, L"%s", name ? name : L"");
+        return;
+    }
+    if (!name || !*name) {
+        swprintf_s(out, cch, L"%s", dir);
+        return;
+    }
+    swprintf_s(out, cch, L"%s\\%s", dir, name);
+}
+
+static void GetGraphicsRuntimeName(wchar_t* out, int cch) {
+    DWORD len = GetEnvironmentVariableW(L"MC_GRAPHICS_RUNTIME", out, cch);
+    if (len == 0 || len >= (DWORD)cch) {
+        swprintf_s(out, cch, L"mesa");
+        return;
+    }
+
+    if (_wcsicmp(out, L"series") == 0 || _wcsicmp(out, L"seriesx") == 0 ||
+        _wcsicmp(out, L"seriess") == 0 || _wcsicmp(out, L"auto") == 0) {
+        swprintf_s(out, cch, L"mesa");
+    }
+}
+
+static bool DirectoryExists(const wchar_t* path) {
+    const DWORD attrs = GetFileAttributesW(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static bool GraphicsRuntimeReady(const wchar_t* path) {
+    if (!DirectoryExists(path)) return false;
+
+    wchar_t glPath[MAX_PATH];
+    wchar_t eglPath[MAX_PATH];
+    JoinPath(glPath, MAX_PATH, path, L"opengl32.dll");
+    JoinPath(eglPath, MAX_PATH, path, L"libEGL.dll");
+    return GetFileAttributesW(glPath) != INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesW(eglPath) != INVALID_FILE_ATTRIBUTES;
+}
+
+static bool SelectGraphicsRuntimeDir(
+    wchar_t* runtimeDir,
+    int runtimeDirCch,
+    wchar_t* packagePrefix,
+    int packagePrefixCch) {
+    wchar_t exeDir[MAX_PATH];
+    GetExeDir(exeDir, MAX_PATH);
+
+    wchar_t requested[32];
+    GetGraphicsRuntimeName(requested, (int)(sizeof(requested) / sizeof(requested[0])));
+    g_graphicsRuntimeUsesGles = (_wcsicmp(requested, L"xboxone") == 0);
+
+    wchar_t candidate[MAX_PATH];
+    swprintf_s(candidate, L"%s\\graphics\\%s", exeDir, requested);
+    if (GraphicsRuntimeReady(candidate)) {
+        swprintf_s(runtimeDir, runtimeDirCch, L"%s", candidate);
+        swprintf_s(packagePrefix, packagePrefixCch, L"graphics\\%s", requested);
+        ShimLog("Graphics runtime selected: %S (%S)", requested, runtimeDir);
+        return true;
+    }
+
+    swprintf_s(candidate, L"%s\\natives\\graphics\\%s", exeDir, requested);
+    if (GraphicsRuntimeReady(candidate)) {
+        swprintf_s(runtimeDir, runtimeDirCch, L"%s", candidate);
+        swprintf_s(packagePrefix, packagePrefixCch, L"natives\\graphics\\%s", requested);
+        ShimLog("Graphics runtime selected: %S (%S)", requested, runtimeDir);
+        return true;
+    }
+
+    // Legacy layout: older packages copied Mesa DLLs directly beside the exe
+    // or under natives. Keep this so the Series path remains compatible.
+    swprintf_s(runtimeDir, runtimeDirCch, L"%s", exeDir);
+    swprintf_s(packagePrefix, packagePrefixCch, L"");
+    g_graphicsRuntimeUsesGles = FALSE;
+    ShimLog("Graphics runtime folder missing for %S; using legacy Mesa lookup", requested);
+    return true;
+}
+
+static void RuntimeDllPath(
+    const wchar_t* runtimeDir,
+    const wchar_t* packagePrefix,
+    const wchar_t* dll,
+    wchar_t* absolutePath,
+    int absolutePathCch,
+    wchar_t* packagedPath,
+    int packagedPathCch) {
+    JoinPath(absolutePath, absolutePathCch, runtimeDir, dll);
+    if (packagePrefix && *packagePrefix) {
+        swprintf_s(packagedPath, packagedPathCch, L"%s\\%s", packagePrefix, dll);
+    } else {
+        swprintf_s(packagedPath, packagedPathCch, L"%s", dll);
+    }
 }
 
 static HMODULE LoadPackagedOrFile(const wchar_t* packagedPath, const wchar_t* absolutePath, const char* label) {
@@ -907,80 +1013,68 @@ static bool BuildNativeWindowPropertySet() {
 }
 
 // ---------------------------------------------------------------------------
-// Mesa EGL loader
+// Graphics runtime loader
 // ---------------------------------------------------------------------------
 static bool LoadMesaEGL() {
     if (g_libEGL && g_opengl32) return true;
 
-    wchar_t exeDir[MAX_PATH];
-    GetExeDir(exeDir, MAX_PATH);
+    wchar_t runtimeDir[MAX_PATH];
+    wchar_t packagePrefix[MAX_PATH];
+    SelectGraphicsRuntimeDir(runtimeDir, MAX_PATH, packagePrefix, MAX_PATH);
 
-    wchar_t eglPath[MAX_PATH];
+    struct RuntimeDll {
+        const wchar_t* file;
+        const char* label;
+        bool required;
+    };
+
+    const RuntimeDll siblings[] = {
+        { L"libglapi.dll", "libglapi.dll", false },
+        { L"z-1.dll", "z-1.dll", false },
+        { L"libgallium_wgl.dll", "libgallium_wgl.dll", false },
+        { L"libGLESv2.dll", "libGLESv2.dll", false },
+        { L"libGLESv1_CM.dll", "libGLESv1_CM.dll", false },
+        { L"glu32.dll", "glu32.dll", false },
+        { L"dxil.dll", "dxil.dll", false },
+    };
+
+    for (const RuntimeDll& dll : siblings) {
+        wchar_t absolutePath[MAX_PATH];
+        wchar_t packagedPath[MAX_PATH];
+        RuntimeDllPath(runtimeDir, packagePrefix, dll.file,
+            absolutePath, MAX_PATH, packagedPath, MAX_PATH);
+        if (GetFileAttributesW(absolutePath) != INVALID_FILE_ATTRIBUTES) {
+            HMODULE loaded = LoadPackagedOrFile(packagedPath, absolutePath, dll.label);
+            if (_wcsicmp(dll.file, L"libGLESv2.dll") == 0) {
+                g_libGLESv2 = loaded;
+            }
+        }
+    }
+
     wchar_t glPath[MAX_PATH];
-    swprintf_s(eglPath, L"%s\\libEGL.dll", exeDir);
-    swprintf_s(glPath, L"%s\\opengl32.dll", exeDir);
-    const wchar_t* eglPackaged = L"libEGL.dll";
-    const wchar_t* glPackaged = L"opengl32.dll";
-    if (GetFileAttributesW(eglPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(eglPath, L"%s\\natives\\libEGL.dll", exeDir);
-        eglPackaged = L"natives\\libEGL.dll";
-    }
-    if (GetFileAttributesW(glPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(glPath, L"%s\\natives\\opengl32.dll", exeDir);
-        glPackaged = L"natives\\opengl32.dll";
-    }
+    wchar_t glPackaged[MAX_PATH];
+    wchar_t eglPath[MAX_PATH];
+    wchar_t eglPackaged[MAX_PATH];
+    RuntimeDllPath(runtimeDir, packagePrefix, L"opengl32.dll", glPath, MAX_PATH, glPackaged, MAX_PATH);
+    RuntimeDllPath(runtimeDir, packagePrefix, L"libEGL.dll", eglPath, MAX_PATH, eglPackaged, MAX_PATH);
 
     ShimLog("libEGL=%S", eglPath);
     ShimLog("opengl32=%S", glPath);
-
-    wchar_t glapiPath[MAX_PATH];
-    wchar_t galliumPath[MAX_PATH];
-    wchar_t glesPath[MAX_PATH];
-    wchar_t dxilPath[MAX_PATH];
-    wchar_t zlibPath[MAX_PATH];
-    swprintf_s(glapiPath, L"%s\\libglapi.dll", exeDir);
-    swprintf_s(galliumPath, L"%s\\libgallium_wgl.dll", exeDir);
-    swprintf_s(glesPath, L"%s\\libGLESv2.dll", exeDir);
-    swprintf_s(dxilPath, L"%s\\dxil.dll", exeDir);
-    swprintf_s(zlibPath, L"%s\\z-1.dll", exeDir);
-    const wchar_t* glapiPackaged = L"libglapi.dll";
-    const wchar_t* galliumPackaged = L"libgallium_wgl.dll";
-    const wchar_t* glesPackaged = L"libGLESv2.dll";
-    const wchar_t* dxilPackaged = L"dxil.dll";
-    const wchar_t* zlibPackaged = L"z-1.dll";
-    if (GetFileAttributesW(glapiPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(glapiPath, L"%s\\natives\\libglapi.dll", exeDir);
-        glapiPackaged = L"natives\\libglapi.dll";
-    }
-    if (GetFileAttributesW(galliumPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(galliumPath, L"%s\\natives\\libgallium_wgl.dll", exeDir);
-        galliumPackaged = L"natives\\libgallium_wgl.dll";
-    }
-    if (GetFileAttributesW(glesPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(glesPath, L"%s\\natives\\libGLESv2.dll", exeDir);
-        glesPackaged = L"natives\\libGLESv2.dll";
-    }
-    if (GetFileAttributesW(dxilPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(dxilPath, L"%s\\natives\\dxil.dll", exeDir);
-        dxilPackaged = L"natives\\dxil.dll";
-    }
-    if (GetFileAttributesW(zlibPath) == INVALID_FILE_ATTRIBUTES) {
-        swprintf_s(zlibPath, L"%s\\natives\\z-1.dll", exeDir);
-        zlibPackaged = L"natives\\z-1.dll";
-    }
-
-    // Preload Mesa siblings so package-local dependency resolution works.
-    LoadPackagedOrFile(glapiPackaged, glapiPath, "libglapi.dll");
-    LoadPackagedOrFile(zlibPackaged, zlibPath, "z-1.dll");
-    LoadPackagedOrFile(galliumPackaged, galliumPath, "libgallium_wgl.dll");
-    LoadPackagedOrFile(glesPackaged, glesPath, "libGLESv2.dll");
-    LoadPackagedOrFile(dxilPackaged, dxilPath, "dxil.dll");
 
     g_opengl32 = LoadPackagedOrFile(glPackaged, glPath, "opengl32.dll");
     g_libEGL = LoadPackagedOrFile(eglPackaged, eglPath, "libEGL.dll");
     if (!g_opengl32 || !g_libEGL) {
         ShimLog("Graphics loader failed gl=%p egl=%p err=%u", g_opengl32, g_libEGL, GetLastError());
         return false;
+    }
+
+    PFN_proc_init procInit = (PFN_proc_init)GetProcAddress(g_opengl32, "proc_init");
+    if (procInit) {
+        ShimLog("Calling opengl32!proc_init");
+        procInit();
+        ShimLog("opengl32!proc_init returned");
+    } else if (g_graphicsRuntimeUsesGles) {
+        ShimLog("opengl32!proc_init not exported");
     }
 
     p_eglGetDisplay = (PFN_eglGetDisplay)ResolveProc(g_libEGL, "eglGetDisplay");
@@ -1032,11 +1126,13 @@ static bool CreateEglContext() {
         return false;
     }
 
-    if (!p_eglBindAPI(EGL_OPENGL_API)) {
-        ReportEglError("eglBindAPI(EGL_OPENGL_API)");
+    const EGLenum eglApi = g_graphicsRuntimeUsesGles ? EGL_OPENGL_ES_API : EGL_OPENGL_API;
+    if (!p_eglBindAPI(eglApi)) {
+        ReportEglError(g_graphicsRuntimeUsesGles ? "eglBindAPI(EGL_OPENGL_ES_API)" : "eglBindAPI(EGL_OPENGL_API)");
         return false;
     }
 
+    const EGLint renderableType = g_graphicsRuntimeUsesGles ? EGL_OPENGL_ES3_BIT_KHR : EGL_OPENGL_BIT;
     const EGLint configAttrs[] = {
         EGL_RED_SIZE, 8,
         EGL_GREEN_SIZE, 8,
@@ -1045,7 +1141,7 @@ static bool CreateEglContext() {
         EGL_DEPTH_SIZE, 24,
         EGL_STENCIL_SIZE, 8,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+        EGL_RENDERABLE_TYPE, renderableType,
         EGL_NONE
     };
 
@@ -1098,15 +1194,20 @@ static bool CreateEglContext() {
         return false;
     }
 
-    const EGLint contextAttrs[] = {
+    const EGLint desktopContextAttrs[] = {
         EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
         EGL_CONTEXT_MINOR_VERSION_KHR, 2,
         EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
         EGL_NONE
     };
+    const EGLint glesContextAttrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE
+    };
+    const EGLint* contextAttrs = g_graphicsRuntimeUsesGles ? glesContextAttrs : desktopContextAttrs;
     g_eglContext = p_eglCreateContext(g_eglDisplay, g_eglConfig, EGL_NO_CONTEXT, contextAttrs);
     if (g_eglContext == EGL_NO_CONTEXT) {
-        ReportEglError("eglCreateContext(3.2 core)");
+        ReportEglError(g_graphicsRuntimeUsesGles ? "eglCreateContext(GLES3)" : "eglCreateContext(3.2 core)");
         g_eglContext = p_eglCreateContext(g_eglDisplay, g_eglConfig, EGL_NO_CONTEXT, nullptr);
     }
     if (g_eglContext == EGL_NO_CONTEXT) {
@@ -1114,15 +1215,11 @@ static bool CreateEglContext() {
         return false;
     }
 
-    if (!p_eglMakeCurrent(g_eglDisplay, g_eglSurface, g_eglSurface, g_eglContext)) {
-        ReportEglError("eglMakeCurrent");
-        return false;
-    }
-
     const char* vendor = p_eglQueryString ? p_eglQueryString(g_eglDisplay, EGL_VENDOR) : nullptr;
     const char* version = p_eglQueryString ? p_eglQueryString(g_eglDisplay, EGL_VERSION) : nullptr;
-    ShimLog("EGL initialized %d.%d vendor=%s version=%s",
-        major, minor, vendor ? vendor : "?", version ? version : "?");
+    ShimLog("EGL initialized %d.%d vendor=%s version=%s context=%p unbound creatorTid=%lu",
+        major, minor, vendor ? vendor : "?", version ? version : "?",
+        g_eglContext, GetCurrentThreadId());
     return true;
 }
 
@@ -1174,6 +1271,7 @@ extern "C" __declspec(dllexport) void glfwTerminate(void) {
     if (p_eglMakeCurrent && g_eglDisplay != EGL_NO_DISPLAY) {
         p_eglMakeCurrent(g_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
+    g_eglContextThreadId = 0;
     if (p_eglDestroyContext && g_eglDisplay != EGL_NO_DISPLAY && g_eglContext != EGL_NO_CONTEXT) {
         p_eglDestroyContext(g_eglDisplay, g_eglContext);
     }
@@ -1262,6 +1360,10 @@ extern "C" __declspec(dllexport) void glfwRequestWindowAttention(GLFWwindow*) {}
 extern "C" __declspec(dllexport) GLFWmonitor* glfwGetWindowMonitor(GLFWwindow*) { return NULL; }
 extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) {}
 extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
+    if (g_window_attrib_log_count < 32) {
+        ++g_window_attrib_log_count;
+        ShimLog("glfwGetWindowAttrib #%d attr=0x%08X", g_window_attrib_log_count, a);
+    }
     switch (a) {
     case GLFW_VISIBLE:
     case GLFW_FOCUSED:
@@ -1435,41 +1537,37 @@ extern "C" __declspec(dllexport) uint64_t glfwGetTimerFrequency(void) {
 }
 
 extern "C" __declspec(dllexport) void glfwMakeContextCurrent(GLFWwindow* w) {
-    ShimLog("MakeContextCurrent %p", (void*)w);
+    const DWORD tid = GetCurrentThreadId();
+    ShimLog("MakeContextCurrent %p tid=%lu previousTid=%lu", (void*)w, tid, g_eglContextThreadId);
     if (!w) {
         if (p_eglMakeCurrent && g_eglDisplay != EGL_NO_DISPLAY) {
             p_eglMakeCurrent(g_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         }
+        if (g_eglContextThreadId == tid) {
+            g_eglContextThreadId = 0;
+        }
         return;
     }
     if (!CreateEglContext()) return;
+    if (g_eglContextThreadId != 0 && g_eglContextThreadId != tid) {
+        ShimLog("eglMakeCurrent moving context from tid=%lu to tid=%lu", g_eglContextThreadId, tid);
+    }
     if (!p_eglMakeCurrent(g_eglDisplay, g_eglSurface, g_eglSurface, g_eglContext)) {
         ReportEglError("eglMakeCurrent");
         return;
     }
-    ShimLog("eglMakeCurrent OK");
-
-    PFN_glGetString p_glGetString = nullptr;
-    if (g_opengl32) {
-        p_glGetString = reinterpret_cast<PFN_glGetString>(GetProcAddress(g_opengl32, "glGetString"));
-    }
-    if (!p_glGetString && p_eglGetProcAddress) {
-        p_glGetString = reinterpret_cast<PFN_glGetString>(p_eglGetProcAddress("glGetString"));
-    }
-    if (p_glGetString) {
-        const unsigned char* vendor = p_glGetString(GL_VENDOR);
-        const unsigned char* renderer = p_glGetString(GL_RENDERER);
-        const unsigned char* version = p_glGetString(GL_VERSION);
-        ShimLog("GL vendor=%s renderer=%s version=%s",
-            vendor ? reinterpret_cast<const char*>(vendor) : "?",
-            renderer ? reinterpret_cast<const char*>(renderer) : "?",
-            version ? reinterpret_cast<const char*>(version) : "?");
-    } else {
-        ShimLog("glGetString unresolved");
-    }
+    g_eglContextThreadId = tid;
+    ShimLog("eglMakeCurrent OK tid=%lu", tid);
 }
 extern "C" __declspec(dllexport) GLFWwindow* glfwGetCurrentContext(void) {
-    return (g_eglContext != EGL_NO_CONTEXT) ? (GLFWwindow*)&g_fake_window : NULL;
+    const DWORD tid = GetCurrentThreadId();
+    GLFWwindow* current = (g_eglContext != EGL_NO_CONTEXT && g_eglContextThreadId == tid) ? (GLFWwindow*)&g_fake_window : NULL;
+    if (g_current_context_log_count < 16) {
+        ++g_current_context_log_count;
+        ShimLog("glfwGetCurrentContext #%d tid=%lu boundTid=%lu => %p",
+            g_current_context_log_count, tid, g_eglContextThreadId, (void*)current);
+    }
+    return current;
 }
 extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
     if (g_swap_log_count < 12) {
@@ -1486,12 +1584,23 @@ extern "C" __declspec(dllexport) void glfwSwapInterval(int i) {
         p_eglSwapInterval(g_eglDisplay, i);
     }
 }
-extern "C" __declspec(dllexport) int  glfwExtensionSupported(const char*) { return GLFW_FALSE; }
+extern "C" __declspec(dllexport) int glfwExtensionSupported(const char* name) {
+    if (g_extension_log_count < 32) {
+        ++g_extension_log_count;
+        ShimLog("glfwExtensionSupported #%d %s => false",
+            g_extension_log_count, name ? name : "(null)");
+    }
+    return GLFW_FALSE;
+}
 extern "C" __declspec(dllexport) void* glfwGetProcAddress(const char* name) {
-    void* p = p_eglGetProcAddress ? p_eglGetProcAddress(name) : NULL;
+    void* p = NULL;
+    if (g_graphicsRuntimeUsesGles && g_opengl32) p = (void*)GetProcAddress(g_opengl32, name);
+    if (!p && g_graphicsRuntimeUsesGles && g_libGLESv2) p = (void*)GetProcAddress(g_libGLESv2, name);
+    if (!p && p_eglGetProcAddress) p = p_eglGetProcAddress(name);
     if (!p && g_opengl32) p = (void*)GetProcAddress(g_opengl32, name);
+    if (!p && g_libGLESv2) p = (void*)GetProcAddress(g_libGLESv2, name);
     if (!p && g_libEGL) p = (void*)GetProcAddress(g_libEGL, name);
-    if (g_proc_log_count < 40) {
+    if (g_proc_log_count < 200) {
         ++g_proc_log_count;
         ShimLog("glfwGetProcAddress #%d %s => %p", g_proc_log_count, name ? name : "(null)", p);
     }

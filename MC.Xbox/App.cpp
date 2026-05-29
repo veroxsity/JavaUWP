@@ -509,6 +509,50 @@ static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
     WriteLog(L"CoreWindow lifecycle handlers installed");
 }
 
+static void LogTextFileTail(const std::wstring& path, const wchar_t* label, DWORD maxBytes = 16384) {
+    FILE* file = nullptr;
+    errno_t openErr = _wfopen_s(&file, path.c_str(), L"rb");
+    if (openErr != 0 || !file) {
+        WriteLogF(L"%s unavailable: %s errno=%d winerr=%u", label ? label : L"log file", path.c_str(), openErr, GetLastError());
+        return;
+    }
+
+    _fseeki64(file, 0, SEEK_END);
+    const __int64 size = _ftelli64(file);
+    if (size <= 0) {
+        fclose(file);
+        WriteLogF(L"%s empty: %s", label ? label : L"log file", path.c_str());
+        return;
+    }
+
+    const DWORD bytesToRead = static_cast<DWORD>(size < maxBytes ? size : maxBytes);
+    _fseeki64(file, size - bytesToRead, SEEK_SET);
+
+    std::string data(bytesToRead, '\0');
+    const size_t bytesRead = fread(data.data(), 1, bytesToRead, file);
+    fclose(file);
+    if (bytesRead == 0) {
+        WriteLogF(L"%s read failed: %s errno=%d", label ? label : L"log file", path.c_str(), errno);
+        return;
+    }
+
+    data.resize(bytesRead);
+    for (char& ch : data) {
+        if (ch == '\0') ch = ' ';
+    }
+
+    const int wideLen = MultiByteToWideChar(CP_UTF8, 0, data.c_str(), static_cast<int>(data.size()), nullptr, 0);
+    std::wstring wide;
+    if (wideLen > 0) {
+        wide.resize(wideLen);
+        MultiByteToWideChar(CP_UTF8, 0, data.c_str(), static_cast<int>(data.size()), wide.data(), wideLen);
+    } else {
+        wide = a2w(data.c_str());
+    }
+
+    WriteLogF(L"%s tail (%u bytes):\n%s", label ? label : L"log file", static_cast<unsigned>(bytesRead), wide.c_str());
+}
+
 static bool WriteHwndFile(const std::wstring& dir, HWND hwnd) {
     if (dir.empty() || !hwnd) return false;
 
@@ -2359,13 +2403,21 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const LaunchAuthConfig& authConfig)
 {
     const std::wstring jnaTmpDir = nativesDir;
-    const std::wstring lwjglTmpDir = exeDir;
+    const std::wstring lwjglTmpDir = exeDir + L"\\lwjgl-cache";
+    const std::wstring packagedNativesDir = packageDir + L"\\natives";
+    const std::wstring lwjglNativeDir =
+        GetFileAttributesW((packagedNativesDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesW((packagedNativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES
+            ? packagedNativesDir
+            : nativesDir;
+    const std::wstring lwjglGlfwDll = lwjglNativeDir + L"\\glfw.dll";
     const std::wstring logConfigPath = gameDir + L"\\log_configs\\client-uwp.xml";
     const std::wstring fabricLogPath = gameDir + L"\\logs\\fabric-loader.log";
 
     EnsureDirectoryTree(gameDir + L"\\logs");
     EnsureDirectoryTree(gameDir + L"\\crash-reports");
     EnsureDirectoryTree(userModsDir);
+    EnsureDirectoryTree(lwjglTmpDir);
 
     if (!RedirectStdStreams(javaLog)) {
         WriteLogF(L"Failed to redirect stdout/stderr errno=%d winerr=%u", errno, GetLastError());
@@ -2406,12 +2458,16 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Djna.nounpack=true");
     vmOptionStorage.push_back("-Djna.boot.library.name=jnidispatch");
     vmOptionStorage.push_back("-Djna.boot.library.path=" + w2a(fwd(nativesDir)));
-    vmOptionStorage.push_back("-Djava.library.path=" + w2a(fwd(nativesDir)));
-    vmOptionStorage.push_back("-Dorg.lwjgl.librarypath=" + w2a(fwd(nativesDir)));
+    vmOptionStorage.push_back("-Djava.library.path=" + w2a(fwd(lwjglNativeDir)));
+    vmOptionStorage.push_back("-Dorg.lwjgl.librarypath=" + w2a(fwd(lwjglNativeDir)));
     vmOptionStorage.push_back("-Dorg.lwjgl.util.Debug=true");
     vmOptionStorage.push_back("-Dorg.lwjgl.util.DebugLoader=true");
+    vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractPath=" + w2a(fwd(lwjglTmpDir)));
     vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractDirectory=" + w2a(fwd(lwjglTmpDir)));
-    vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(nativesDir + L"\\glfw.dll")));
+    vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractForce=true");
+    vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(lwjglGlfwDll)));
+    WriteLogF(L"LWJGL native directory: %s", lwjglNativeDir.c_str());
+    WriteLogF(L"LWJGL GLFW library forced: %s", lwjglGlfwDll.c_str());
     std::wstring graphicsRuntime = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");
     if (graphicsRuntime.empty()) {
         graphicsRuntime = L"mesa";
@@ -2546,6 +2602,7 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     }
 
     if (CheckAndLogJavaException(env, L"CallStaticVoidMethod(main)")) {
+        LogTextFileTail(javaLog, L"java_output.log");
         return false;
     }
 

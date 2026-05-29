@@ -57,6 +57,7 @@ public:
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
 using namespace ABI::Windows::ApplicationModel::Core;
+using namespace ABI::Windows::ApplicationModel;
 using namespace ABI::Windows::Storage;
 using namespace ABI::Windows::UI::Core;
 using namespace ABI::Windows::Foundation;
@@ -68,6 +69,14 @@ static HRESULT g_windowInteropHr = E_NOTIMPL;
 static HRESULT g_getWindowHandleHr = E_NOTIMPL;
 static HWND g_windowHandle = NULL;
 static ComPtr<ICoreWindow> g_authWindow;
+static std::atomic<bool> g_minecraftRunning{ false };
+using CoreWindowClosedHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CCoreWindowEventArgs_t;
+using CoreWindowVisibilityHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CVisibilityChangedEventArgs_t;
+static ComPtr<CoreWindowClosedHandler> g_coreWindowClosedHandler;
+static ComPtr<CoreWindowVisibilityHandler> g_coreWindowVisibilityHandler;
+static EventRegistrationToken g_coreWindowClosedToken = {};
+static EventRegistrationToken g_coreWindowVisibilityToken = {};
+static bool g_coreWindowLifecycleHooksInstalled = false;
 static constexpr wchar_t kEGLNativeWindowTypeProperty[] = L"EGLNativeWindowTypeProperty";
 static constexpr char kMicrosoftAuthClientId[] = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
 static constexpr char kMicrosoftAuthScopes[] = "XboxLive.signin offline_access";
@@ -397,6 +406,107 @@ static void WriteLogF(const wchar_t* fmt, ...) {
     vswprintf_s(buf.data(), buf.size(), fmt, args);
     va_end(args);
     WriteLog(buf.data());
+}
+
+static void TerminateIfMinecraftRunning(const wchar_t* reason) {
+    if (!g_minecraftRunning.load()) {
+        WriteLogF(L"%s ignored; Minecraft is not running", reason ? reason : L"Lifecycle event");
+        return;
+    }
+
+    WriteLogF(L"%s while Minecraft is running; terminating host process", reason ? reason : L"Lifecycle event");
+    ExitProcess(0);
+}
+
+static void RegisterLifecycleHandlers(ICoreApplication* coreApp) {
+    if (!coreApp) return;
+
+    EventRegistrationToken token = {};
+    HRESULT hr = coreApp->add_Suspending(
+        Callback<IEventHandler<SuspendingEventArgs*>>(
+            [](IInspectable*, ISuspendingEventArgs*) -> HRESULT {
+                TerminateIfMinecraftRunning(L"CoreApplication Suspending");
+                return S_OK;
+            }).Get(),
+        &token);
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreApplication add_Suspending failed hr=0x%08X", hr);
+    }
+
+    hr = coreApp->add_Resuming(
+        Callback<IEventHandler<IInspectable*>>(
+            [](IInspectable*, IInspectable*) -> HRESULT {
+                WriteLog(L"CoreApplication Resuming");
+                return S_OK;
+            }).Get(),
+        &token);
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreApplication add_Resuming failed hr=0x%08X", hr);
+    }
+
+    ComPtr<ICoreApplication2> coreApp2;
+    hr = coreApp->QueryInterface(IID_PPV_ARGS(&coreApp2));
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreApplication2 unavailable hr=0x%08X", hr);
+        return;
+    }
+
+    hr = coreApp2->add_EnteredBackground(
+        Callback<IEventHandler<EnteredBackgroundEventArgs*>>(
+            [](IInspectable*, IEnteredBackgroundEventArgs*) -> HRESULT {
+                TerminateIfMinecraftRunning(L"CoreApplication EnteredBackground");
+                return S_OK;
+            }).Get(),
+        &token);
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreApplication add_EnteredBackground failed hr=0x%08X", hr);
+    }
+
+    hr = coreApp2->add_LeavingBackground(
+        Callback<IEventHandler<LeavingBackgroundEventArgs*>>(
+            [](IInspectable*, ILeavingBackgroundEventArgs*) -> HRESULT {
+                WriteLog(L"CoreApplication LeavingBackground");
+                return S_OK;
+            }).Get(),
+        &token);
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreApplication add_LeavingBackground failed hr=0x%08X", hr);
+    }
+}
+
+static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
+    if (!window || g_coreWindowLifecycleHooksInstalled) return;
+
+    g_coreWindowClosedHandler = Callback<CoreWindowClosedHandler>(
+        [](ICoreWindow*, ICoreWindowEventArgs*) -> HRESULT {
+            TerminateIfMinecraftRunning(L"CoreWindow Closed");
+            return S_OK;
+        });
+
+    HRESULT hr = window->add_Closed(g_coreWindowClosedHandler.Get(), &g_coreWindowClosedToken);
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreWindow add_Closed failed hr=0x%08X", hr);
+    }
+
+    g_coreWindowVisibilityHandler = Callback<CoreWindowVisibilityHandler>(
+        [](ICoreWindow*, IVisibilityChangedEventArgs* args) -> HRESULT {
+            boolean visible = true;
+            if (args) {
+                args->get_Visible(&visible);
+            }
+            WriteLogF(L"CoreWindow VisibilityChanged visible=%d minecraftRunning=%d",
+                visible ? 1 : 0,
+                g_minecraftRunning.load() ? 1 : 0);
+            return S_OK;
+        });
+
+    hr = window->add_VisibilityChanged(g_coreWindowVisibilityHandler.Get(), &g_coreWindowVisibilityToken);
+    if (FAILED(hr)) {
+        WriteLogF(L"CoreWindow add_VisibilityChanged failed hr=0x%08X", hr);
+    }
+
+    g_coreWindowLifecycleHooksInstalled = true;
+    WriteLog(L"CoreWindow lifecycle handlers installed");
 }
 
 static bool WriteHwndFile(const std::wstring& dir, HWND hwnd) {
@@ -2483,7 +2593,8 @@ public:
                             if (args) {
                                 args->put_Handled(TRUE);
                             }
-                            WriteLog(L"SetWindow: BackRequested handled");
+                            WriteLogF(L"SetWindow: BackRequested handled minecraftRunning=%d",
+                                g_minecraftRunning.load() ? 1 : 0);
                             return S_OK;
                         }).Get(),
                     &token);
@@ -2518,6 +2629,7 @@ public:
         } else {
             WriteLogF(L"SetWindow: failed to query ICoreWindowInterop hr=0x%08X", g_windowInteropHr);
         }
+        RegisterCoreWindowLifecycleHandlers(window);
         PublishCoreWindowProperty(window);
         HRESULT activateHr = window->Activate();
         if (FAILED(activateHr)) {
@@ -2656,10 +2768,13 @@ public:
             cp += fwd(jars[i]);
         }
         WriteLog(L"Launching embedded JVM");
+        g_minecraftRunning.store(true);
         if (!RunEmbeddedMinecraft(exeDir, packageDir, jreDir, gameDir, assetsDir, nativesDir, bundledModsDir, userModsDir, clientJar, javaLog, argsPath, cp, authConfig)) {
+            g_minecraftRunning.store(false);
             WriteLog(L"Embedded JVM launch failed");
             return E_FAIL;
         }
+        g_minecraftRunning.store(false);
         return S_OK;
     }
 
@@ -2682,6 +2797,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     GetActivationFactory(
         HStringReference(RuntimeClass_Windows_ApplicationModel_Core_CoreApplication).Get(),
         &coreApp);
+    RegisterLifecycleHandlers(coreApp.Get());
     coreApp->Run(Make<AppSource>().Get());
     RoUninitialize();
     return 0;

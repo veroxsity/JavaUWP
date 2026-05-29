@@ -1255,6 +1255,7 @@ extern "C" __declspec(dllexport) int glfwInit(void) {
 }
 
 extern "C" __declspec(dllexport) void glfwTerminate(void) {
+    ShimLog("glfwTerminate");
     if (g_coreWindow && g_keyboardHooksInstalled) {
         g_coreWindow->remove_KeyDown(g_keyDownToken);
         g_coreWindow->remove_KeyUp(g_keyUpToken);
@@ -1287,6 +1288,7 @@ extern "C" __declspec(dllexport) void glfwTerminate(void) {
     g_eglConfig = nullptr;
     g_nativeWindowPropertySet.Reset();
     g_initialised = FALSE;
+    ShimLog("glfwTerminate complete");
 }
 
 extern "C" __declspec(dllexport) void glfwInitHint(int,int) {}
@@ -1328,7 +1330,10 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
     return (GLFWwindow*)&g_fake_window;
 }
 
-extern "C" __declspec(dllexport) void glfwDestroyWindow(GLFWwindow*) { g_should_close = TRUE; }
+extern "C" __declspec(dllexport) void glfwDestroyWindow(GLFWwindow*) {
+    ShimLog("glfwDestroyWindow");
+    g_should_close = TRUE;
+}
 extern "C" __declspec(dllexport) int  glfwWindowShouldClose(GLFWwindow*) { return g_should_close ? GLFW_TRUE : GLFW_FALSE; }
 extern "C" __declspec(dllexport) void glfwSetWindowShouldClose(GLFWwindow*, int v) { g_should_close = (v != 0); }
 extern "C" __declspec(dllexport) void glfwSetWindowTitle(GLFWwindow*, const char*) {}

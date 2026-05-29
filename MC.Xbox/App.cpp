@@ -2235,6 +2235,7 @@ done:
 }
 
 static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
+    const std::wstring& packageDir,
     const std::wstring& jreDir,
     const std::wstring& gameDir,
     const std::wstring& assetsDir,
@@ -2298,6 +2299,22 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Djava.library.path=" + w2a(fwd(nativesDir)));
     vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractDirectory=" + w2a(fwd(lwjglTmpDir)));
     vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(nativesDir + L"\\glfw.dll")));
+    std::wstring graphicsRuntime = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");
+    if (graphicsRuntime.empty()) {
+        graphicsRuntime = L"mesa";
+    }
+    const std::wstring packagedOpenGl = packageDir + L"\\graphics\\" + graphicsRuntime + L"\\opengl32.dll";
+    const std::wstring localOpenGl = exeDir + L"\\graphics\\" + graphicsRuntime + L"\\opengl32.dll";
+    const std::wstring selectedOpenGl =
+        GetFileAttributesW(packagedOpenGl.c_str()) != INVALID_FILE_ATTRIBUTES
+            ? packagedOpenGl
+            : localOpenGl;
+    if (GetFileAttributesW(selectedOpenGl.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        vmOptionStorage.push_back("-Dorg.lwjgl.opengl.libname=" + w2a(fwd(selectedOpenGl)));
+        WriteLogF(L"LWJGL OpenGL library forced: %s", selectedOpenGl.c_str());
+    } else {
+        WriteLogF(L"LWJGL OpenGL library override missing: %s", selectedOpenGl.c_str());
+    }
     vmOptionStorage.push_back("-Dfabric.gameJarPath=" + w2a(fwd(clientJar)));
     vmOptionStorage.push_back("-Dfabric.modsFolder=" + w2a(fwd(userModsDir)));
     if (GetFileAttributesW(bundledModsDir.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -2629,7 +2646,7 @@ public:
             cp += fwd(jars[i]);
         }
         WriteLog(L"Launching embedded JVM");
-        if (!RunEmbeddedMinecraft(exeDir, jreDir, gameDir, assetsDir, nativesDir, bundledModsDir, userModsDir, clientJar, javaLog, argsPath, cp, authConfig)) {
+        if (!RunEmbeddedMinecraft(exeDir, packageDir, jreDir, gameDir, assetsDir, nativesDir, bundledModsDir, userModsDir, clientJar, javaLog, argsPath, cp, authConfig)) {
             WriteLog(L"Embedded JVM launch failed");
             return E_FAIL;
         }

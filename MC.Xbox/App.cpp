@@ -2290,6 +2290,8 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Dfabric.log.level=debug");
     vmOptionStorage.push_back("-Dfabric.debug.throwDirectly=true");
     vmOptionStorage.push_back("-Dmixin.debug.verbose=true");
+    vmOptionStorage.push_back("-Dorg.lwjgl.util.Debug=true");
+    vmOptionStorage.push_back("-Dorg.lwjgl.util.DebugLoader=true");
     vmOptionStorage.push_back("-Djava.io.tmpdir=" + w2a(fwd(jnaTmpDir)));
     vmOptionStorage.push_back("-Djna.tmpdir=" + w2a(fwd(jnaTmpDir)));
     vmOptionStorage.push_back("-Djna.nosys=true");
@@ -2378,35 +2380,41 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         return false;
     }
 
+    auto destroyVmAndFail = [&]() {
+        const jint destroyResult = vm->DestroyJavaVM();
+        WriteLogF(L"DestroyJavaVM after failed launch => %d", destroyResult);
+        return false;
+    };
+
     jclass mainClass = env->FindClass("net/fabricmc/loader/impl/launch/knot/KnotClient");
     if (!mainClass || CheckAndLogJavaException(env, L"FindClass(KnotClient)")) {
-        return false;
+        return destroyVmAndFail();
     }
 
     jmethodID mainMethod = env->GetStaticMethodID(mainClass, "main", "([Ljava/lang/String;)V");
     if (!mainMethod || CheckAndLogJavaException(env, L"GetStaticMethodID(main)")) {
-        return false;
+        return destroyVmAndFail();
     }
 
     jclass stringClass = env->FindClass("java/lang/String");
     if (!stringClass || CheckAndLogJavaException(env, L"FindClass(String)")) {
-        return false;
+        return destroyVmAndFail();
     }
 
     jobjectArray argv = env->NewObjectArray(static_cast<jsize>(appArgs.size()), stringClass, nullptr);
     if (!argv || CheckAndLogJavaException(env, L"NewObjectArray")) {
-        return false;
+        return destroyVmAndFail();
     }
 
     for (jsize i = 0; i < static_cast<jsize>(appArgs.size()); ++i) {
         jstring value = env->NewStringUTF(appArgs[i].c_str());
         if (!value || CheckAndLogJavaException(env, L"NewStringUTF")) {
-            return false;
+            return destroyVmAndFail();
         }
         env->SetObjectArrayElement(argv, i, value);
         env->DeleteLocalRef(value);
         if (CheckAndLogJavaException(env, L"SetObjectArrayElement")) {
-            return false;
+            return destroyVmAndFail();
         }
     }
 
@@ -2433,7 +2441,7 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     }
 
     if (CheckAndLogJavaException(env, L"CallStaticVoidMethod(main)")) {
-        return false;
+        return destroyVmAndFail();
     }
 
     WriteLog(L"KnotClient.main returned");

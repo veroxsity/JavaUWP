@@ -2445,9 +2445,8 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     }
 
     WriteLog(L"KnotClient.main returned");
-    const jint destroyResult = vm->DestroyJavaVM();
-    WriteLogF(L"DestroyJavaVM => %d", destroyResult);
-    return true;
+    WriteLog(L"Minecraft exited; terminating host process instead of destroying embedded JVM");
+    ExitProcess(0);
 }
 
 class App : public RuntimeClass<RuntimeClassFlags<WinRtClassicComMix>, IFrameworkView>

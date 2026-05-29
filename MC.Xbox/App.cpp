@@ -2299,6 +2299,9 @@ static bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Djna.boot.library.name=jnidispatch");
     vmOptionStorage.push_back("-Djna.boot.library.path=" + w2a(fwd(nativesDir)));
     vmOptionStorage.push_back("-Djava.library.path=" + w2a(fwd(nativesDir)));
+    vmOptionStorage.push_back("-Dorg.lwjgl.librarypath=" + w2a(fwd(nativesDir)));
+    vmOptionStorage.push_back("-Dorg.lwjgl.util.Debug=true");
+    vmOptionStorage.push_back("-Dorg.lwjgl.util.DebugLoader=true");
     vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractDirectory=" + w2a(fwd(lwjglTmpDir)));
     vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(nativesDir + L"\\glfw.dll")));
     std::wstring graphicsRuntime = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");

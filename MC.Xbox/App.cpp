@@ -27,6 +27,7 @@
 #include <functional>
 #include <new>
 #include <cmath>
+#include <mutex>
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <d3d11_1.h>
@@ -787,6 +788,11 @@ struct DownloadManifestEntry {
 
 using DownloadProgressCallback = std::function<void(const wchar_t*, const wchar_t*, float)>;
 
+struct DownloadOptions {
+    bool forceRepair = false;
+    unsigned workerCount = 6;
+};
+
 static std::wstring TrimTrailingSlash(std::wstring path) {
     while (!path.empty() && (path.back() == L'\\' || path.back() == L'/')) {
         path.pop_back();
@@ -938,6 +944,91 @@ static bool ReadDownloadManifest(const std::wstring& path, std::vector<DownloadM
     return true;
 }
 
+static bool DeleteDirectoryTree(const std::wstring& path) {
+    if (path.empty() || path.size() < 4) return false;
+
+    const DWORD attrs = GetFileAttributesW(path.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) return true;
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+        return DeleteFileW(path.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND;
+    }
+
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((path + L"\\*").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+            const std::wstring child = path + L"\\" + fd.cFileName;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                DeleteDirectoryTree(child);
+            } else {
+                SetFileAttributesW(child.c_str(), FILE_ATTRIBUTE_NORMAL);
+                DeleteFileW(child.c_str());
+            }
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+
+    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+    return RemoveDirectoryW(path.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND;
+}
+
+static std::wstring DownloadMarkerPath(const std::wstring& runtimeRoot) {
+    return runtimeRoot + L"\\.download_manifest";
+}
+
+static std::wstring BuildDownloadMarker(const std::wstring& manifestPath) {
+    std::string sha1;
+    Sha1File(manifestPath, &sha1);
+    return std::wstring(L"markerVersion=1\n") +
+        L"minecraft=" + std::wstring(kMinecraftVersionW) + L"\n" +
+        L"fabricLoader=" + a2w(kFabricLoaderVersion) + L"\n" +
+        L"assetIndex=" + a2w(kMinecraftAssetIndex) + L"\n" +
+        L"manifestSha1=" + a2w(sha1.c_str()) + L"\n";
+}
+
+static void CleanupDownloadedRuntimeFiles(const std::wstring& runtimeRoot, const wchar_t* reason) {
+    WriteLogF(L"Cleaning downloaded runtime files reason=%s", reason ? reason : L"unknown");
+    DeleteDirectoryTree(runtimeRoot + L"\\assets");
+    DeleteDirectoryTree(runtimeRoot + L"\\game\\libraries");
+    DeleteDirectoryTree(runtimeRoot + L"\\game\\versions");
+    DeleteFileW(DownloadMarkerPath(runtimeRoot).c_str());
+}
+
+static bool EnsureDownloadMarkerMatches(
+    const std::wstring& manifestPath,
+    const std::wstring& runtimeRoot,
+    bool forceRepair) {
+    if (forceRepair) {
+        CleanupDownloadedRuntimeFiles(runtimeRoot, L"repair requested");
+        return true;
+    }
+
+    const std::wstring expected = BuildDownloadMarker(manifestPath);
+    std::wstring actual;
+    if (!ReadTextFile(DownloadMarkerPath(runtimeRoot), actual)) {
+        return true;
+    }
+    if (actual == expected) {
+        return true;
+    }
+
+    CleanupDownloadedRuntimeFiles(runtimeRoot, L"manifest marker changed");
+    return true;
+}
+
+static void MarkDownloadManifestCurrent(const std::wstring& manifestPath, const std::wstring& runtimeRoot) {
+    if (WriteTextFile(DownloadMarkerPath(runtimeRoot), BuildDownloadMarker(manifestPath))) {
+        WriteLog(L"Download manifest marker written");
+    } else {
+        WriteLogF(L"Failed to write download manifest marker err=%u", GetLastError());
+    }
+}
+
+static constexpr int kDownloadFileAttempts = 5;
+static constexpr DWORD kDownloadRetryBaseDelayMs = 750;
+
 static std::wstring BuildRedirectUrl(const std::wstring& currentUrl, const std::wstring& location) {
     if (location.find(L"://") != std::wstring::npos) {
         return location;
@@ -1008,6 +1099,7 @@ static bool DownloadUrlToFile(
             WriteLogF(L"WinHttpOpen failed err=%u", GetLastError());
             return false;
         }
+        WinHttpSetTimeouts(session, 15000, 15000, 30000, 30000);
 
         HINTERNET connect = WinHttpConnect(session, host.c_str(), uc.nPort, 0);
         if (!connect) {
@@ -1145,9 +1237,13 @@ static bool DownloadUrlToFile(
 static bool EnsureRuntimeDownloads(
     const std::wstring& manifestPath,
     const std::wstring& runtimeRoot,
-    const DownloadProgressCallback& progress = DownloadProgressCallback()) {
+    const DownloadProgressCallback& progress = DownloadProgressCallback(),
+    const DownloadOptions& options = DownloadOptions()) {
     if (GetFileAttributesW(manifestPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
         WriteLogF(L"No download manifest found at %s", manifestPath.c_str());
+        return false;
+    }
+    if (!EnsureDownloadMarkerMatches(manifestPath, runtimeRoot, options.forceRepair)) {
         return false;
     }
 
@@ -1170,6 +1266,7 @@ static bool EnsureRuntimeDownloads(
     size_t verified = 0;
     size_t downloaded = 0;
     unsigned long long completedBytes = 0;
+    std::vector<size_t> missing;
     const std::wstring totalText = std::to_wstring(entries.size()) + L" files, " +
         std::to_wstring(totalBytes / (1024ULL * 1024ULL)) + L" MB";
     auto formatDownloadDetail = [&](size_t fileIndex, unsigned long long bytesDone) {
@@ -1201,64 +1298,200 @@ static bool EnsureRuntimeDownloads(
             continue;
         }
 
-        const std::wstring tempPath = finalPath + L".download";
-        DeleteFileW(tempPath.c_str());
-        if (downloaded < 25 || downloaded % 100 == 0) {
-            WriteLogF(L"Downloading [%zu/%zu] %s", i + 1, entries.size(), entry.relativePath.c_str());
+        missing.push_back(i);
+    }
+
+    if (missing.empty()) {
+        WriteLogF(L"Download pass complete verified=%zu downloaded=0", verified);
+        MarkDownloadManifestCurrent(manifestPath, runtimeRoot);
+        if (progress) progress(L"Download complete", L"Launching Minecraft", 1.0f);
+        return true;
+    }
+
+    const unsigned workerCount = (std::max)(1u, (std::min)(8u, options.workerCount));
+    const unsigned workersToStart = (std::min<unsigned>)(workerCount, static_cast<unsigned>(missing.size()));
+    WriteLogF(L"Downloading missing runtime files missing=%zu workers=%u", missing.size(), workersToStart);
+
+    std::mutex stateMutex;
+    std::vector<unsigned long long> inProgressBytes(entries.size(), 0);
+    size_t nextMissing = 0;
+    bool failed = false;
+    std::wstring failureStatus;
+    std::wstring failureDetail;
+    int activeWorkers = static_cast<int>(workersToStart);
+
+    auto workerProc = [&]() {
+        for (;;) {
+            size_t entryIndex = 0;
+            {
+                std::lock_guard<std::mutex> lock(stateMutex);
+                if (failed || nextMissing >= missing.size()) {
+                    break;
+                }
+                entryIndex = missing[nextMissing++];
+                inProgressBytes[entryIndex] = 0;
+            }
+
+            const auto& entry = entries[entryIndex];
+            const std::wstring finalPath = JoinRuntimeRelativePath(runtimeRoot, entry.relativePath);
+            const std::wstring tempPath = finalPath + L".download";
+            DeleteFileW(tempPath.c_str());
+
+            if (entryIndex < 25 || entryIndex % 100 == 0) {
+                WriteLogF(L"Downloading [%zu/%zu] %s", entryIndex + 1, entries.size(), entry.relativePath.c_str());
+            }
+
+            auto progressCallback = [&](unsigned long long fileBytesRead) {
+                const unsigned long long cappedFileBytes = entry.size > 0
+                    ? std::min<unsigned long long>(fileBytesRead, entry.size)
+                    : fileBytesRead;
+                std::lock_guard<std::mutex> lock(stateMutex);
+                inProgressBytes[entryIndex] = cappedFileBytes;
+            };
+
+            bool downloadedOk = false;
+            for (int attempt = 1; attempt <= kDownloadFileAttempts; ++attempt) {
+                {
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    if (failed) {
+                        break;
+                    }
+                    inProgressBytes[entryIndex] = 0;
+                }
+
+                DeleteFileW(tempPath.c_str());
+                if (attempt > 1) {
+                    const DWORD delayMs = kDownloadRetryBaseDelayMs * static_cast<DWORD>(attempt - 1);
+                    WriteLogF(L"Retrying download attempt=%d/%d delayMs=%u file=%s",
+                        attempt,
+                        kDownloadFileAttempts,
+                        delayMs,
+                        entry.relativePath.c_str());
+                    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+                }
+
+                if (DownloadUrlToFile(entry.url, tempPath, progressCallback)) {
+                    downloadedOk = true;
+                    break;
+                }
+
+                WriteLogF(L"Download attempt failed attempt=%d/%d file=%s",
+                    attempt,
+                    kDownloadFileAttempts,
+                    entry.relativePath.c_str());
+            }
+
+            if (!downloadedOk) {
+                DeleteFileW(tempPath.c_str());
+                std::lock_guard<std::mutex> lock(stateMutex);
+                failed = true;
+                failureStatus = L"Download failed after retries";
+                failureDetail = entry.relativePath;
+                break;
+            }
+
+            if (!FileMatchesSha1(tempPath, entry.sha1)) {
+                std::string actual;
+                Sha1File(tempPath, &actual);
+                WriteLogF(L"SHA1 mismatch for %s expected=%s actual=%s",
+                    entry.relativePath.c_str(),
+                    a2w(entry.sha1.c_str()).c_str(),
+                    a2w(actual.c_str()).c_str());
+                DeleteFileW(tempPath.c_str());
+                std::lock_guard<std::mutex> lock(stateMutex);
+                failed = true;
+                failureStatus = L"File verification failed";
+                failureDetail = entry.relativePath;
+                break;
+            }
+
+            EnsureDirectoryTree(GetParentDir(finalPath));
+            DeleteFileW(finalPath.c_str());
+            if (!MoveFileExW(tempPath.c_str(), finalPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                WriteLogF(L"MoveFileEx failed for %s err=%u", finalPath.c_str(), GetLastError());
+                DeleteFileW(tempPath.c_str());
+                std::lock_guard<std::mutex> lock(stateMutex);
+                failed = true;
+                failureStatus = L"Download install failed";
+                failureDetail = entry.relativePath;
+                break;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(stateMutex);
+                inProgressBytes[entryIndex] = 0;
+                completedBytes += entry.size;
+                ++downloaded;
+                ++verified;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(stateMutex);
+            --activeWorkers;
+        }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(workersToStart);
+    for (unsigned i = 0; i < workersToStart; ++i) {
+        workers.emplace_back(workerProc);
+    }
+
+    while (true) {
+        bool done = false;
+        bool failedSnapshot = false;
+        std::wstring failureStatusSnapshot;
+        std::wstring failureDetailSnapshot;
+        size_t verifiedSnapshot = 0;
+        unsigned long long bytesSnapshot = 0;
+        {
+            std::lock_guard<std::mutex> lock(stateMutex);
+            done = activeWorkers == 0;
+            failedSnapshot = failed;
+            failureStatusSnapshot = failureStatus;
+            failureDetailSnapshot = failureDetail;
+            verifiedSnapshot = verified;
+            bytesSnapshot = completedBytes;
+            for (unsigned long long bytes : inProgressBytes) {
+                bytesSnapshot += bytes;
+            }
         }
 
         if (progress) {
             const float ratio = totalBytes > 0
-                ? static_cast<float>(static_cast<double>(completedBytes) / static_cast<double>(totalBytes))
-                : static_cast<float>(static_cast<double>(i) / static_cast<double>(entries.size()));
-            const std::wstring detail = formatDownloadDetail(i + 1, completedBytes);
-            progress(L"Downloading Minecraft files", detail.c_str(), ratio);
+                ? static_cast<float>(static_cast<double>(bytesSnapshot) / static_cast<double>(totalBytes))
+                : static_cast<float>(static_cast<double>(verifiedSnapshot) / static_cast<double>(entries.size()));
+            if (failedSnapshot) {
+                progress(
+                    failureStatusSnapshot.empty() ? L"Download failed" : failureStatusSnapshot.c_str(),
+                    failureDetailSnapshot.c_str(),
+                    ratio);
+            } else {
+                const std::wstring detail = formatDownloadDetail(verifiedSnapshot, bytesSnapshot);
+                progress(L"Downloading Minecraft files", detail.c_str(), ratio);
+            }
         }
 
-        auto progressCallback = [&](unsigned long long fileBytesRead) {
-            if (!progress) return;
-            const unsigned long long cappedFileBytes = entry.size > 0
-                ? std::min<unsigned long long>(fileBytesRead, entry.size)
-                : 0;
-            const float ratio = totalBytes > 0
-                ? static_cast<float>(static_cast<double>(completedBytes + cappedFileBytes) / static_cast<double>(totalBytes))
-                : static_cast<float>(static_cast<double>(i) / static_cast<double>(entries.size()));
-            const std::wstring detail = formatDownloadDetail(i + 1, completedBytes + cappedFileBytes);
-            progress(L"Downloading Minecraft files", detail.c_str(), ratio);
-        };
-
-        if (!DownloadUrlToFile(entry.url, tempPath, progressCallback)) {
-            DeleteFileW(tempPath.c_str());
-            if (progress) progress(L"Download failed", entry.relativePath.c_str(), 0.0f);
-            return false;
+        if (done) {
+            break;
         }
 
-        if (!FileMatchesSha1(tempPath, entry.sha1)) {
-            std::string actual;
-            Sha1File(tempPath, &actual);
-            WriteLogF(L"SHA1 mismatch for %s expected=%s actual=%s",
-                entry.relativePath.c_str(),
-                a2w(entry.sha1.c_str()).c_str(),
-                a2w(actual.c_str()).c_str());
-            DeleteFileW(tempPath.c_str());
-            if (progress) progress(L"File verification failed", entry.relativePath.c_str(), 0.0f);
-            return false;
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
-        EnsureDirectoryTree(GetParentDir(finalPath));
-        DeleteFileW(finalPath.c_str());
-        if (!MoveFileExW(tempPath.c_str(), finalPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            WriteLogF(L"MoveFileEx failed for %s err=%u", finalPath.c_str(), GetLastError());
-            DeleteFileW(tempPath.c_str());
-            return false;
+    for (std::thread& worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
         }
+    }
 
-        completedBytes += entry.size;
-        ++downloaded;
-        ++verified;
+    if (failed) {
+        return false;
     }
 
     WriteLogF(L"Download pass complete verified=%zu downloaded=%zu", verified, downloaded);
+    MarkDownloadManifestCurrent(manifestPath, runtimeRoot);
     if (progress) progress(L"Download complete", L"Launching Minecraft", 1.0f);
     return true;
 }
@@ -1796,11 +2029,11 @@ public:
             const float top = frame.top + 34.0f;
             const float buttonH = 62.0f;
             const float buttonGap = 24.0f;
-            const wchar_t* labels[] = { L"Play", L"Mods", L"Sign out" };
+            const wchar_t* labels[] = { L"Play", L"Mods", L"Repair downloads", L"Sign out" };
 
             DrawText(title.c_str(), bodyFormat_.Get(), D2D1::RectF(left, top, menuRight, top + 42.0f), white.Get());
 
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < 4; ++i) {
                 const float y = top + 76.0f + i * (buttonH + buttonGap);
                 const D2D1_RECT_F button = D2D1::RectF(left, y, menuRight, y + buttonH);
                 if (i == state.selectedMenuIndex) {
@@ -2238,6 +2471,7 @@ static void RenderPreparationProgress(
 
 enum class MainMenuAction {
     Play,
+    RepairDownloads,
     SignOut
 };
 
@@ -2304,11 +2538,11 @@ static MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& 
         });
 
         if (upDown && !upWasDown) {
-            selected = (selected + 2) % 3;
+            selected = (selected + 3) % 4;
             state.detail = L"";
         }
         if (downDown && !downWasDown) {
-            selected = (selected + 1) % 3;
+            selected = (selected + 1) % 4;
             state.detail = L"";
         }
         if (selectDown && !selectWasDown) {
@@ -2319,6 +2553,13 @@ static MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& 
             if (selected == 1) {
                 WriteLog(L"Main menu: Mods placeholder selected");
                 state.detail = L"Mods are not implemented yet.";
+            } else if (selected == 2) {
+                WriteLog(L"Main menu: Repair downloads selected");
+                state.status = L"Repairing downloaded files";
+                state.detail = L"Downloaded Minecraft files will be rechecked";
+                RenderAuth(renderer, state);
+                SleepWithAuthUi(renderer, state, 350);
+                return MainMenuAction::RepairDownloads;
             } else {
                 WriteLog(L"Main menu: Sign out selected");
                 state.status = L"Signing out";
@@ -3387,6 +3628,7 @@ public:
             }
         }
 
+        bool repairDownloads = false;
         LaunchAuthConfig authConfig;
         while (true) {
             if (!ResolveLaunchAuthConfig(g_authWindow.Get(), authConfig)) {
@@ -3396,6 +3638,10 @@ public:
 
             const MainMenuAction menuAction = ShowMainMenu(g_authWindow.Get(), authConfig);
             if (menuAction == MainMenuAction::Play) {
+                break;
+            }
+            if (menuAction == MainMenuAction::RepairDownloads) {
+                repairDownloads = true;
                 break;
             }
 
@@ -3444,21 +3690,37 @@ public:
                 L"Validating Minecraft downloads",
                 0.0f);
 
-            if (!EnsureRuntimeDownloads(
-                manifestPath,
-                exeDir,
-                [&](const wchar_t* status, const wchar_t* detail, float progress) {
-                    RenderPreparationProgress(downloadRenderer, downloadState, status, detail, progress);
-                })) {
-                WriteLog(L"Runtime download/bootstrap failed");
+            int downloadAttempt = 0;
+            for (;;) {
+                ++downloadAttempt;
+                DownloadOptions downloadOptions;
+                downloadOptions.forceRepair = repairDownloads && downloadAttempt == 1;
+                downloadOptions.workerCount = 6;
+
+                if (EnsureRuntimeDownloads(
+                    manifestPath,
+                    exeDir,
+                    [&](const wchar_t* status, const wchar_t* detail, float progress) {
+                        RenderPreparationProgress(downloadRenderer, downloadState, status, detail, progress);
+                    },
+                    downloadOptions)) {
+                    break;
+                }
+
+                WriteLogF(L"Runtime download/bootstrap failed attempt=%d; retrying", downloadAttempt);
                 RenderPreparationProgress(
                     downloadRenderer,
                     downloadState,
                     L"Download failed",
-                    L"Could not prepare Minecraft files",
+                    L"Could not prepare Minecraft files. Retrying in 10 seconds",
                     1.0f);
-                SleepWithAuthUi(downloadRenderer, downloadState, 3500);
-                return E_FAIL;
+                SleepWithAuthUi(downloadRenderer, downloadState, 10000);
+                RenderPreparationProgress(
+                    downloadRenderer,
+                    downloadState,
+                    L"Retrying download",
+                    L"Checking Minecraft files again",
+                    0.0f);
             }
 
             SleepWithAuthUi(downloadRenderer, downloadState, 250);

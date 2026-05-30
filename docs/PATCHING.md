@@ -89,6 +89,8 @@ LocalState\natives
 
 The game uses `LocalState\game` for saves, config, logs, mods, downloaded libraries, downloaded client jars, and other writable files. Bundled compatibility mods are copied there during launch. Mojang libraries, Minecraft client jars, version JSON files, asset indexes, and asset objects are verified from `download_manifest.tsv` and downloaded into `LocalState` after Minecraft ownership verification.
 
+`MC.Xbox.exe` writes a `LocalState\.download_manifest` marker containing the selected Minecraft/Fabric versions and packaged manifest hash. If that marker changes, the launcher removes downloaded official runtime folders before validating the new manifest. The signed-in menu's `Repair downloads` action forces this cleanup for the current manifest.
+
 ## Version bumps
 
 When changing Minecraft, Fabric Loader, or key libraries:

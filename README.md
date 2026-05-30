@@ -10,10 +10,11 @@ The project is usable for active launcher development:
 
 - Minecraft 1.21.11 with Fabric Loader 0.19.2 boots in Xbox Developer Mode.
 - Dynamic Microsoft device-code auth works and persists the session in the UWP Credential Locker.
-- The launcher shows a signed-in menu with Play, Mods placeholder, and Sign out.
+- The launcher shows a signed-in menu with Play, Mods placeholder, Repair downloads, and Sign out.
 - Sign out clears the saved Microsoft refresh token and returns to the device-code sign-in flow.
 - The host skips the LocalState runtime copy on warm launches when the installed package has not changed.
 - The APPX no longer bundles Mojang libraries, Minecraft client jars, asset indexes, or asset objects. It verifies Java ownership, then downloads official files into `LocalState` from the generated `download_manifest.tsv`.
+- Runtime downloads use a manifest marker in `LocalState`; changing the packaged manifest cleans old downloaded official files before re-downloading.
 - Menus render through Mesa on the Xbox GPU.
 - Keyboard and basic text input work.
 - Single player reaches gameplay.
@@ -76,7 +77,7 @@ The Mesa UWP runtime DLLs needed by the build are tracked in `mesa-runtime/`.
 2. The launcher checks for a saved Microsoft refresh token.
 3. If needed, it shows a device-code sign-in screen with a QR code for `microsoft.com/link`.
 4. The launcher verifies Xbox/Minecraft Services ownership and loads the Minecraft profile.
-5. The signed-in menu opens with Play, Mods placeholder, and Sign out.
+5. The signed-in menu opens with Play, Mods placeholder, Repair downloads, and Sign out.
 6. Play prepares launcher-owned files in `LocalState` only when the packaged runtime has changed.
 7. The app verifies all files from `download_manifest.tsv`, downloading missing or stale official Minecraft/Fabric files into `LocalState`.
 8. The app publishes the live `CoreWindow` through app properties.
@@ -95,7 +96,7 @@ Known limits include:
 - Xbox Developer Mode is the only supported target.
 - Retail mode is not supported.
 - Mods menu is currently only a placeholder.
-- First launch can take a while because official game libraries and asset objects are downloaded after sign-in.
+- First launch can take a while because official game libraries and asset objects are downloaded after sign-in. Missing/stale files are downloaded with limited parallelism.
 - Path handling is still the most sensitive area.
 - Some Java platform diagnostics can still warn or fail because the sandbox does not look like desktop Windows.
 - Controller support exists through GameInput, but game controls still need testing and tuning.

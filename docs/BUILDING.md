@@ -203,6 +203,16 @@ LocalState\assets
 
 The next launch verifies hashes and skips files that are already present.
 
+The launcher also writes a small manifest marker in `LocalState`. If the
+packaged manifest changes, the app removes old downloaded official runtime
+folders before verifying the new manifest. The signed-in menu includes
+`Repair downloads`, which forces the same cleanup and re-download path for
+corrupt or suspect local files.
+
+Missing or stale files download with limited parallelism. The first stable
+setting is six workers so the UI stays responsive and the Xbox storage path is
+not flooded with thousands of simultaneous asset writes.
+
 ## Generate Fabric remapped jars
 
 Fabric remapped jars are created by running the Fabric client once on the local desktop cache. This step is needed before the compatibility mod can compile.

@@ -169,6 +169,8 @@ if (-not (Test-Path $remappedJar)) {
     $jars += $clientJar
     $classpath = $jars -join ";"
     $remapLog = Join-Path $notesDir "fabric-remap.log"
+    $remapStdoutLog = Join-Path $notesDir "fabric-remap.stdout.log"
+    $remapStderrLog = Join-Path $notesDir "fabric-remap.stderr.log"
     New-Item -ItemType Directory -Force -Path (Join-Path $gameDir "logs") | Out-Null
 
     $javaArgs = @(
@@ -190,13 +192,22 @@ if (-not (Test-Path $remappedJar)) {
 
     Push-Location $gameDir
     try {
-        $previousErrorActionPreference = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        & $javaExe @javaArgs 2>&1 | Tee-Object -FilePath $remapLog
+        & $javaExe @javaArgs 1> $remapStdoutLog 2> $remapStderrLog
         $fabricExitCode = $LASTEXITCODE
     } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
         Pop-Location
+    }
+
+    $remapOutput = @()
+    if (Test-Path $remapStdoutLog) {
+        $remapOutput += @(Get-Content -Path $remapStdoutLog)
+    }
+    if (Test-Path $remapStderrLog) {
+        $remapOutput += @(Get-Content -Path $remapStderrLog)
+    }
+    if ($remapOutput.Count -gt 0) {
+        $remapOutput | Set-Content -Path $remapLog
+        $remapOutput | ForEach-Object { Write-Host $_ }
     }
 
     if (-not (Test-Path $remappedJar)) {

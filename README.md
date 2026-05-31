@@ -36,7 +36,7 @@ The project is currently pre-released because it is in a playable state, but it 
 After installing a pre-release or nightly build, open the Mods page, go to the Recommended section, and install at least:
 
 - Sodium
-- Controllify
+- Controlify
 
 These are strongly recommended for performance and controller support.
 
@@ -113,7 +113,7 @@ Known limits include:
 - Retail mode is not supported.
 - Xbox Series consoles are the primary target. Xbox One support is experimental and currently unreliable.
 - The Mods page is an early Modrinth integration. It installs Fabric mods for the configured Minecraft version, but broad mod compatibility still depends on each mod working inside the Xbox/UWP runtime.
-- Sodium and Controllify should be installed from the Recommended section for the best current pre-release experience.
+- Sodium and Controlify should be installed from the Recommended section for the best current pre-release experience.
 - First launch can take a while because official game libraries and asset objects are downloaded after sign-in. Missing/stale files are downloaded with limited parallelism.
 - Path handling is still the most sensitive area.
 - Some Java platform diagnostics can still warn or fail because the sandbox does not look like desktop Windows.

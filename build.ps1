@@ -5,6 +5,7 @@ param(
     [string]$McVersion,
     [string]$FabricLoader,
     [string]$AssetIndex,
+    [string]$AppxVersion = $env:APPX_VERSION,
     [switch]$KeepStaging,
     [switch]$SkipStopAppProcesses,
     [switch]$StopFileLockers
@@ -42,6 +43,49 @@ $tools = Resolve-VSTools
 $sdk = Resolve-WindowsSdk
 $sdkRoot = $sdk.Root
 $sdkVer = $sdk.Version
+
+function Assert-AppxVersion {
+    param([Parameter(Mandatory = $true)][string]$Version)
+
+    $parts = $Version -split '\.'
+    if ($parts.Count -ne 4) {
+        throw "APPX version must have four numeric fields: $Version"
+    }
+    foreach ($part in $parts) {
+        $value = 0
+        if (-not [int]::TryParse($part, [ref]$value) -or $value -lt 0 -or $value -gt 65535) {
+            throw "APPX version field is out of range 0..65535: $Version"
+        }
+    }
+}
+
+$manifestSourcePath = Join-Path $root "MC.Xbox\Package.appxmanifest"
+[xml]$sourceManifest = Get-Content $manifestSourcePath
+$baseVersionParts = ([string]$sourceManifest.Package.Identity.Version) -split '\.'
+if ($baseVersionParts.Count -ne 4) {
+    throw "Package.appxmanifest Identity Version must have four numeric fields."
+}
+$appVersionBase = "$($baseVersionParts[0]).$($baseVersionParts[1]).$($baseVersionParts[2])"
+
+# Auto-increment local builds from the package manifest base version so installs
+# update in place while CI can provide an exact APPX_VERSION for nightlies.
+$verFile = Join-Path $root ".local\app_build.txt"
+if ($AppxVersion) {
+    Assert-AppxVersion $AppxVersion
+    $appVersion = $AppxVersion
+} else {
+    $verRev = [int]$baseVersionParts[3]
+    if (Test-Path $verFile) {
+        $prevParts = ((Get-Content $verFile -Raw).Trim()) -split '\.'
+        $prevBase = if ($prevParts.Count -eq 4) { "$($prevParts[0]).$($prevParts[1]).$($prevParts[2])" } else { "" }
+        if ($prevBase -eq $appVersionBase) { $verRev = [int]$prevParts[3] + 1 }
+    }
+    if ($verRev -gt 65535) { $verRev = 65535 }
+    $appVersion = "$appVersionBase.$verRev"
+}
+New-Item -ItemType Directory -Force -Path (Split-Path $verFile) | Out-Null
+Set-Content -Path $verFile -Value $appVersion -NoNewline
+$appx = Join-Path $outDir ("BanditLauncher_{0}.appx" -f $appVersion)
 
 function Stop-BuildBlockingProcesses {
     param(
@@ -236,15 +280,13 @@ public static class BuildRestartManager
 }
 
 if (-not $SkipStopAppProcesses) {
-    $manifestPath = Join-Path $root "MC.Xbox\Package.appxmanifest"
-    [xml]$manifest = Get-Content $manifestPath
-    $packageName = $manifest.Package.Identity.Name
-    $lockPaths = if ($StopFileLockers) { @((Join-Path $outDir $ProjectConfig.AppxFileName)) } else { @() }
+    $packageName = $sourceManifest.Package.Identity.Name
+    $lockPaths = if ($StopFileLockers) { @($appx) } else { @() }
     Stop-BuildBlockingProcesses `
         -PackageName $packageName `
         -RootPath $root `
         -PackageContentPath $pkg `
-        -OutputPath (Join-Path $outDir $ProjectConfig.AppxFileName) `
+        -OutputPath $appx `
         -LockPaths $lockPaths
 }
 
@@ -302,24 +344,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $pkg "runtime\bundled-mods"
 New-Item -ItemType Directory -Force -Path (Join-Path $pkg "runtime\libraries") | Out-Null
 
 Copy-Item $mcExe (Join-Path $pkg "MC.Xbox.exe")
-# Auto-increment the package version so installs UPDATE in place (preserving LocalState)
-# instead of forcing an uninstall+reinstall. build = days since 2020 (climbs daily),
-# revision = per-day counter persisted in .local; cross-day builds always climb even if
-# the counter file is absent on a fresh clone.
-$verFile = Join-Path $root ".local\app_build.txt"
-$verBuild = [int][math]::Floor(((Get-Date) - [datetime]'2020-01-01').TotalDays)
-$verRev = 0
-if (Test-Path $verFile) {
-    $prevParts = ((Get-Content $verFile -Raw).Trim()) -split '\.'
-    if ($prevParts.Count -eq 4 -and [int]$prevParts[2] -eq $verBuild) { $verRev = [int]$prevParts[3] + 1 }
-}
-if ($verRev -gt 65535) { $verRev = 65535 }
-$appVersion = "1.0.$verBuild.$verRev"
-New-Item -ItemType Directory -Force -Path (Split-Path $verFile) | Out-Null
-Set-Content -Path $verFile -Value $appVersion -NoNewline
 
 $manifestOut = Join-Path $pkg "AppxManifest.xml"
-$manifestText = [System.IO.File]::ReadAllText((Join-Path $root "MC.Xbox\Package.appxmanifest"))
+$manifestText = [System.IO.File]::ReadAllText($manifestSourcePath)
 $manifestText = [regex]::Replace($manifestText, '(<Identity\b[^>]*\bVersion=")\d+\.\d+\.\d+\.\d+(")', ('${1}' + $appVersion + '${2}'))
 [System.IO.File]::WriteAllText($manifestOut, $manifestText)
 Write-Host "App package version: $appVersion"
@@ -467,7 +494,6 @@ if ($LASTEXITCODE -ne 0) { throw "Asset generation failed" }
 
 Write-Host "=== Packaging ==="
 $cert = Join-Path $certDir $ProjectConfig.CertificateFileName
-$appx = Join-Path $outDir $ProjectConfig.AppxFileName
 $certName = if ($env:APPX_CERT_SUBJECT) { $env:APPX_CERT_SUBJECT } else { $ProjectConfig.DefaultCertificateSubject }
 
 if (-not (Test-Path $cert)) {

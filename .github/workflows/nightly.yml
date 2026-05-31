@@ -66,15 +66,63 @@ jobs:
         shell: powershell
         run: .\scripts\prepare-ci-cache.ps1
 
+      - name: Resolve nightly package version
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [xml]$manifest = Get-Content MC.Xbox\Package.appxmanifest
+          $parts = ([string]$manifest.Package.Identity.Version) -split '\.'
+          if ($parts.Count -ne 4) {
+            throw "Package.appxmanifest Identity Version must have four numeric fields."
+          }
+
+          $base = "$($parts[0]).$($parts[1]).$($parts[2])"
+          $revision = 1
+          $repo = $env:GITHUB_REPOSITORY
+          $apiBase = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { "https://api.github.com" }
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          try {
+            $release = Invoke-RestMethod -Method Get -Uri "$apiBase/repos/$repo/releases/tags/nightly" -Headers $headers
+            if ($release.body -match 'Package version:\s+(\d+)\.(\d+)\.(\d+)\.(\d+)') {
+              $previousBase = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+              if ($previousBase -eq $base) {
+                $revision = [int]$Matches[4] + 1
+              }
+            }
+          } catch {
+            $statusCode = $null
+            if ($_.Exception.Response) {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            if ($statusCode -ne 404) {
+              throw
+            }
+          }
+
+          if ($revision -gt 65535) {
+            throw "Nightly APPX revision exceeded 65535 for base $base."
+          }
+
+          $version = "$base.$revision"
+          "APPX_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "APPX_FILE=BanditLauncher_$version.appx" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Nightly APPX version: $version"
+
       - name: Build APPX
         shell: powershell
-        run: .\build.ps1 -SkipStopAppProcesses
+        run: .\build.ps1 -SkipStopAppProcesses -AppxVersion $env:APPX_VERSION
 
       - name: Stage nightly asset
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item output\BanditLauncher_1.0.0.0.appx dist\BanditLauncher-nightly.appx -Force
+          Copy-Item "output\$env:APPX_FILE" dist\BanditLauncher-nightly.appx -Force
           $hash = Get-FileHash dist\BanditLauncher-nightly.appx -Algorithm SHA256
           "$($hash.Hash.ToLowerInvariant())  BanditLauncher-nightly.appx" | Set-Content -Path dist\BanditLauncher-nightly.sha256 -Encoding ascii
 
@@ -105,6 +153,8 @@ jobs:
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           $notes = @"
           Automated nightly build from $shortSha.
+
+          Package version: $env:APPX_VERSION
 
           Nightly releases are highly experimental builds for testing current development work. They are not full game releases, and support is not provided for nightly builds.
 

@@ -31,7 +31,6 @@ $ProjectConfig = [ordered]@{
     NotesDir                 = "staging/notes"
     PackageContentDir        = "staging/package"
     CertificateDir           = "staging/certs"
-    AppxFileName             = "BanditLauncher_1.0.0.0.appx"
     CertificateFileName      = "MC_DevMode.pfx"
     CertificatePassword      = "devmode"
     DefaultCertificateSubject = "CN=BanditVault"

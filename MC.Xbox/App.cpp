@@ -56,6 +56,7 @@
 
 #include "runtime_config.h"
 #include "qr_code.h"
+#include "third_party/miniz/miniz.h"
 
 // ICoreWindowInterop is forward-declared without a GUID, so IID_PPV_ARGS
 // cannot use it directly. Redeclare it with the correct uuid here.
@@ -1573,6 +1574,7 @@ struct ModCard {
     std::wstring filePath;
     std::wstring status;
     bool installed = false;
+    bool isModpack = false;
 };
 
 static std::mutex g_modsSearchMutex;
@@ -1854,9 +1856,10 @@ static std::wstring CacheModIcon(const std::wstring& runtimeRoot, const std::wst
     return {};
 }
 
-static std::wstring BuildModrinthSearchUrl(const char* index, int limit, int offset, const std::wstring& query) {
+static std::wstring BuildModrinthSearchUrl(const char* index, int limit, int offset, const std::wstring& query, const char* projectType) {
     const std::string facets =
-        "[[\"project_type:mod\"],[\"categories:fabric\"],[\"versions:" +
+        std::string("[[\"project_type:") + projectType +
+        "\"],[\"categories:fabric\"],[\"versions:" +
         std::string(kMinecraftVersion) +
         "\"],[\"client_side:required\",\"client_side:optional\"]]";
     std::wstring url = L"https://api.modrinth.com/v2/search?limit=" +
@@ -2066,11 +2069,12 @@ static bool LoadInstalledMods(const std::wstring& runtimeRoot, const std::wstrin
 
 static const int kModPageSize = 50;
 
-static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index, const std::wstring& query, int offset, int limit, std::vector<ModCard>& out, int& totalHits, std::wstring& error) {
+static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index, const std::wstring& query, int offset, int limit, std::vector<ModCard>& out, int& totalHits, std::wstring& error, const char* projectType) {
     using namespace winrt::Windows::Data::Json;
     error.clear();
+    const bool modpack = projectType && std::strcmp(projectType, "modpack") == 0;
 
-    const std::wstring url = BuildModrinthSearchUrl(index, limit, offset, query);
+    const std::wstring url = BuildModrinthSearchUrl(index, limit, offset, query, projectType);
     WriteLogF(L"Modrinth search url=%s", url.c_str());
     const HttpResult response = HttpGetString(url.c_str());
     if (!response.success()) {
@@ -2094,6 +2098,7 @@ static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index
             JsonObject hit = value.GetObject();
 
             ModCard card;
+            card.isModpack = modpack;
             card.projectId = JsonStringOrEmpty(hit, L"project_id");
             card.slug = JsonStringOrEmpty(hit, L"slug");
             card.title = JsonStringOrEmpty(hit, L"title");
@@ -2101,7 +2106,7 @@ static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index
             const std::wstring iconUrl = JsonStringOrEmpty(hit, L"icon_url");
             if (card.title.empty()) card.title = card.slug.empty() ? card.projectId : card.slug;
             if (card.description.empty()) {
-                card.description = L"Fabric mod for Minecraft " + a2w(kMinecraftVersion);
+                card.description = (modpack ? L"Fabric modpack for Minecraft " : L"Fabric mod for Minecraft ") + a2w(kMinecraftVersion);
             }
             card.status = std::to_wstring(JsonIntOrZero(hit, L"downloads")) + L" downloads";
             if (!iconUrl.empty()) {
@@ -2120,12 +2125,47 @@ static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index
     return true;
 }
 
+static std::atomic<bool> g_installRunning{false};
+static std::atomic<int> g_installDone{0};
+static std::atomic<int> g_installTotal{0};
+static std::atomic<bool> g_installResultReady{false};
+static std::atomic<bool> g_installResultOk{false};
+static std::mutex g_installStatusMutex;
+static std::wstring g_installStatus;
+
+static void SetInstallStatus(const std::wstring& s) {
+    std::lock_guard<std::mutex> lk(g_installStatusMutex);
+    g_installStatus = s;
+}
+
+static std::wstring GetInstallStatus() {
+    std::lock_guard<std::mutex> lk(g_installStatusMutex);
+    return g_installStatus;
+}
+
+static std::wstring MbStr(unsigned long long bytes) {
+    wchar_t buf[32];
+    swprintf(buf, 32, L"%.1f", static_cast<double>(bytes) / 1048576.0);
+    return buf;
+}
+
+static std::function<void(unsigned long long)> MakeInstallProgress(const std::wstring& label, unsigned long long total) {
+    return [label, total](unsigned long long done) {
+        std::wstring s = label;
+        if (total > 0) s += L"  " + MbStr((std::min)(done, total)) + L" / " + MbStr(total) + L" MB";
+        else s += L"  " + MbStr(done) + L" MB";
+        SetInstallStatus(s);
+    };
+}
+
 static bool ExtractPrimaryModrinthFile(
     const winrt::Windows::Data::Json::JsonObject& version,
     std::wstring& url,
     std::wstring& filename,
-    std::string& sha1) {
+    std::string& sha1,
+    unsigned long long& size) {
     using namespace winrt::Windows::Data::Json;
+    size = 0;
     if (!version.HasKey(L"files") || version.GetNamedValue(L"files").ValueType() != JsonValueType::Array) {
         return false;
     }
@@ -2145,6 +2185,9 @@ static bool ExtractPrimaryModrinthFile(
 
     url = JsonStringOrEmpty(selected, L"url");
     filename = JsonStringOrEmpty(selected, L"filename");
+    if (selected.HasKey(L"size") && selected.GetNamedValue(L"size").ValueType() == JsonValueType::Number) {
+        size = static_cast<unsigned long long>(selected.GetNamedNumber(L"size"));
+    }
     if (selected.HasKey(L"hashes") &&
         selected.GetNamedValue(L"hashes").ValueType() == JsonValueType::Object) {
         sha1 = w2a(JsonStringOrEmpty(selected.GetNamedObject(L"hashes"), L"sha1"));
@@ -2229,7 +2272,8 @@ static bool InstallModrinthProjectRecursive(
         std::wstring downloadUrl;
         std::wstring filename;
         std::string sha1;
-        if (!ExtractPrimaryModrinthFile(version, downloadUrl, filename, sha1)) {
+        unsigned long long fileSize = 0;
+        if (!ExtractPrimaryModrinthFile(version, downloadUrl, filename, sha1, fileSize)) {
             error = L"Modrinth version did not include a downloadable file";
             return false;
         }
@@ -2244,7 +2288,8 @@ static bool InstallModrinthProjectRecursive(
         const std::wstring tempPath = destination + L".download";
         DeleteFileW(tempPath.c_str());
         WriteLogF(L"Downloading Modrinth mod %s", filename.c_str());
-        if (!DownloadUrlToFile(downloadUrl, tempPath, nullptr)) {
+        SetInstallStatus(L"Installing " + filename);
+        if (!DownloadUrlToFile(downloadUrl, tempPath, MakeInstallProgress(L"Installing " + filename, fileSize))) {
             DeleteFileW(tempPath.c_str());
             error = L"Mod download failed: " + filename;
             return false;
@@ -2288,6 +2333,626 @@ static bool InstallModrinthProject(
     std::set<std::wstring> visited;
     const std::wstring id = !card.projectId.empty() ? card.projectId : card.slug;
     return InstallModrinthProjectRecursive(id, runtimeRoot, userModsDir, visited, installed, &card, error);
+}
+
+// mods that are known to break this runtime; matched case-insensitively as a
+// substring of the jar filename. essential's transformer crashes on launch.
+static const wchar_t* kModpackBlockers[] = {
+    L"essential",
+};
+
+static std::wstring ToLowerW(std::wstring v) {
+    std::transform(v.begin(), v.end(), v.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+    return v;
+}
+
+static bool IsBlockedModFile(const std::wstring& fileName) {
+    const std::wstring lower = ToLowerW(fileName);
+    for (const wchar_t* b : kModpackBlockers) {
+        if (lower.find(ToLowerW(b)) != std::wstring::npos) return true;
+    }
+    return false;
+}
+
+static bool WriteAllBytes(const std::wstring& path, const void* data, size_t size) {
+    EnsureDirectoryTree(GetParentDir(path));
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    if (size) f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return f.good();
+}
+
+static bool ResolveModpackMrpack(const std::wstring& idOrSlug, std::wstring& url, std::wstring& filename, std::string& sha1, unsigned long long& size, std::wstring& error) {
+    using namespace winrt::Windows::Data::Json;
+    const std::string project = w2a(idOrSlug);
+    const std::string loaders = FormUrlEncode("[\"fabric\"]");
+    const std::string versions = FormUrlEncode("[\"" + std::string(kMinecraftVersion) + "\"]");
+    const std::wstring vurl =
+        L"https://api.modrinth.com/v2/project/" + a2w(FormUrlEncode(project).c_str()) +
+        L"/version?loaders=" + a2w(loaders.c_str()) +
+        L"&game_versions=" + a2w(versions.c_str()) +
+        L"&include_changelog=false";
+    const HttpResult response = HttpGetString(vurl.c_str());
+    if (!response.success()) {
+        error = L"Modpack version lookup failed HTTP " + std::to_wstring(response.status);
+        return false;
+    }
+    try {
+        JsonArray arr = JsonArray::Parse(winrt::to_hstring(response.body));
+        if (arr.Size() == 0) {
+            error = L"No Fabric " + a2w(kMinecraftVersion) + L" build of this pack";
+            return false;
+        }
+        JsonObject version = nullptr;
+        for (uint32_t i = 0; i < arr.Size(); ++i) {
+            auto v = arr.GetAt(i);
+            if (v.ValueType() != JsonValueType::Object) continue;
+            JsonObject c = v.GetObject();
+            if (JsonStringOrEmpty(c, L"version_type") == L"release") { version = c; break; }
+            if (!version) version = c;
+        }
+        if (!version) { error = L"No installable pack version found"; return false; }
+        if (!ExtractPrimaryModrinthFile(version, url, filename, sha1, size)) {
+            error = L"Pack version had no downloadable file";
+            return false;
+        }
+        return true;
+    } catch (const winrt::hresult_error&) {
+        error = L"Could not parse pack version response";
+        return false;
+    }
+}
+
+static std::wstring ModpackDestForRelative(const std::wstring& relRaw, const std::wstring& gameDir, const std::wstring& userModsDir) {
+    std::wstring rel = relRaw;
+    std::replace(rel.begin(), rel.end(), L'/', L'\\');
+    const std::wstring lower = ToLowerW(rel);
+    const size_t slash = rel.find_last_of(L'\\');
+    const std::wstring base = slash == std::wstring::npos ? rel : rel.substr(slash + 1);
+    if (lower.rfind(L"mods\\", 0) == 0) {
+        return userModsDir + L"\\" + base;
+    }
+    return gameDir + L"\\" + rel;
+}
+
+static bool InstallModpack(const ModCard& card, const std::wstring& runtimeRoot, const std::wstring& userModsDir, std::wstring& error) {
+    using namespace winrt::Windows::Data::Json;
+    const std::wstring gameDir = runtimeRoot + L"\\game";
+    const std::wstring idOrSlug = !card.projectId.empty() ? card.projectId : card.slug;
+
+    SetInstallStatus(L"Resolving " + card.title + L"...");
+    std::wstring mrUrl, mrName;
+    std::string mrSha1;
+    unsigned long long mrSize = 0;
+    if (!ResolveModpackMrpack(idOrSlug, mrUrl, mrName, mrSha1, mrSize, error)) return false;
+
+    const std::wstring cacheDir = runtimeRoot + L"\\.modpack-cache";
+    EnsureDirectoryTree(cacheDir);
+    const std::wstring mrPath = cacheDir + L"\\" + SafeFileName(mrName);
+    DeleteFileW(mrPath.c_str());
+    if (!DownloadUrlToFile(mrUrl, mrPath, MakeInstallProgress(L"Downloading " + card.title, mrSize))) { error = L"Pack download failed"; return false; }
+    if (!mrSha1.empty() && !FileMatchesSha1(mrPath, mrSha1)) {
+        DeleteFileW(mrPath.c_str());
+        error = L"Pack verification failed";
+        return false;
+    }
+
+    std::vector<unsigned char> packBytes;
+    {
+        std::ifstream f(mrPath, std::ios::binary | std::ios::ate);
+        if (!f) { error = L"Could not open downloaded pack"; return false; }
+        const std::streamoff sz = f.tellg();
+        f.seekg(0);
+        if (sz > 0) {
+            packBytes.resize(static_cast<size_t>(sz));
+            f.read(reinterpret_cast<char*>(packBytes.data()), sz);
+        }
+    }
+    if (packBytes.empty()) { error = L"Downloaded pack was empty"; return false; }
+
+    mz_zip_archive zip{};
+    if (!mz_zip_reader_init_mem(&zip, packBytes.data(), packBytes.size(), 0)) {
+        error = L"Pack is not a valid .mrpack archive";
+        return false;
+    }
+
+    std::string indexJson;
+    {
+        const int idx = mz_zip_reader_locate_file(&zip, "modrinth.index.json", nullptr, 0);
+        if (idx < 0) { mz_zip_reader_end(&zip); error = L"Pack is missing modrinth.index.json"; return false; }
+        size_t outSize = 0;
+        void* p = mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(idx), &outSize, 0);
+        if (!p) { mz_zip_reader_end(&zip); error = L"Could not read pack index"; return false; }
+        indexJson.assign(static_cast<const char*>(p), outSize);
+        mz_free(p);
+    }
+
+    struct PackFile { std::wstring path; std::wstring url; std::string sha1; unsigned long long size = 0; };
+    std::vector<PackFile> jobs;
+    int skipped = 0;
+    try {
+        JsonObject root = JsonObject::Parse(winrt::to_hstring(indexJson));
+        JsonArray files{ nullptr };
+        if (root.HasKey(L"files") && root.GetNamedValue(L"files").ValueType() == JsonValueType::Array) {
+            files = root.GetNamedArray(L"files");
+        }
+        const uint32_t fcount = files ? files.Size() : 0;
+        for (uint32_t i = 0; i < fcount; ++i) {
+            auto v = files.GetAt(i);
+            if (v.ValueType() != JsonValueType::Object) continue;
+            JsonObject fo = v.GetObject();
+            if (fo.HasKey(L"env") && fo.GetNamedValue(L"env").ValueType() == JsonValueType::Object) {
+                if (JsonStringOrEmpty(fo.GetNamedObject(L"env"), L"client") == L"unsupported") continue;
+            }
+            const std::wstring path = JsonStringOrEmpty(fo, L"path");
+            if (path.empty()) continue;
+            std::wstring durl;
+            if (fo.HasKey(L"downloads") && fo.GetNamedValue(L"downloads").ValueType() == JsonValueType::Array) {
+                JsonArray dls = fo.GetNamedArray(L"downloads");
+                if (dls.Size() > 0 && dls.GetAt(0).ValueType() == JsonValueType::String) {
+                    durl = dls.GetAt(0).GetString().c_str();
+                }
+            }
+            if (durl.empty()) continue;
+            std::string sha1;
+            if (fo.HasKey(L"hashes") && fo.GetNamedValue(L"hashes").ValueType() == JsonValueType::Object) {
+                sha1 = w2a(JsonStringOrEmpty(fo.GetNamedObject(L"hashes"), L"sha1"));
+            }
+            unsigned long long fsize = 0;
+            if (fo.HasKey(L"fileSize") && fo.GetNamedValue(L"fileSize").ValueType() == JsonValueType::Number) {
+                fsize = static_cast<unsigned long long>(fo.GetNamedNumber(L"fileSize"));
+            }
+            const size_t slash = path.find_last_of(L"/\\");
+            const std::wstring base = slash == std::wstring::npos ? path : path.substr(slash + 1);
+            if (IsBlockedModFile(base)) { ++skipped; continue; }
+            jobs.push_back({ path, durl, sha1, fsize });
+        }
+    } catch (const winrt::hresult_error&) {
+        mz_zip_reader_end(&zip);
+        error = L"Could not parse pack index";
+        return false;
+    }
+
+    g_installTotal.store(static_cast<int>(jobs.size()));
+    g_installDone.store(0);
+    std::wstring firstError;
+    int done = 0;
+    for (const PackFile& job : jobs) {
+        const std::wstring dest = ModpackDestForRelative(job.path, gameDir, userModsDir);
+        const size_t bslash = job.path.find_last_of(L"/\\");
+        const std::wstring base = bslash == std::wstring::npos ? job.path : job.path.substr(bslash + 1);
+        const std::wstring label = std::to_wstring(done + 1) + L" of " + std::to_wstring(jobs.size()) + L"  " + base;
+        SetInstallStatus(label);
+        if (!job.sha1.empty() && FileMatchesSha1(dest, job.sha1)) { ++done; g_installDone.store(done); continue; }
+        EnsureDirectoryTree(GetParentDir(dest));
+        const std::wstring tmp = dest + L".download";
+        DeleteFileW(tmp.c_str());
+        if (DownloadUrlToFile(job.url, tmp, MakeInstallProgress(label, job.size)) && (job.sha1.empty() || FileMatchesSha1(tmp, job.sha1))) {
+            DeleteFileW(dest.c_str());
+            if (!MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+                DeleteFileW(tmp.c_str());
+                if (firstError.empty()) firstError = L"Some pack files could not be saved";
+            }
+        } else {
+            DeleteFileW(tmp.c_str());
+            if (firstError.empty()) firstError = L"Some pack files failed to download";
+        }
+        ++done;
+        g_installDone.store(done);
+    }
+
+    SetInstallStatus(L"Applying overrides...");
+    const mz_uint entryCount = mz_zip_reader_get_num_files(&zip);
+    for (mz_uint i = 0; i < entryCount; ++i) {
+        if (mz_zip_reader_is_file_a_directory(&zip, i)) continue;
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&zip, i, &st)) continue;
+        std::string name = st.m_filename;
+        std::string prefix;
+        if (name.rfind("overrides/", 0) == 0) prefix = "overrides/";
+        else if (name.rfind("client-overrides/", 0) == 0) prefix = "client-overrides/";
+        else continue;
+        const std::string relA = name.substr(prefix.size());
+        if (relA.empty()) continue;
+        const std::wstring rel = a2w(relA.c_str());
+        const std::wstring dest = ModpackDestForRelative(rel, gameDir, userModsDir);
+        const size_t slash = dest.find_last_of(L'\\');
+        const std::wstring base = slash == std::wstring::npos ? dest : dest.substr(slash + 1);
+        if (ToLowerW(dest).find(ToLowerW(userModsDir)) == 0 && IsBlockedModFile(base)) { ++skipped; continue; }
+        size_t outSize = 0;
+        void* p = mz_zip_reader_extract_to_heap(&zip, i, &outSize, 0);
+        if (!p) continue;
+        WriteAllBytes(dest, p, outSize);
+        mz_free(p);
+    }
+
+    mz_zip_reader_end(&zip);
+    DeleteFileW(mrPath.c_str());
+
+    {
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((userModsDir + L"\\*.jar").c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                if (IsBlockedModFile(fd.cFileName)) {
+                    DeleteFileW((userModsDir + L"\\" + fd.cFileName).c_str());
+                    DeleteFileW(ModMetaPath(runtimeRoot, fd.cFileName).c_str());
+                    ++skipped;
+                }
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+    }
+
+    WriteLogF(L"Modpack install done: %d files, %d blocked", done, skipped);
+    if (jobs.empty() && firstError.empty()) { error = L"Pack had no installable client files"; return false; }
+    if (!firstError.empty()) { error = firstError; return false; }
+    return true;
+}
+
+static void CleanInlineMd(const std::wstring& s, std::wstring& out,
+                          std::vector<std::pair<UINT32, UINT32>>& bold,
+                          bool& boldOpen, UINT32& boldStart) {
+    const size_t npos = std::wstring::npos;
+    size_t i = 0;
+    while (i < s.size()) {
+        const wchar_t c = s[i];
+        if (c == L'<') { const size_t e = s.find(L'>', i); if (e == npos) break; i = e + 1; continue; }
+        if (c == L'!' && i + 1 < s.size() && s[i + 1] == L'[') {
+            const size_t rb = s.find(L']', i + 2);
+            if (rb != npos) {
+                size_t j = rb + 1;
+                if (j < s.size() && s[j] == L'(') { const size_t rp = s.find(L')', j); if (rp != npos) j = rp + 1; }
+                i = j; continue;
+            }
+        }
+        if (c == L'[') {
+            const size_t rb = s.find(L']', i + 1);
+            if (rb != npos) {
+                size_t j = rb + 1; bool hasUrl = false; size_t rp = npos;
+                if (j < s.size() && s[j] == L'(') { rp = s.find(L')', j); if (rp != npos) hasUrl = true; }
+                CleanInlineMd(s.substr(i + 1, rb - (i + 1)), out, bold, boldOpen, boldStart);
+                i = hasUrl ? rp + 1 : rb + 1; continue;
+            }
+        }
+        if (c == L'`') { i++; continue; }
+        if (c == L'~' && i + 1 < s.size() && s[i + 1] == L'~') { i += 2; continue; }
+        if ((c == L'*' || c == L'_') && i + 1 < s.size() && s[i + 1] == c) {
+            if (!boldOpen) { boldOpen = true; boldStart = static_cast<UINT32>(out.size()); }
+            else { boldOpen = false; bold.push_back({ boldStart, static_cast<UINT32>(out.size()) - boldStart }); }
+            i += 2; continue;
+        }
+        if (c == L'*' || c == L'_') { i++; continue; }
+        out.push_back(c); i++;
+    }
+}
+
+static std::wstring CleanMarkdown(const std::wstring& in,
+                                  std::vector<std::pair<UINT32, UINT32>>& bold,
+                                  std::vector<std::pair<UINT32, UINT32>>& head) {
+    const size_t npos = std::wstring::npos;
+    std::wstring src; src.reserve(in.size());
+    for (wchar_t c : in) if (c != L'\r') src.push_back(c);
+
+    std::wstring out;
+    bool boldOpen = false; UINT32 boldStart = 0;
+    int blankRun = 0;
+    size_t pos = 0;
+    while (true) {
+        const size_t nl = src.find(L'\n', pos);
+        std::wstring line = src.substr(pos, (nl == npos ? src.size() : nl) - pos);
+
+        const size_t a = line.find_first_not_of(L" \t");
+        std::wstring work = (a == npos) ? L"" : line.substr(a);
+
+        bool isHr = false;
+        if (work.size() >= 3) {
+            const wchar_t h = work[0];
+            if (h == L'-' || h == L'*' || h == L'_') {
+                isHr = true;
+                for (wchar_t ch : work) if (ch != h && ch != L' ') { isHr = false; break; }
+            }
+        }
+        if (isHr) {
+            out += L"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n";
+            blankRun = 0;
+            if (nl == npos) break; pos = nl + 1; continue;
+        }
+
+        bool heading = false;
+        if (!work.empty() && work[0] == L'#') {
+            size_t hc = 0; while (hc < work.size() && work[hc] == L'#') hc++;
+            if (hc <= 6 && hc < work.size() && work[hc] == L' ') { heading = true; const size_t t = work.find_first_not_of(L" ", hc); work = (t == npos) ? L"" : work.substr(t); }
+            else if (hc <= 6 && hc == work.size()) { work = L""; }
+        }
+        while (!work.empty() && work[0] == L'>') { work.erase(work.begin()); if (!work.empty() && work[0] == L' ') work.erase(work.begin()); }
+
+        std::wstring prefix;
+        if (work.size() >= 2 && (work[0] == L'-' || work[0] == L'*' || work[0] == L'+') && work[1] == L' ') { prefix = L"\u2022 "; work = work.substr(2); }
+
+        if (work.empty() && prefix.empty()) {
+            if (blankRun < 1) out += L"\n";
+            blankRun++;
+        } else {
+            blankRun = 0;
+            const UINT32 lineStart = static_cast<UINT32>(out.size());
+            out += prefix;
+            CleanInlineMd(work, out, bold, boldOpen, boldStart);
+            if (heading) head.push_back({ lineStart, static_cast<UINT32>(out.size()) - lineStart });
+            out += L"\n";
+        }
+
+        if (nl == npos) break;
+        pos = nl + 1;
+    }
+    if (boldOpen) bold.push_back({ boldStart, static_cast<UINT32>(out.size()) - boldStart });
+    while (!out.empty() && (out.back() == L'\n' || out.back() == L' ')) out.pop_back();
+    return out;
+}
+
+static void FetchProjectDetail(const std::wstring& idOrSlug, std::wstring& body, std::wstring& meta, std::vector<std::pair<UINT32, UINT32>>& bold, std::vector<std::pair<UINT32, UINT32>>& head) {
+    using namespace winrt::Windows::Data::Json;
+    const std::wstring url = L"https://api.modrinth.com/v2/project/" + a2w(FormUrlEncode(w2a(idOrSlug)).c_str());
+    const HttpResult response = HttpGetString(url.c_str());
+    if (!response.success()) { body = L"Could not load description."; return; }
+    try {
+        JsonObject root = JsonObject::Parse(winrt::to_hstring(response.body));
+        std::wstring cats;
+        if (root.HasKey(L"categories") && root.GetNamedValue(L"categories").ValueType() == JsonValueType::Array) {
+            JsonArray a = root.GetNamedArray(L"categories");
+            for (uint32_t i = 0; i < a.Size() && i < 6; ++i) {
+                if (a.GetAt(i).ValueType() != JsonValueType::String) continue;
+                if (!cats.empty()) cats += L", ";
+                cats += a.GetAt(i).GetString().c_str();
+            }
+        }
+        const int downloads = JsonIntOrZero(root, L"downloads");
+        meta = cats;
+        if (!meta.empty()) meta += L"  -  ";
+        meta += std::to_wstring(downloads) + L" downloads";
+        std::wstring raw = JsonStringOrEmpty(root, L"body");
+        if (raw.empty()) raw = JsonStringOrEmpty(root, L"description");
+        if (raw.size() > 6000) raw.resize(6000);
+        body = CleanMarkdown(raw, bold, head);
+        if (body.empty()) body = L"No description provided.";
+    } catch (const winrt::hresult_error&) {
+        body = L"Could not parse description.";
+    }
+}
+
+static std::atomic<unsigned> g_detailReqId{0};
+static std::atomic<bool> g_detailFetching{false};
+static std::mutex g_detailMutex;
+static unsigned g_detailReadyId = 0;
+static std::wstring g_detailBody;
+static std::wstring g_detailMeta;
+static std::vector<std::pair<UINT32, UINT32>> g_detailBold;
+static std::vector<std::pair<UINT32, UINT32>> g_detailHead;
+static std::atomic<int> g_detailMaxScroll{0};
+static std::atomic<int> g_profileMaxScroll{0};
+static std::atomic<int> g_profileRowsVisible{1};
+
+static unsigned StartDetailFetch(const ModCard& card) {
+    const unsigned id = ++g_detailReqId;
+    const std::wstring idOrSlug = !card.projectId.empty() ? card.projectId : card.slug;
+    g_detailFetching.store(true);
+    std::thread([id, idOrSlug]() {
+        std::wstring body, meta;
+        std::vector<std::pair<UINT32, UINT32>> bold, head;
+        FetchProjectDetail(idOrSlug, body, meta, bold, head);
+        std::lock_guard<std::mutex> lk(g_detailMutex);
+        if (id == g_detailReqId.load()) {
+            g_detailBody = body;
+            g_detailMeta = meta;
+            g_detailBold = bold;
+            g_detailHead = head;
+            g_detailReadyId = id;
+        }
+        g_detailFetching.store(false);
+    }).detach();
+    return id;
+}
+
+static const wchar_t* kVanillaProfileId = L"vanilla";
+
+struct Profile {
+    std::wstring id;
+    std::wstring name;
+    bool builtin = false;
+};
+
+static std::wstring ProfilesRoot(const std::wstring& runtimeRoot) { return runtimeRoot + L"\\profiles"; }
+static std::wstring ProfileDir(const std::wstring& runtimeRoot, const std::wstring& id) { return ProfilesRoot(runtimeRoot) + L"\\" + id; }
+static std::wstring ProfileModsDir(const std::wstring& runtimeRoot, const std::wstring& id) { return ProfileDir(runtimeRoot, id) + L"\\mods"; }
+static std::wstring ProfilesManifestPath(const std::wstring& runtimeRoot) { return ProfilesRoot(runtimeRoot) + L"\\profiles.txt"; }
+static std::wstring ActiveProfilePath(const std::wstring& runtimeRoot) { return ProfilesRoot(runtimeRoot) + L"\\active.txt"; }
+
+static std::vector<Profile> LoadProfiles(const std::wstring& runtimeRoot) {
+    std::vector<Profile> out;
+    out.push_back({ kVanillaProfileId, L"Vanilla", true });
+    std::ifstream f(ProfilesManifestPath(runtimeRoot), std::ios::binary);
+    std::string line;
+    while (f && std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        const size_t tab = line.find('\t');
+        const std::wstring id = a2w((tab == std::string::npos ? line : line.substr(0, tab)).c_str());
+        const std::wstring name = tab == std::string::npos ? id : a2w(line.substr(tab + 1).c_str());
+        if (id.empty() || id == kVanillaProfileId) continue;
+        out.push_back({ id, name.empty() ? id : name, false });
+    }
+    return out;
+}
+
+static void SaveProfiles(const std::wstring& runtimeRoot, const std::vector<Profile>& profiles) {
+    EnsureDirectoryTree(ProfilesRoot(runtimeRoot));
+    std::ofstream f(ProfilesManifestPath(runtimeRoot), std::ios::binary | std::ios::trunc);
+    if (!f) return;
+    for (const auto& p : profiles) {
+        if (p.builtin || p.id == kVanillaProfileId) continue;
+        const std::string body = w2a(p.id) + "\t" + w2a(StripNewlines(p.name)) + "\n";
+        f.write(body.data(), static_cast<std::streamsize>(body.size()));
+    }
+}
+
+static std::wstring GetActiveProfileId(const std::wstring& runtimeRoot) {
+    std::ifstream f(ActiveProfilePath(runtimeRoot), std::ios::binary);
+    std::string line;
+    if (f && std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const std::wstring id = a2w(line.c_str());
+        if (!id.empty()) {
+            if (id == kVanillaProfileId) return id;
+            if (GetFileAttributesW(ProfileDir(runtimeRoot, id).c_str()) != INVALID_FILE_ATTRIBUTES) return id;
+        }
+    }
+    return kVanillaProfileId;
+}
+
+static void SetActiveProfileId(const std::wstring& runtimeRoot, const std::wstring& id) {
+    EnsureDirectoryTree(ProfilesRoot(runtimeRoot));
+    std::ofstream f(ActiveProfilePath(runtimeRoot), std::ios::binary | std::ios::trunc);
+    if (f) { const std::string s = w2a(id); f.write(s.data(), static_cast<std::streamsize>(s.size())); }
+}
+
+static int ProfileModCount(const std::wstring& runtimeRoot, const std::wstring& id) {
+    int n = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((ProfileModsDir(runtimeRoot, id) + L"\\*.jar").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) ++n; } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    return n;
+}
+
+static std::wstring MakeProfileId(const std::wstring& runtimeRoot, const std::wstring& name) {
+    std::wstring base = SafeFileName(name);
+    if (base.empty()) base = L"profile";
+    std::wstring id = base;
+    int n = 2;
+    while (id == kVanillaProfileId || GetFileAttributesW(ProfileDir(runtimeRoot, id).c_str()) != INVALID_FILE_ATTRIBUTES) {
+        id = base + L"-" + std::to_wstring(n++);
+    }
+    return id;
+}
+
+static std::wstring CreateProfile(const std::wstring& runtimeRoot, const std::wstring& name) {
+    std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
+    const std::wstring id = MakeProfileId(runtimeRoot, name);
+    EnsureDirectoryTree(ProfileModsDir(runtimeRoot, id));
+    profiles.push_back({ id, name.empty() ? id : StripNewlines(name), false });
+    SaveProfiles(runtimeRoot, profiles);
+    return id;
+}
+
+static std::wstring CreateAutoProfile(const std::wstring& runtimeRoot) {
+    int n = 1;
+    for (const Profile& p : LoadProfiles(runtimeRoot)) if (!p.builtin) ++n;
+    return CreateProfile(runtimeRoot, L"Profile " + std::to_wstring(n));
+}
+
+static void DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id) {
+    if (id.empty() || id == kVanillaProfileId) return;
+    DeleteDirectoryTree(ProfileDir(runtimeRoot, id));
+    std::vector<Profile> kept;
+    for (const Profile& p : LoadProfiles(runtimeRoot)) if (p.id != id) kept.push_back(p);
+    SaveProfiles(runtimeRoot, kept);
+    if (GetActiveProfileId(runtimeRoot) == id) SetActiveProfileId(runtimeRoot, kVanillaProfileId);
+}
+
+static void RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName) {
+    if (id.empty() || id == kVanillaProfileId) return;
+    std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
+    for (auto& p : profiles) if (p.id == id && !p.builtin) p.name = StripNewlines(newName);
+    SaveProfiles(runtimeRoot, profiles);
+}
+
+static void EnsureProfilesInitialized(const std::wstring& runtimeRoot) {
+    EnsureDirectoryTree(ProfileModsDir(runtimeRoot, kVanillaProfileId));
+    if (GetFileAttributesW(ProfilesManifestPath(runtimeRoot).c_str()) != INVALID_FILE_ATTRIBUTES) return;
+
+    const std::wstring legacy = runtimeRoot + L"\\game\\user-mods";
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((legacy + L"\\*.jar").c_str(), &fd);
+    const bool hasLegacy = h != INVALID_HANDLE_VALUE;
+
+    std::vector<Profile> profiles;
+    profiles.push_back({ kVanillaProfileId, L"Vanilla", true });
+    if (hasLegacy) {
+        const std::wstring id = L"default";
+        EnsureDirectoryTree(ProfileModsDir(runtimeRoot, id));
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            MoveFileExW((legacy + L"\\" + fd.cFileName).c_str(),
+                (ProfileModsDir(runtimeRoot, id) + L"\\" + fd.cFileName).c_str(), MOVEFILE_REPLACE_EXISTING);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+        profiles.push_back({ id, L"Default", false });
+        SaveProfiles(runtimeRoot, profiles);
+        SetActiveProfileId(runtimeRoot, id);
+    } else {
+        SaveProfiles(runtimeRoot, profiles);
+        SetActiveProfileId(runtimeRoot, kVanillaProfileId);
+    }
+}
+
+static std::vector<std::wstring> ListProfileMods(const std::wstring& runtimeRoot, const std::wstring& id) {
+    std::vector<std::wstring> out;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((ProfileModsDir(runtimeRoot, id) + L"\\*.jar").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) out.push_back(fd.cFileName); } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+static std::wstring ProfileDisplayName(const std::wstring& runtimeRoot, const std::wstring& id) {
+    for (const Profile& p : LoadProfiles(runtimeRoot)) if (p.id == id) return p.name;
+    return id;
+}
+static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot) {
+    if (g_installRunning.load()) return;
+    g_installRunning.store(true);
+    g_installResultReady.store(false);
+    g_installTotal.store(0);
+    g_installDone.store(0);
+    SetInstallStatus(L"Starting " + card.title + L"...");
+    ModCard copy = card;
+    std::wstring rootCopy = runtimeRoot;
+    std::thread([copy, rootCopy]() {
+        std::wstring err;
+        bool ok;
+        if (copy.isModpack) {
+            const std::wstring pid = CreateProfile(rootCopy, copy.title);
+            ok = InstallModpack(copy, rootCopy, ProfileModsDir(rootCopy, pid), err);
+            if (ok) {
+                SetActiveProfileId(rootCopy, pid);
+                SetInstallStatus(L"Installed profile " + copy.title);
+            } else {
+                DeleteProfile(rootCopy, pid);
+                SetInstallStatus(err.empty() ? L"Modpack install failed" : err);
+            }
+        } else {
+            const std::wstring active = GetActiveProfileId(rootCopy);
+            if (active == kVanillaProfileId) {
+                ok = false;
+                SetInstallStatus(L"Vanilla is read-only. Pick or make a profile first.");
+            } else {
+                std::vector<std::wstring> installed;
+                ok = InstallModrinthProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err);
+                SetInstallStatus(ok
+                    ? (installed.empty() ? L"Already installed" : L"Installed " + std::to_wstring(installed.size()) + L" file(s)")
+                    : (err.empty() ? L"Install failed" : err));
+            }
+        }
+        g_installResultOk.store(ok);
+        g_installRunning.store(false);
+        g_installResultReady.store(true);
+    }).detach();
 }
 
 static bool SaveRefreshToken(const std::string& refreshToken) {
@@ -2384,6 +3049,27 @@ struct AuthUiState {
     bool modsExhausted = false;
     bool modsSearchEditing = false;
     std::wstring modsSearchQuery;
+    bool modsDetailOpen = false;
+    ModCard modsDetailCard;
+    std::wstring modsDetailBody;
+    std::wstring modsDetailMeta;
+    std::vector<std::pair<UINT32, UINT32>> modsDetailBold;
+    std::vector<std::pair<UINT32, UINT32>> modsDetailHead;
+    bool modsDetailLoading = false;
+    int modsDetailScroll = 0;
+    unsigned modsDetailReqId = 0;
+    std::wstring activeProfileName;
+    std::wstring activeProfileId;
+    bool modsProfileOpen = false;
+    std::wstring modsProfileId;
+    std::wstring modsProfileName;
+    bool modsProfileBuiltin = false;
+    std::vector<std::wstring> modsProfileMods;
+    int modsProfileScroll = 0;
+    int modsProfileFocus = 0;
+    int modsProfileSel = 0;
+    bool modsRenaming = false;
+    std::wstring modsRenameText;
     std::vector<ModCard> modsCards;
     float animation = 0.0f;
     float progress = -1.0f;
@@ -2560,6 +3246,9 @@ public:
         ComPtr<ID2D1SolidColorBrush> accent;
         ComPtr<ID2D1SolidColorBrush> danger;
         ComPtr<ID2D1SolidColorBrush> black;
+        ComPtr<ID2D1SolidColorBrush> softEdge;
+        ComPtr<ID2D1SolidColorBrush> surfaceFill;
+        ComPtr<ID2D1SolidColorBrush> accentSoft;
 
         d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xF5F7F8), white.GetAddressOf());
         d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xA9B0B4), muted.GetAddressOf());
@@ -2567,14 +3256,24 @@ public:
         d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486), accent.GetAddressOf());
         d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xE36A5C), danger.GetAddressOf());
         d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x000000), black.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF, 0.12f), softEdge.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x161B1F, 0.75f), surfaceFill.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486, 0.14f), accentSoft.GetAddressOf());
 
         d2dContext_->BeginDraw();
-        d2dContext_->Clear(D2D1::ColorF(0x070808));
+        d2dContext_->Clear(D2D1::ColorF(0x05080B));
+        FillVerticalGradient(D2D1::RectF(0.0f, 0.0f, width_, height_), 0x0E1726, 0x05080B);
 
         const float marginX = width_ * 0.075f;
         const float marginY = height_ * 0.11f;
         const D2D1_RECT_F frame = D2D1::RectF(marginX, marginY, width_ - marginX, height_ - marginY);
-        d2dContext_->DrawRectangle(frame, white.Get(), 3.0f);
+        {
+            ComPtr<ID2D1SolidColorBrush> surface, surfaceEdge;
+            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x0C0F12, 0.92f), surface.GetAddressOf());
+            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF, 0.10f), surfaceEdge.GetAddressOf());
+            FillRound(frame, surface.Get(), 22.0f);
+            StrokeRound(frame, surfaceEdge.Get(), 22.0f, 1.5f);
+        }
 
         auto finishDraw = [&]() {
             HRESULT hr = d2dContext_->EndDraw();
@@ -2590,6 +3289,211 @@ public:
 
         const std::wstring title = state.title.empty() ? L"Microsoft sign-in" : state.title;
         if (state.showModsPage) {
+            if (state.modsDetailOpen) {
+                const ModCard& card = state.modsDetailCard;
+                const float left = frame.left + 40.0f;
+                const float right = frame.right - 40.0f;
+                const float top = frame.top + 34.0f;
+
+                const float iconSide = 132.0f;
+                const D2D1_RECT_F iconRect = D2D1::RectF(left, top, left + iconSide, top + iconSide);
+                ComPtr<ID2D1Bitmap1> icon = GetCachedBitmap(card.iconPath);
+                if (icon) {
+                    DrawBitmapCover(icon.Get(), iconRect, 1.0f, 1.0f, 0.0f, 0.0f);
+                    StrokeRound(iconRect, softEdge.Get(), 14.0f, 1.0f);
+                } else {
+                    ComPtr<ID2D1SolidColorBrush> ph;
+                    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x05080B), ph.GetAddressOf());
+                    FillRound(iconRect, ph.Get(), 14.0f);
+                    StrokeRound(iconRect, softEdge.Get(), 14.0f, 1.0f);
+                    DrawIcon(card.isModpack ? L"\uE7B8" : L"\uE74C", iconRect, muted.Get(), true);
+                }
+
+                const float headLeft = iconRect.right + 24.0f;
+                DrawText(card.title.c_str(), titleFormat_.Get(),
+                    D2D1::RectF(headLeft, top, right, top + 48.0f), white.Get());
+                DrawText(card.isModpack ? L"Modpack" : L"Mod", captionFormat_.Get(),
+                    D2D1::RectF(headLeft, top + 50.0f, headLeft + 200.0f, top + 74.0f), accent.Get());
+                const std::wstring metaLine = !state.modsDetailMeta.empty() ? state.modsDetailMeta : card.status;
+                DrawText(metaLine.c_str(), smallFormat_.Get(),
+                    D2D1::RectF(headLeft, top + 76.0f, right, top + 102.0f), muted.Get());
+                DrawText(card.description.c_str(), smallFormat_.Get(),
+                    D2D1::RectF(headLeft, top + 104.0f, right, top + iconSide), muted.Get());
+
+                const float btnW = 240.0f;
+                const float btnH = 54.0f;
+                const bool installing = g_installRunning.load();
+                const D2D1_RECT_F installBtn = D2D1::RectF(right - btnW, iconRect.bottom + 16.0f, right, iconRect.bottom + 16.0f + btnH);
+                if (!installing) GlowSelect(installBtn, 12.0f);
+                FillRound(installBtn, installing ? panel.Get() : accent.Get(), 12.0f);
+                StrokeRound(installBtn, accent.Get(), 12.0f, 2.0f);
+                DrawIcon(installing ? L"\uE895" : L"\uE896", D2D1::RectF(installBtn.left + 18.0f, installBtn.top, installBtn.left + 46.0f, installBtn.bottom), installing ? muted.Get() : black.Get());
+                DrawText(installing ? L"Installing..." : (card.isModpack ? L"Install pack" : L"Install"),
+                    bodyMid_.Get(), D2D1::RectF(installBtn.left + 52.0f, installBtn.top, installBtn.right - 8.0f, installBtn.bottom), installing ? muted.Get() : black.Get());
+
+                DrawIcon(L"\uE72B", D2D1::RectF(left, iconRect.bottom + 26.0f, left + 26.0f, iconRect.bottom + 26.0f + 30.0f), muted.Get());
+                DrawText(L"Back", smallFormat_.Get(),
+                    D2D1::RectF(left + 30.0f, iconRect.bottom + 30.0f, left + 220.0f, iconRect.bottom + 30.0f + 28.0f), muted.Get());
+
+                if (!state.status.empty()) {
+                    DrawText(state.status.c_str(), smallFormat_.Get(),
+                        D2D1::RectF(left, installBtn.bottom + 6.0f, right, installBtn.bottom + 32.0f),
+                        state.isError ? danger.Get() : muted.Get());
+                }
+
+                const float bodyTop = installBtn.bottom + 42.0f;
+                const D2D1_RECT_F bodyRect = D2D1::RectF(left, bodyTop, right, frame.bottom - 30.0f);
+                FillRound(bodyRect, surfaceFill.Get(), 16.0f);
+                StrokeRound(bodyRect, softEdge.Get(), 16.0f, 1.0f);
+                const float padb = 16.0f;
+                const D2D1_RECT_F bodyInner = D2D1::RectF(bodyRect.left + padb, bodyRect.top + padb, bodyRect.right - padb, bodyRect.bottom - padb);
+                const float lineStep = 34.0f;
+                const float scrollPx = static_cast<float>(state.modsDetailScroll) * lineStep;
+
+                const std::wstring bodyText = (state.modsDetailLoading || state.modsDetailBody.empty())
+                    ? std::wstring(L"Loading description...")
+                    : state.modsDetailBody;
+                ComPtr<IDWriteTextLayout> layout;
+                if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                        bodyText.c_str(), static_cast<UINT32>(bodyText.size()), smallFormat_.Get(),
+                        bodyInner.right - bodyInner.left, 100000.0f, layout.GetAddressOf()))) {
+                    if (!state.modsDetailLoading && !state.modsDetailBody.empty()) {
+                        for (const auto& b : state.modsDetailBold) {
+                            layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_RANGE{ b.first, b.second });
+                            layout->SetDrawingEffect(white.Get(), DWRITE_TEXT_RANGE{ b.first, b.second });
+                        }
+                        for (const auto& hh : state.modsDetailHead) {
+                            layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_RANGE{ hh.first, hh.second });
+                            layout->SetFontSize(27.0f, DWRITE_TEXT_RANGE{ hh.first, hh.second });
+                            layout->SetDrawingEffect(white.Get(), DWRITE_TEXT_RANGE{ hh.first, hh.second });
+                        }
+                    }
+                    DWRITE_TEXT_METRICS tm{};
+                    const float viewH = bodyInner.bottom - bodyInner.top;
+                    if (SUCCEEDED(layout->GetMetrics(&tm))) {
+                        const int maxScroll = tm.height > viewH ? static_cast<int>(ceilf((tm.height - viewH) / lineStep)) : 0;
+                        g_detailMaxScroll.store(maxScroll);
+                    }
+                    d2dContext_->PushAxisAlignedClip(bodyInner, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    d2dContext_->DrawTextLayout(D2D1::Point2F(bodyInner.left, bodyInner.top - scrollPx), layout.Get(), muted.Get());
+                    d2dContext_->PopAxisAlignedClip();
+                }
+
+                finishDraw();
+                return;
+            }
+            if (state.modsProfileOpen) {
+                const float left = frame.left + 40.0f;
+                const float right = frame.right - 40.0f;
+                const float top = frame.top + 34.0f;
+                const bool isActive = !state.modsProfileId.empty() && state.modsProfileId == state.activeProfileId;
+
+                const std::wstring nameShown = state.modsRenaming ? (state.modsRenameText + L"_") : state.modsProfileName;
+                DrawText(nameShown.c_str(), titleFormat_.Get(),
+                    D2D1::RectF(left, top, right - 380.0f, top + 48.0f), state.modsRenaming ? accent.Get() : white.Get());
+                const std::wstring sub = state.modsProfileBuiltin
+                    ? std::wstring(L"Pure vanilla, always available")
+                    : (std::to_wstring(state.modsProfileMods.size()) + (state.modsProfileMods.size() == 1 ? L" mod installed" : L" mods installed"));
+                DrawText(sub.c_str(), captionFormat_.Get(),
+                    D2D1::RectF(left, top + 50.0f, right - 380.0f, top + 74.0f), muted.Get());
+
+                const float btnW = 168.0f;
+                const float btnH = 54.0f;
+                const D2D1_RECT_F playBtn = D2D1::RectF(right - btnW, top, right, top + btnH);
+                const bool playFocus = state.modsProfileFocus == 0;
+                if (playFocus) GlowSelect(playBtn, 12.0f);
+                FillRound(playBtn, isActive ? panel.Get() : accent.Get(), 12.0f);
+                StrokeRound(playBtn, accent.Get(), 12.0f, playFocus ? 3.0f : 2.0f);
+                DrawIcon(L"\uE768", D2D1::RectF(playBtn.left + 16.0f, playBtn.top, playBtn.left + 44.0f, playBtn.bottom), isActive ? muted.Get() : black.Get());
+                DrawText(isActive ? L"Playing" : L"Play this", bodyMid_.Get(),
+                    D2D1::RectF(playBtn.left + 50.0f, playBtn.top, playBtn.right - 8.0f, playBtn.bottom), isActive ? muted.Get() : black.Get());
+
+                if (!state.modsProfileBuiltin) {
+                    const D2D1_RECT_F delBtn = D2D1::RectF(right - btnW * 2.0f - 16.0f, top, right - btnW - 16.0f, top + btnH);
+                    const bool delFocus = state.modsProfileFocus == 1;
+                    if (delFocus) GlowSelect(delBtn, 12.0f);
+                    FillRound(delBtn, surfaceFill.Get(), 12.0f);
+                    StrokeRound(delBtn, danger.Get(), 12.0f, delFocus ? 3.0f : 2.0f);
+                    DrawIcon(L"\uE74D", D2D1::RectF(delBtn.left + 16.0f, delBtn.top, delBtn.left + 44.0f, delBtn.bottom), danger.Get());
+                    DrawText(L"Delete", bodyMid_.Get(),
+                        D2D1::RectF(delBtn.left + 50.0f, delBtn.top, delBtn.right - 8.0f, delBtn.bottom), danger.Get());
+                }
+
+                const bool gridFocus = state.modsProfileFocus == 2;
+                DrawText(state.modsRenaming
+                            ? L"Type a name, then close the keyboard to save"
+                            : (state.modsProfileBuiltin
+                                ? L"B  Back"
+                                : (gridFocus ? L"B  Back      X  Remove mod      Y  Rename"
+                                             : L"B  Back      Down to mods      Y  Rename")),
+                    smallFormat_.Get(),
+                    D2D1::RectF(left, top + btnH + 12.0f, right, top + btnH + 40.0f),
+                    state.modsRenaming ? accent.Get() : muted.Get());
+
+                if (!state.status.empty()) {
+                    DrawText(state.status.c_str(), smallFormat_.Get(),
+                        D2D1::RectF(left, top + btnH + 42.0f, right, top + btnH + 68.0f),
+                        state.isError ? danger.Get() : accent.Get());
+                }
+
+                const float bodyTop = top + btnH + 78.0f;
+                const D2D1_RECT_F bodyRect = D2D1::RectF(left, bodyTop, right, frame.bottom - 30.0f);
+                FillRound(bodyRect, surfaceFill.Get(), 16.0f);
+                StrokeRound(bodyRect, softEdge.Get(), 16.0f, 1.0f);
+                const float padb = 16.0f;
+                const D2D1_RECT_F bodyInner = D2D1::RectF(bodyRect.left + padb, bodyRect.top + padb, bodyRect.right - padb, bodyRect.bottom - padb);
+                const int total = static_cast<int>(state.modsProfileMods.size());
+
+                if (total == 0) {
+                    g_profileMaxScroll.store(0);
+                    g_profileRowsVisible.store(1);
+                    DrawText(state.modsProfileBuiltin ? L"No mods. This is the clean vanilla game."
+                                                      : L"No mods yet. Set this profile active, then install mods from the other tabs.",
+                        smallFormat_.Get(), D2D1::RectF(bodyInner.left, bodyInner.top, bodyInner.right, bodyInner.top + 28.0f), muted.Get());
+                } else {
+                    const float colGap = 14.0f;
+                    const float cardGap = 12.0f;
+                    const float cardW = (bodyInner.right - bodyInner.left - colGap) * 0.5f;
+                    const float cardH = 58.0f;
+                    const float gridH = bodyInner.bottom - bodyInner.top;
+                    const int rowsVisible = (std::max)(1, static_cast<int>((gridH + cardGap) / (cardH + cardGap)));
+                    g_profileRowsVisible.store(rowsVisible);
+                    const int totalRows = (total + 1) / 2;
+                    const int maxScroll = (std::max)(0, totalRows - rowsVisible);
+                    g_profileMaxScroll.store(maxScroll);
+                    const int scroll = (std::min)((std::max)(0, state.modsProfileScroll), maxScroll);
+
+                    d2dContext_->PushAxisAlignedClip(bodyInner, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    for (int row = scroll; row < scroll + rowsVisible && row < totalRows; ++row) {
+                        for (int col = 0; col < 2; ++col) {
+                            const int i = row * 2 + col;
+                            if (i >= total) break;
+                            const float x = bodyInner.left + col * (cardW + colGap);
+                            const float y = bodyInner.top + (row - scroll) * (cardH + cardGap);
+                            const D2D1_RECT_F card = D2D1::RectF(x, y, x + cardW, y + cardH);
+                            const bool sel = gridFocus && i == state.modsProfileSel;
+                            if (sel) GlowSelect(card, 12.0f);
+                            FillRound(card, panel.Get(), 12.0f);
+                            StrokeRound(card, sel ? accent.Get() : softEdge.Get(), 12.0f, sel ? 3.0f : 1.0f);
+                            DrawIcon(L"\uE74C", D2D1::RectF(card.left + 10.0f, card.top, card.left + 44.0f, card.bottom), sel ? accent.Get() : muted.Get());
+                            std::wstring nm = state.modsProfileMods[static_cast<size_t>(i)];
+                            if (nm.size() > 4 && nm.compare(nm.size() - 4, 4, L".jar") == 0) nm = nm.substr(0, nm.size() - 4);
+                            DrawText(nm.c_str(), smallMid_.Get(),
+                                D2D1::RectF(card.left + 48.0f, card.top, card.right - 12.0f, card.bottom), white.Get());
+                        }
+                    }
+                    d2dContext_->PopAxisAlignedClip();
+
+                    if (maxScroll > 0) {
+                        const std::wstring pos = L"row " + std::to_wstring(scroll + 1) + L" / " + std::to_wstring(totalRows);
+                        DrawText(pos.c_str(), smallFormat_.Get(),
+                            D2D1::RectF(bodyRect.right - 140.0f, bodyRect.top - 26.0f, bodyRect.right, bodyRect.top), muted.Get());
+                    }
+                }
+
+                finishDraw();
+                return;
+            }
             const float left = frame.left + 36.0f;
             const float tabsRight = frame.left + (frame.right - frame.left) * 0.22f;
             const float cardsLeft = tabsRight + 34.0f;
@@ -2597,22 +3501,36 @@ public:
             const float top = frame.top + 34.0f;
             const float buttonH = 58.0f;
             const float buttonGap = 22.0f;
-            const wchar_t* tabs[] = { L"Installed", L"Popular", L"Latest", L"Recommended" };
+            const wchar_t* tabs[] = { L"Profiles", L"Popular", L"Latest", L"Recommended", L"Modpacks" };
 
-            DrawText(L"Mods", bodyFormat_.Get(), D2D1::RectF(left, top, tabsRight, top + 42.0f), white.Get());
+            DrawText(L"Mods", titleFormat_.Get(), D2D1::RectF(left, top, tabsRight, top + 48.0f), white.Get());
 
-            for (int i = 0; i < 4; ++i) {
+            const wchar_t* tabIcons[] = { L"\uE8B7", L"\uE735", L"\uE823", L"\uEB52", L"\uE7B8" };
+            for (int i = 0; i < 5; ++i) {
                 const float y = top + 76.0f + i * (buttonH + buttonGap);
                 const D2D1_RECT_F tab = D2D1::RectF(left, y, tabsRight, y + buttonH);
                 const bool selected = i == state.selectedModsTab && state.modsFocus == 0;
                 const bool active = i == state.selectedModsTab;
-                if (active) {
-                    d2dContext_->FillRectangle(tab, panel.Get());
-                }
-                d2dContext_->DrawRectangle(tab, selected ? accent.Get() : white.Get(), selected ? 4.0f : 2.0f);
-                DrawText(tabs[i], bodyFormat_.Get(),
-                    D2D1::RectF(tab.left + 14.0f, tab.top + 10.0f, tab.right - 10.0f, tab.bottom - 8.0f),
+                if (selected) GlowSelect(tab, 14.0f);
+                FillRound(tab, active ? accentSoft.Get() : surfaceFill.Get(), 14.0f);
+                StrokeRound(tab, (selected || active) ? accent.Get() : softEdge.Get(), 14.0f, selected ? 3.0f : (active ? 2.0f : 1.0f));
+                DrawIcon(tabIcons[i], D2D1::RectF(tab.left + 8.0f, tab.top, tab.left + 46.0f, tab.bottom), active ? accent.Get() : muted.Get());
+                DrawText(tabs[i], bodyMid_.Get(),
+                    D2D1::RectF(tab.left + 52.0f, tab.top, tab.right - 10.0f, tab.bottom),
                     active ? accent.Get() : white.Get());
+            }
+
+            {
+                const float infoY = top + 76.0f + 5 * (buttonH + buttonGap) + 8.0f;
+                const D2D1_RECT_F infoBox = D2D1::RectF(left, infoY, tabsRight, infoY + 74.0f);
+                FillRound(infoBox, surfaceFill.Get(), 12.0f);
+                StrokeRound(infoBox, softEdge.Get(), 12.0f, 1.0f);
+                DrawIcon(L"\uE768", D2D1::RectF(infoBox.left + 8.0f, infoBox.top + 6.0f, infoBox.left + 34.0f, infoBox.top + 30.0f), muted.Get());
+                DrawText(L"INSTALLS GO TO", captionFormat_.Get(),
+                    D2D1::RectF(infoBox.left + 36.0f, infoBox.top + 9.0f, infoBox.right - 8.0f, infoBox.top + 30.0f), muted.Get());
+                const std::wstring who = state.activeProfileName.empty() ? std::wstring(L"Vanilla") : state.activeProfileName;
+                DrawText(who.c_str(), bodyFormat_.Get(),
+                    D2D1::RectF(infoBox.left + 12.0f, infoBox.top + 32.0f, infoBox.right - 8.0f, infoBox.bottom - 6.0f), accent.Get());
             }
 
             if (!state.status.empty()) {
@@ -2622,7 +3540,8 @@ public:
             }
 
             const D2D1_RECT_F list = D2D1::RectF(cardsLeft, top, cardsRight, frame.bottom - 34.0f);
-            d2dContext_->DrawRectangle(list, white.Get(), 2.0f);
+            FillRound(list, surfaceFill.Get(), 16.0f);
+            StrokeRound(list, softEdge.Get(), 16.0f, 1.0f);
 
             const float pad = 16.0f;
             const D2D1_RECT_F inner = D2D1::RectF(list.left + pad, list.top + pad, list.right - pad, list.bottom - pad);
@@ -2630,16 +3549,17 @@ public:
             const float searchH = 46.0f;
             const D2D1_RECT_F search = D2D1::RectF(inner.left, inner.top, inner.right, inner.top + searchH);
             const bool searchFocused = state.modsFocus == 1;
-            if (searchFocused) {
-                d2dContext_->FillRectangle(search, panel.Get());
-            }
-            d2dContext_->DrawRectangle(search, searchFocused ? accent.Get() : white.Get(), searchFocused ? 4.0f : 2.0f);
+            if (searchFocused) GlowSelect(search, 12.0f);
+            FillRound(search, searchFocused ? accentSoft.Get() : panel.Get(), 12.0f);
+            StrokeRound(search, searchFocused ? accent.Get() : softEdge.Get(), 12.0f, searchFocused ? 3.0f : 1.0f);
+            DrawIcon(L"\uE721", D2D1::RectF(search.left + 8.0f, search.top, search.left + 40.0f, search.bottom), searchFocused ? accent.Get() : muted.Get());
             {
                 const bool placeholder = state.modsSearchQuery.empty() && !state.modsSearchEditing;
-                std::wstring shown = placeholder ? std::wstring(L"Search mods") : state.modsSearchQuery;
+                const wchar_t* hint = state.selectedModsTab == 4 ? L"Search modpacks" : L"Search mods";
+                std::wstring shown = placeholder ? std::wstring(hint) : state.modsSearchQuery;
                 if (state.modsSearchEditing) shown += L"_";
-                DrawText(shown.c_str(), smallFormat_.Get(),
-                    D2D1::RectF(search.left + 14.0f, search.top + 11.0f, search.right - 12.0f, search.bottom - 8.0f),
+                DrawText(shown.c_str(), smallMid_.Get(),
+                    D2D1::RectF(search.left + 44.0f, search.top, search.right - 12.0f, search.bottom),
                     placeholder ? muted.Get() : white.Get());
             }
 
@@ -2670,8 +3590,9 @@ public:
                     const D2D1_RECT_F card = D2D1::RectF(x, y, x + cardW, y + cardH);
                     const bool selected = state.modsFocus == 2 && i == state.selectedModIndex;
 
-                    d2dContext_->FillRectangle(card, panel.Get());
-                    d2dContext_->DrawRectangle(card, selected ? accent.Get() : white.Get(), selected ? 4.0f : 2.0f);
+                    if (selected) GlowSelect(card, 14.0f);
+                    FillRound(card, panel.Get(), 14.0f);
+                    StrokeRound(card, selected ? accent.Get() : softEdge.Get(), 14.0f, selected ? 3.0f : 1.0f);
 
                     const float imageSide = (std::min)(cardH - 24.0f, 112.0f);
                     const float imageTop = card.top + (cardH - imageSide) * 0.5f;
@@ -2679,10 +3600,16 @@ public:
                     ComPtr<ID2D1Bitmap1> icon = GetCachedBitmap(state.modsCards[i].iconPath);
                     if (icon) {
                         DrawBitmapCover(icon.Get(), imageRect, 1.0f, 1.0f, 0.0f, 0.0f);
+                        StrokeRound(imageRect, softEdge.Get(), 8.0f, 1.0f);
                     } else {
-                        d2dContext_->FillRectangle(imageRect, black.Get());
-                        d2dContext_->DrawRectangle(imageRect, muted.Get(), 1.0f);
-                        DrawText(L"MOD", smallFormat_.Get(), imageRect, muted.Get());
+                        ComPtr<ID2D1SolidColorBrush> ph;
+                        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x05080B), ph.GetAddressOf());
+                        FillRound(imageRect, ph.Get(), 8.0f);
+                        StrokeRound(imageRect, softEdge.Get(), 8.0f, 1.0f);
+                        const wchar_t* g = state.selectedModsTab == 0
+                            ? (state.modsCards[i].projectId == L"__new__" ? L"\uE710" : L"\uE8B7")
+                            : (state.modsCards[i].isModpack ? L"\uE7B8" : L"\uE74C");
+                        DrawIcon(g, imageRect, muted.Get(), true);
                     }
 
                     const float textLeft = imageRect.right + 16.0f;
@@ -2690,12 +3617,12 @@ public:
                     DrawText(state.modsCards[i].title.c_str(), cardTitleFormat_.Get(),
                         D2D1::RectF(textLeft, card.top + 12.0f, textRight, card.top + 44.0f),
                         white.Get());
-                    DrawText(state.modsCards[i].description.c_str(), smallFormat_.Get(),
-                        D2D1::RectF(textLeft, card.top + 46.0f, textRight, card.bottom - 34.0f),
+                    DrawText(state.modsCards[i].description.c_str(), captionFormat_.Get(),
+                        D2D1::RectF(textLeft, card.top + 44.0f, textRight, card.bottom - 40.0f),
                         muted.Get());
                     if (!state.modsCards[i].status.empty()) {
-                        DrawText(state.modsCards[i].status.c_str(), smallFormat_.Get(),
-                            D2D1::RectF(textLeft, card.bottom - 30.0f, textRight, card.bottom - 8.0f),
+                        DrawText(state.modsCards[i].status.c_str(), smallMid_.Get(),
+                            D2D1::RectF(textLeft, card.bottom - 40.0f, textRight, card.bottom - 6.0f),
                             state.modsCards[i].installed ? accent.Get() : muted.Get());
                     }
                 }
@@ -2703,17 +3630,17 @@ public:
 
             if (maxScroll > 0) {
                 const D2D1_RECT_F track = D2D1::RectF(inner.right - 6.0f, gridTop, inner.right - 2.0f, inner.bottom);
-                d2dContext_->FillRectangle(track, panel.Get());
+                FillRound(track, panel.Get(), 2.0f);
                 const float trackH = track.bottom - track.top;
                 const float thumbH = trackH * (static_cast<float>(rowsVisible) / static_cast<float>(totalRows));
                 const float thumbY = track.top + (trackH - thumbH) * (static_cast<float>(scroll) / static_cast<float>(maxScroll));
-                d2dContext_->FillRectangle(D2D1::RectF(track.left, thumbY, track.right, thumbY + thumbH), accent.Get());
+                FillRound(D2D1::RectF(track.left, thumbY, track.right, thumbY + thumbH), accent.Get(), 2.0f);
             }
 
             if (state.modsCards.empty()) {
                 const std::wstring emptyText = state.selectedModsTab == 0
                     ? L"No installed mods"
-                    : L"No mods found";
+                    : (state.selectedModsTab == 4 ? L"No modpacks found" : L"No mods found");
                 DrawText(emptyText.c_str(), bodyFormat_.Get(),
                     D2D1::RectF(inner.left + 8.0f, gridTop + 8.0f, inner.right - 8.0f, gridTop + 70.0f),
                     muted.Get());
@@ -2733,19 +3660,19 @@ public:
             const float buttonGap = 24.0f;
             const wchar_t* labels[] = { L"Play", L"Mods", L"Repair downloads", L"Sign out" };
 
-            DrawText(title.c_str(), bodyFormat_.Get(), D2D1::RectF(left, top, menuRight, top + 42.0f), white.Get());
+            DrawText(title.c_str(), titleFormat_.Get(), D2D1::RectF(left, top, menuRight, top + 48.0f), white.Get());
 
+            const wchar_t* menuIcons[] = { L"\uE768", L"\uE74C", L"\uE72C", L"\uE7E8" };
             for (int i = 0; i < 4; ++i) {
                 const float y = top + 76.0f + i * (buttonH + buttonGap);
                 const D2D1_RECT_F button = D2D1::RectF(left, y, menuRight, y + buttonH);
-                if (i == state.selectedMenuIndex) {
-                    d2dContext_->FillRectangle(button, panel.Get());
-                    d2dContext_->DrawRectangle(button, accent.Get(), 4.0f);
-                } else {
-                    d2dContext_->DrawRectangle(button, white.Get(), 2.0f);
-                }
-                const D2D1_RECT_F textRect = D2D1::RectF(button.left + 18.0f, button.top + 12.0f, button.right - 12.0f, button.bottom - 8.0f);
-                DrawText(labels[i], bodyFormat_.Get(), textRect, i == state.selectedMenuIndex ? accent.Get() : white.Get());
+                const bool sel = i == state.selectedMenuIndex;
+                if (sel) GlowSelect(button, 14.0f);
+                FillRound(button, sel ? accentSoft.Get() : surfaceFill.Get(), 14.0f);
+                StrokeRound(button, sel ? accent.Get() : softEdge.Get(), 14.0f, sel ? 3.0f : 1.0f);
+                DrawIcon(menuIcons[i], D2D1::RectF(button.left + 16.0f, button.top, button.left + 50.0f, button.bottom), sel ? accent.Get() : white.Get());
+                const D2D1_RECT_F textRect = D2D1::RectF(button.left + 56.0f, button.top, button.right - 12.0f, button.bottom);
+                DrawText(labels[i], bodyMid_.Get(), textRect, sel ? accent.Get() : white.Get());
             }
 
             if (!state.status.empty()) {
@@ -2754,11 +3681,11 @@ public:
             }
 
             const D2D1_RECT_F preview = D2D1::RectF(previewLeft, top, previewRight, frame.bottom - 34.0f);
-            d2dContext_->FillRectangle(preview, black.Get());
-            d2dContext_->DrawRectangle(preview, white.Get(), 2.0f);
+            FillRound(preview, black.Get(), 16.0f);
+            StrokeRound(preview, softEdge.Get(), 16.0f, 1.0f);
             const float inset = 8.0f;
             const D2D1_RECT_F pano = D2D1::RectF(preview.left + inset, preview.top + inset, preview.right - inset, preview.bottom - inset);
-            DrawPanorama(pano, state.animation);
+            DrawScreenshots(pano);
 
             if (!state.detail.empty()) {
                 const D2D1_RECT_F detailRect = D2D1::RectF(preview.left + 26.0f, preview.bottom - 82.0f, preview.right - 26.0f, preview.bottom - 24.0f);
@@ -2773,7 +3700,7 @@ public:
             const float left = frame.left + 54.0f;
             const float right = frame.right - 54.0f;
             const D2D1_RECT_F titleRect = D2D1::RectF(left, frame.top + 72.0f, right, frame.top + 130.0f);
-            DrawText(title.c_str(), bodyFormat_.Get(), titleRect, white.Get());
+            DrawText(title.c_str(), titleFormat_.Get(), titleRect, white.Get());
 
             const D2D1_RECT_F statusRect = D2D1::RectF(left, frame.top + 178.0f, right, frame.top + 240.0f);
             DrawText(state.status.c_str(), bodyFormat_.Get(), statusRect, state.isError ? danger.Get() : white.Get());
@@ -2789,8 +3716,8 @@ public:
                 const float barHeight = 18.0f;
                 const D2D1_RECT_F track = D2D1::RectF(left, barTop, right, barTop + barHeight);
                 const D2D1_RECT_F fill = D2D1::RectF(left, barTop, left + (right - left) * progress, barTop + barHeight);
-                d2dContext_->FillRectangle(track, panel.Get());
-                d2dContext_->FillRectangle(fill, state.isError ? danger.Get() : accent.Get());
+                FillRound(track, panel.Get(), 9.0f);
+                FillRound(fill, state.isError ? danger.Get() : accent.Get(), 9.0f);
 
                 wchar_t percent[32] = {};
                 swprintf_s(percent, L"%d%%", static_cast<int>(progress * 100.0f + 0.5f));
@@ -2806,14 +3733,15 @@ public:
         d2dContext_->DrawLine(
             D2D1::Point2F(dividerX, frame.top + 32.0f),
             D2D1::Point2F(dividerX, frame.bottom - 32.0f),
-            white.Get(),
-            3.0f);
+            softEdge.Get(),
+            1.5f);
 
         const D2D1_RECT_F titleRect = D2D1::RectF(frame.left + 42.0f, frame.top + 34.0f, dividerX - 42.0f, frame.top + 86.0f);
-        DrawText(title.c_str(), bodyFormat_.Get(), titleRect, white.Get());
+        DrawText(title.c_str(), titleFormat_.Get(), titleRect, white.Get());
 
         const D2D1_RECT_F codeBox = D2D1::RectF(frame.left + 42.0f, frame.top + 102.0f, dividerX - 42.0f, frame.top + 190.0f);
-        d2dContext_->DrawRectangle(codeBox, white.Get(), 2.0f);
+        FillRound(codeBox, accentSoft.Get(), 14.0f);
+        StrokeRound(codeBox, accent.Get(), 14.0f, 2.0f);
         if (!state.userCode.empty()) {
             DrawText(state.userCode.c_str(), codeFormat_.Get(), codeBox, white.Get());
         }
@@ -2862,11 +3790,15 @@ private:
     ComPtr<IDWriteTextFormat> bodyFormat_;
     ComPtr<IDWriteTextFormat> smallFormat_;
     ComPtr<IDWriteTextFormat> cardTitleFormat_;
-    ComPtr<ID2D1Bitmap1> panoramaFaces_[4];
-    ComPtr<ID2D1Bitmap1> panoramaOverlay_;
+    ComPtr<IDWriteTextFormat> titleFormat_;
+    ComPtr<IDWriteTextFormat> captionFormat_;
+    ComPtr<IDWriteTextFormat> bodyMid_;
+    ComPtr<IDWriteTextFormat> smallMid_;
+    ComPtr<IDWriteTextFormat> iconFormat_;
+    ComPtr<IDWriteTextFormat> iconLgFormat_;
     std::map<std::wstring, ComPtr<ID2D1Bitmap1>> bitmapCache_;
-    bool panoramaLoadAttempted_ = false;
-    bool panoramaLoaded_ = false;
+    std::vector<std::wstring> screenshotPaths_;
+    ULONGLONG screenshotsScanTick_ = 0;
     float width_ = 1280.0f;
     float height_ = 720.0f;
 
@@ -2902,6 +3834,45 @@ private:
             cardTitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             cardTitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
+        dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 40.0f, L"en-US", titleFormat_.GetAddressOf());
+        dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 17.0f, L"en-US", captionFormat_.GetAddressOf());
+        dwriteFactory_->CreateTextFormat(
+            L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 22.0f, L"en-US", iconFormat_.GetAddressOf());
+        dwriteFactory_->CreateTextFormat(
+            L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 32.0f, L"en-US", iconLgFormat_.GetAddressOf());
+        if (titleFormat_) {
+            titleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            titleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            titleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+        if (captionFormat_) {
+            captionFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            captionFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+        dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 30.0f, L"en-US", bodyMid_.GetAddressOf());
+        dwriteFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 21.0f, L"en-US", smallMid_.GetAddressOf());
+        for (IDWriteTextFormat* mf : { bodyMid_.Get(), smallMid_.Get() }) {
+            if (!mf) continue;
+            mf->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            mf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            mf->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+        for (IDWriteTextFormat* icf : { iconFormat_.Get(), iconLgFormat_.Get() }) {
+            if (!icf) continue;
+            icf->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            icf->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            icf->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
     }
 
     void DrawText(const wchar_t* text, IDWriteTextFormat* format, D2D1_RECT_F rect, ID2D1Brush* brush) {
@@ -2913,6 +3884,42 @@ private:
             rect,
             brush,
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
+    void FillRound(D2D1_RECT_F r, ID2D1Brush* b, float radius) {
+        if (b) d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b);
+    }
+
+    void StrokeRound(D2D1_RECT_F r, ID2D1Brush* b, float radius, float width) {
+        if (b) d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b, width);
+    }
+
+    void DrawIcon(const wchar_t* glyph, D2D1_RECT_F rect, ID2D1Brush* brush, bool large = false) {
+        DrawText(glyph, large ? iconLgFormat_.Get() : iconFormat_.Get(), rect, brush);
+    }
+
+    void GlowSelect(D2D1_RECT_F r, float radius) {
+        ComPtr<ID2D1SolidColorBrush> g1, g2;
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486, 0.10f), g1.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486, 0.20f), g2.GetAddressOf());
+        if (g1) d2dContext_->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(r.left - 10.0f, r.top - 10.0f, r.right + 10.0f, r.bottom + 10.0f), radius + 9.0f, radius + 9.0f), g1.Get());
+        if (g2) d2dContext_->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(r.left - 5.0f, r.top - 5.0f, r.right + 5.0f, r.bottom + 5.0f), radius + 5.0f, radius + 5.0f), g2.Get());
+    }
+
+    void FillVerticalGradient(D2D1_RECT_F r, UINT32 topColor, UINT32 bottomColor) {
+        D2D1_GRADIENT_STOP stops[2];
+        stops[0].position = 0.0f; stops[0].color = D2D1::ColorF(topColor);
+        stops[1].position = 1.0f; stops[1].color = D2D1::ColorF(bottomColor);
+        ComPtr<ID2D1GradientStopCollection> coll;
+        if (FAILED(d2dContext_->CreateGradientStopCollection(stops, 2, coll.GetAddressOf()))) return;
+        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES props{};
+        props.startPoint = D2D1::Point2F(r.left, r.top);
+        props.endPoint = D2D1::Point2F(r.left, r.bottom);
+        ComPtr<ID2D1LinearGradientBrush> br;
+        if (FAILED(d2dContext_->CreateLinearGradientBrush(props, coll.Get(), br.GetAddressOf()))) return;
+        d2dContext_->FillRectangle(r, br.Get());
     }
 
     ComPtr<ID2D1Bitmap1> GetCachedBitmap(const std::wstring& path) {
@@ -2946,21 +3953,21 @@ private:
             WICDecodeMetadataCacheOnLoad,
             decoder.GetAddressOf());
         if (FAILED(hr)) {
-            WriteLogF(L"Panorama decoder failed %s hr=0x%08X", path.c_str(), hr);
+            WriteLogF(L"Bitmap decoder failed %s hr=0x%08X", path.c_str(), hr);
             return false;
         }
 
         ComPtr<IWICBitmapFrameDecode> frame;
         hr = decoder->GetFrame(0, frame.GetAddressOf());
         if (FAILED(hr)) {
-            WriteLogF(L"Panorama frame failed %s hr=0x%08X", path.c_str(), hr);
+            WriteLogF(L"Bitmap frame failed %s hr=0x%08X", path.c_str(), hr);
             return false;
         }
 
         ComPtr<IWICFormatConverter> converter;
         hr = wicFactory_->CreateFormatConverter(converter.GetAddressOf());
         if (FAILED(hr)) {
-            WriteLogF(L"Panorama converter create failed hr=0x%08X", hr);
+            WriteLogF(L"Bitmap converter create failed hr=0x%08X", hr);
             return false;
         }
 
@@ -2972,7 +3979,7 @@ private:
             0.0,
             WICBitmapPaletteTypeCustom);
         if (FAILED(hr)) {
-            WriteLogF(L"Panorama converter init failed %s hr=0x%08X", path.c_str(), hr);
+            WriteLogF(L"Bitmap converter init failed %s hr=0x%08X", path.c_str(), hr);
             return false;
         }
 
@@ -2983,51 +3990,29 @@ private:
             96.0f);
         hr = d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), &props, out.GetAddressOf());
         if (FAILED(hr)) {
-            WriteLogF(L"Panorama D2D bitmap failed %s hr=0x%08X", path.c_str(), hr);
+            WriteLogF(L"Bitmap D2D bitmap failed %s hr=0x%08X", path.c_str(), hr);
             return false;
         }
 
         return true;
     }
 
-    void EnsurePanoramaLoaded() {
-        if (panoramaLoadAttempted_) return;
-        panoramaLoadAttempted_ = true;
 
-        const std::wstring dir = GetExecutableDir() + L"\\Assets\\panorama";
-        int loaded = 0;
-        for (int i = 0; i < 4; ++i) {
-            const std::wstring path = dir + L"\\panorama_" + std::to_wstring(i) + L".png";
-            if (LoadBitmapFromFile(path, panoramaFaces_[i])) {
-                ++loaded;
-            }
+    void ScanScreenshots() {
+        screenshotPaths_.clear();
+        const std::wstring dir = GetExecutableDir() + L"\\Assets\\screenshots";
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((dir + L"\\*.png").c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                screenshotPaths_.push_back(dir + L"\\" + fd.cFileName);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
         }
-
-        LoadBitmapFromFile(dir + L"\\panorama_overlay.png", panoramaOverlay_);
-        panoramaLoaded_ = loaded == 4;
-        WriteLogF(L"Panorama loaded faces=%d overlay=%d",
-            loaded,
-            panoramaOverlay_ ? 1 : 0);
+        std::sort(screenshotPaths_.begin(), screenshotPaths_.end());
     }
 
-    void DrawPanoramaFallback(D2D1_RECT_F rect, float animation) {
-        d2dContext_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
-        ComPtr<ID2D1SolidColorBrush> sky;
-        ComPtr<ID2D1SolidColorBrush> ridge;
-        ComPtr<ID2D1SolidColorBrush> water;
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x2F6F9F), sky.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x315D35), ridge.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x1B425A), water.GetAddressOf());
-        d2dContext_->FillRectangle(rect, sky.Get());
-        const float phase = static_cast<float>(static_cast<int>(animation * 45.0f) % 96);
-        for (int i = -1; i < 8; ++i) {
-            const float x = rect.left + i * 96.0f - phase;
-            const float peak = rect.top + 96.0f + ((i % 2) ? 28.0f : 0.0f);
-            d2dContext_->FillRectangle(D2D1::RectF(x, peak, x + 132.0f, rect.bottom - 72.0f), ridge.Get());
-        }
-        d2dContext_->FillRectangle(D2D1::RectF(rect.left, rect.bottom - 86.0f, rect.right, rect.bottom), water.Get());
-        d2dContext_->PopAxisAlignedClip();
-    }
 
     void DrawBitmapCover(ID2D1Bitmap1* bitmap, D2D1_RECT_F rect, float opacity, float zoom, float panX, float panY) {
         if (!bitmap) return;
@@ -3068,39 +4053,45 @@ private:
         d2dContext_->DrawBitmap(bitmap, rect, opacity, D2D1_INTERPOLATION_MODE_LINEAR, source);
     }
 
-    void DrawPanorama(D2D1_RECT_F rect, float animation) {
-        EnsurePanoramaLoaded();
-        if (!panoramaLoaded_) {
-            DrawPanoramaFallback(rect, animation);
-            return;
+    void DrawScreenshots(D2D1_RECT_F rect) {
+        const ULONGLONG nowMs = GetTickCount64();
+        if (screenshotPaths_.empty() || nowMs - screenshotsScanTick_ > 10000) {
+            ScanScreenshots();
+            screenshotsScanTick_ = nowMs;
         }
 
         d2dContext_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
 
-        const float segmentSeconds = 7.0f;
-        const float raw = fmodf(animation / segmentSeconds, 6.0f);
-        const int face = static_cast<int>(floorf(raw)) % 4;
-        const int nextFace = (face + 1) % 4;
-        const float phase = raw - floorf(raw);
-        const float fade = phase > 0.82f ? (phase - 0.82f) / 0.18f : 0.0f;
-        const float easedFade = fade * fade * (3.0f - 2.0f * fade);
-        const float panX = sinf(animation * 0.11f) * 0.45f;
-        const float panY = cosf(animation * 0.08f) * 0.18f;
-        const float zoom = 1.08f + 0.025f * sinf(animation * 0.17f);
-
-        DrawBitmapCover(panoramaFaces_[face].Get(), rect, 1.0f, zoom, panX, panY);
-        if (easedFade > 0.0f) {
-            DrawBitmapCover(
-                panoramaFaces_[nextFace].Get(),
-                rect,
-                easedFade,
-                1.08f + 0.025f * sinf((animation + segmentSeconds) * 0.17f),
-                sinf((animation + segmentSeconds) * 0.11f) * 0.45f,
-                cosf((animation + segmentSeconds) * 0.08f) * 0.18f);
+        if (screenshotPaths_.empty()) {
+            ComPtr<ID2D1SolidColorBrush> dim, hint;
+            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x070A0E), dim.GetAddressOf());
+            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x5A6168), hint.GetAddressOf());
+            d2dContext_->FillRectangle(rect, dim.Get());
+            DrawText(L"No images in Assets\\screenshots", smallMid_.Get(),
+                D2D1::RectF(rect.left + 28.0f, rect.top, rect.right - 28.0f, rect.bottom), hint.Get());
+            d2dContext_->PopAxisAlignedClip();
+            return;
         }
 
-        if (panoramaOverlay_) {
-            d2dContext_->DrawBitmap(panoramaOverlay_.Get(), rect, 0.48f, D2D1_INTERPOLATION_MODE_LINEAR);
+        const double now = nowMs / 1000.0;
+        const double hold = 6.0;
+        const int total = static_cast<int>(screenshotPaths_.size());
+        const double t = now / hold;
+        const long long base = static_cast<long long>(floor(t));
+        const int idx = static_cast<int>(((base % total) + total) % total);
+        const int nextIdx = (idx + 1) % total;
+        const double frac = t - static_cast<double>(base);
+        const double fade = frac > 0.8 ? (frac - 0.8) / 0.2 : 0.0;
+        const float easedFade = static_cast<float>(fade * fade * (3.0 - 2.0 * fade));
+        const float panX = sinf(static_cast<float>(now) * 0.05f) * 0.4f;
+        const float panY = cosf(static_cast<float>(now) * 0.037f) * 0.16f;
+        const float zoom = 1.05f + 0.02f * sinf(static_cast<float>(now) * 0.08f);
+
+        ComPtr<ID2D1Bitmap1> cur = GetCachedBitmap(screenshotPaths_[static_cast<size_t>(idx)]);
+        if (cur) DrawBitmapCover(cur.Get(), rect, 1.0f, zoom, panX, panY);
+        if (easedFade > 0.0f && total > 1) {
+            ComPtr<ID2D1Bitmap1> nxt = GetCachedBitmap(screenshotPaths_[static_cast<size_t>(nextIdx)]);
+            if (nxt) DrawBitmapCover(nxt.Get(), rect, easedFade, zoom, -panX, panY);
         }
         d2dContext_->PopAxisAlignedClip();
     }
@@ -3297,30 +4288,38 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
     state.modsTotalHits = 0;
     state.modsExhausted = true;
     state.isError = false;
+    state.activeProfileId = GetActiveProfileId(runtimeRoot);
+    state.activeProfileName = ProfileDisplayName(runtimeRoot, state.activeProfileId);
 
     const std::wstring query = state.modsSearchQuery;
 
     if (state.selectedModsTab == 0) {
-        std::vector<ModCard> all;
-        LoadInstalledMods(runtimeRoot, userModsDir, all);
-        if (query.empty()) {
-            state.modsCards = std::move(all);
-        } else {
-            std::wstring lowerNeedle = query;
-            std::transform(lowerNeedle.begin(), lowerNeedle.end(), lowerNeedle.begin(),
-                [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-            for (auto& card : all) {
-                std::wstring hay = card.title + L" " + card.filePath;
-                std::transform(hay.begin(), hay.end(), hay.begin(),
-                    [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-                if (hay.find(lowerNeedle) != std::wstring::npos) {
-                    state.modsCards.push_back(std::move(card));
-                }
-            }
+        EnsureProfilesInitialized(runtimeRoot);
+        const std::wstring active = GetActiveProfileId(runtimeRoot);
+        {
+            ModCard add;
+            add.projectId = L"__new__";
+            add.title = L"+ New profile";
+            add.description = L"Create an empty profile, then install mods into it";
+            state.modsCards.push_back(add);
         }
-        state.status = state.modsCards.empty()
-            ? (query.empty() ? L"No installed user mods" : L"No installed mods match")
-            : std::to_wstring(state.modsCards.size()) + L" installed";
+        for (const Profile& p : LoadProfiles(runtimeRoot)) {
+            ModCard c;
+            c.projectId = L"__profile__";
+            c.filePath = p.id;
+            c.title = p.name;
+            const bool isActive = (p.id == active);
+            c.installed = isActive;
+            if (p.builtin) {
+                c.description = L"Pure vanilla, no mods";
+            } else {
+                const int n = ProfileModCount(runtimeRoot, p.id);
+                c.description = std::to_wstring(n) + (n == 1 ? L" mod" : L" mods");
+            }
+            c.status = isActive ? L"\u25CF Playing this" : L"";
+            state.modsCards.push_back(c);
+        }
+        state.status = L"A open profile  -  X delete  -  installs go to the active profile";
         return;
     }
 
@@ -3354,10 +4353,13 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
         return;
     }
 
-    const char* index = !query.empty() ? "relevance" : (state.selectedModsTab == 1 ? "downloads" : "newest");
+    const char* projectType = state.selectedModsTab == 4 ? "modpack" : "mod";
+    const char* index = !query.empty()
+        ? "relevance"
+        : ((state.selectedModsTab == 1 || state.selectedModsTab == 4) ? "downloads" : "newest");
     std::wstring error;
     int total = 0;
-    if (!FetchModrinthMods(runtimeRoot, index, query, 0, kModPageSize, state.modsCards, total, error)) {
+    if (!FetchModrinthMods(runtimeRoot, index, query, 0, kModPageSize, state.modsCards, total, error, projectType)) {
         state.status = error.empty() ? L"Could not load Modrinth" : error;
         state.isError = true;
         return;
@@ -3367,7 +4369,7 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
     state.modsExhausted = static_cast<int>(state.modsCards.size()) >= total;
     QueueModIcons(state.modsCards);
     state.status = state.modsCards.empty()
-        ? L"No mods found"
+        ? (state.selectedModsTab == 4 ? L"No modpacks found" : L"No mods found")
         : std::to_wstring(state.modsCards.size()) + L" of " + std::to_wstring(total);
 }
 
@@ -3624,6 +4626,8 @@ static void ShowModsPage(
     state.modsFocus = 0;
     state.modsScrollRow = 0;
     state.modsSearchEditing = false;
+    state.modsDetailOpen = false;
+    state.modsDetailScroll = 0;
     state.modsSearchQuery.clear();
     state.status = L"Loading installed mods";
     LoadModsTab(state, runtimeRoot, userModsDir);
@@ -3641,6 +4645,8 @@ static void ShowModsPage(
     bool backWasDown = false;
     bool pageUpWasDown = false;
     bool pageDownWasDown = false;
+    bool xWasDown = false;
+    bool yWasDown = false;
     bool wasOskVisible = false;
 
     auto enterSearch = [&]() {
@@ -3675,16 +4681,19 @@ static void ShowModsPage(
     };
 
     auto loadMore = [&]() {
-        const bool browseTab = state.selectedModsTab == 1 || state.selectedModsTab == 2;
+        const bool browseTab = state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4;
         if (state.modsExhausted || !browseTab) return;
-        const char* index = !state.modsSearchQuery.empty() ? "relevance" : (state.selectedModsTab == 1 ? "downloads" : "newest");
+        const char* projectType = state.selectedModsTab == 4 ? "modpack" : "mod";
+        const char* index = !state.modsSearchQuery.empty()
+            ? "relevance"
+            : ((state.selectedModsTab == 1 || state.selectedModsTab == 4) ? "downloads" : "newest");
         const int before = static_cast<int>(state.modsCards.size());
         state.status = L"Loading more...";
         RenderAuth(renderer, state);
 
         int total = state.modsTotalHits;
         std::wstring error;
-        if (!FetchModrinthMods(runtimeRoot, index, state.modsSearchQuery, before, kModPageSize, state.modsCards, total, error)) {
+        if (!FetchModrinthMods(runtimeRoot, index, state.modsSearchQuery, before, kModPageSize, state.modsCards, total, error, projectType)) {
             state.modsExhausted = true;
             return;
         }
@@ -3697,10 +4706,14 @@ static void ShowModsPage(
 
     WriteLog(L"Mods page opened");
     while (true) {
-        g_modsSearchCapturing.store(state.modsSearchEditing);
+        g_modsSearchCapturing.store(state.modsSearchEditing || state.modsRenaming);
         if (state.modsSearchEditing) {
             std::lock_guard<std::mutex> lk(g_modsSearchMutex);
             state.modsSearchQuery = g_modsSearchBuffer;
+        }
+        if (state.modsRenaming) {
+            std::lock_guard<std::mutex> lk(g_modsSearchMutex);
+            state.modsRenameText = g_modsSearchBuffer;
         }
 
         state.animation = static_cast<float>((GetTickCount64() % 100000) / 1000.0);
@@ -3747,8 +4760,16 @@ static void ShowModsPage(
             ABI::Windows::System::VirtualKey_PageDown,
             ABI::Windows::System::VirtualKey_GamepadRightShoulder
         });
+        const bool xDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_GamepadX,
+            ABI::Windows::System::VirtualKey_Delete
+        });
+        const bool yDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_GamepadY,
+            ABI::Windows::System::VirtualKey_F2
+        });
 
-        if (backDown && !backWasDown) {
+        if (backDown && !backWasDown && !state.modsDetailOpen && !state.modsProfileOpen && !g_installRunning.load()) {
             WriteLog(L"Mods page closed");
             EndModsSearchCapture();
             StopIconWorker();
@@ -3773,23 +4794,169 @@ static void ShowModsPage(
             state.selectedModIndex = 0;
             state.modsScrollRow = 0;
         }
+        if (state.modsRenaming &&
+            (submitRequested || (wasOskVisible && !oskVisible) || oskFocusRemoved)) {
+            std::wstring buf;
+            { std::lock_guard<std::mutex> lk(g_modsSearchMutex); buf = g_modsSearchBuffer; }
+            while (!buf.empty() && (buf.front() == L' ' || buf.front() == L'\t')) buf.erase(buf.begin());
+            while (!buf.empty() && (buf.back() == L' ' || buf.back() == L'\t' || buf.back() == L'\r' || buf.back() == L'\n')) buf.pop_back();
+            ModsSearchEndInput();
+            state.modsRenaming = false;
+            if (!buf.empty() && !state.modsProfileBuiltin) {
+                RenameProfile(runtimeRoot, state.modsProfileId, buf);
+                state.modsProfileName = buf;
+                if (state.activeProfileId == state.modsProfileId) state.activeProfileName = buf;
+                state.status = L"Renamed to " + buf;
+            }
+        }
         wasOskVisible = oskVisible;
         if (oskVisible) {
             upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
             rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
-            backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown;
+            backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        if (g_installRunning.load()) {
+            const std::wstring s = GetInstallStatus();
+            state.status = s.empty() ? L"Installing..." : s;
+            state.isError = false;
+            upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
+            rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
+            backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+        if (g_installResultReady.exchange(false)) {
+            const bool ok = g_installResultOk.load();
+            const std::wstring s = GetInstallStatus();
+            state.status = !s.empty() ? s : (ok ? L"Installed" : L"Install failed");
+            state.isError = !ok;
+            if (ok && state.selectedModsTab == 0) {
+                LoadModsTab(state, runtimeRoot, userModsDir);
+                loadedQuery = state.modsSearchQuery;
+            }
+        }
+
+        if (state.modsProfileOpen) {
+            const int pmTotal = static_cast<int>(state.modsProfileMods.size());
+            const int pmRows = (std::max)(1, g_profileRowsVisible.load());
+            auto pmEnsureVisible = [&]() {
+                const int selRow = state.modsProfileSel / 2;
+                if (selRow < state.modsProfileScroll) state.modsProfileScroll = selRow;
+                else if (selRow >= state.modsProfileScroll + pmRows) state.modsProfileScroll = selRow - pmRows + 1;
+            };
+            const bool gridFocus = state.modsProfileFocus == 2;
+            if (backDown && !backWasDown) {
+                state.modsProfileOpen = false;
+                state.status.clear();
+            } else if (yDown && !yWasDown && !state.modsProfileBuiltin) {
+                {
+                    std::lock_guard<std::mutex> lk(g_modsSearchMutex);
+                    g_modsSearchBuffer = state.modsProfileName;
+                    g_modsCaret = static_cast<int>(g_modsSearchBuffer.size());
+                }
+                state.modsRenameText = state.modsProfileName;
+                state.modsRenaming = true;
+                ModsSearchBeginInput();
+            } else if (!gridFocus && leftDown && !leftWasDown) {
+                if (!state.modsProfileBuiltin) state.modsProfileFocus = 1;
+            } else if (!gridFocus && rightDown && !rightWasDown) {
+                state.modsProfileFocus = 0;
+            } else if (!gridFocus && (downDown && !downWasDown)) {
+                if (pmTotal > 0) { state.modsProfileFocus = 2; state.modsProfileSel = 0; state.modsProfileScroll = 0; }
+            } else if (gridFocus && (upDown && !upWasDown)) {
+                if (state.modsProfileSel < 2) { state.modsProfileFocus = 0; }
+                else { state.modsProfileSel -= 2; pmEnsureVisible(); }
+            } else if (gridFocus && (downDown && !downWasDown)) {
+                if (state.modsProfileSel + 2 < pmTotal) { state.modsProfileSel += 2; pmEnsureVisible(); }
+            } else if (gridFocus && (leftDown && !leftWasDown)) {
+                if (state.modsProfileSel > 0) { state.modsProfileSel -= 1; pmEnsureVisible(); }
+            } else if (gridFocus && (rightDown && !rightWasDown)) {
+                if (state.modsProfileSel + 1 < pmTotal) { state.modsProfileSel += 1; pmEnsureVisible(); }
+            } else if (gridFocus && (pageDownDown && !pageDownWasDown)) {
+                state.modsProfileSel = (std::min)(pmTotal - 1, state.modsProfileSel + pmRows * 2); pmEnsureVisible();
+            } else if (gridFocus && (pageUpDown && !pageUpWasDown)) {
+                state.modsProfileSel = (std::max)(0, state.modsProfileSel - pmRows * 2); pmEnsureVisible();
+            } else if (xDown && !xWasDown) {
+                if (gridFocus && pmTotal > 0 && state.modsProfileSel < pmTotal) {
+                    const std::wstring jar = state.modsProfileMods[static_cast<size_t>(state.modsProfileSel)];
+                    DeleteFileW((ProfileModsDir(runtimeRoot, state.modsProfileId) + L"\\" + jar).c_str());
+                    state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
+                    const int newTotal = static_cast<int>(state.modsProfileMods.size());
+                    if (state.modsProfileSel >= newTotal) state.modsProfileSel = (std::max)(0, newTotal - 1);
+                    if (newTotal == 0) state.modsProfileFocus = 0;
+                    pmEnsureVisible();
+                    state.status = L"Removed " + jar;
+                } else if (!state.modsProfileBuiltin) {
+                    const std::wstring gone = state.modsProfileName;
+                    DeleteProfile(runtimeRoot, state.modsProfileId);
+                    state.modsProfileOpen = false;
+                    LoadModsTab(state, runtimeRoot, userModsDir);
+                    state.status = L"Deleted " + gone;
+                }
+            } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+                if (state.modsProfileFocus == 1 && !state.modsProfileBuiltin) {
+                    const std::wstring gone = state.modsProfileName;
+                    DeleteProfile(runtimeRoot, state.modsProfileId);
+                    state.modsProfileOpen = false;
+                    LoadModsTab(state, runtimeRoot, userModsDir);
+                    state.status = L"Deleted " + gone;
+                } else if (state.modsProfileFocus == 0) {
+                    SetActiveProfileId(runtimeRoot, state.modsProfileId);
+                    state.activeProfileId = state.modsProfileId;
+                    state.activeProfileName = state.modsProfileName;
+                    state.status = L"Play will use " + state.modsProfileName;
+                }
+            }
+            upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
+            rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
+            backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        if (state.modsDetailOpen) {
+            {
+                std::lock_guard<std::mutex> lk(g_detailMutex);
+                if (g_detailReadyId == state.modsDetailReqId) {
+                    state.modsDetailBody = g_detailBody;
+                    state.modsDetailBold = g_detailBold;
+                    state.modsDetailHead = g_detailHead;
+                    state.modsDetailMeta = g_detailMeta;
+                    state.modsDetailLoading = false;
+                }
+            }
+            if (backDown && !backWasDown) {
+                state.modsDetailOpen = false;
+                state.status.clear();
+            } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+                StartInstallJob(state.modsDetailCard, runtimeRoot);
+            } else if (upDown && !upWasDown) {
+                state.modsDetailScroll = (std::max)(0, state.modsDetailScroll - 2);
+            } else if (downDown && !downWasDown) {
+                state.modsDetailScroll = (std::min)(g_detailMaxScroll.load(), state.modsDetailScroll + 2);
+            } else if (pageDownDown && !pageDownWasDown) {
+                state.modsDetailScroll = (std::min)(g_detailMaxScroll.load(), state.modsDetailScroll + 8);
+            } else if (pageUpDown && !pageUpWasDown) {
+                state.modsDetailScroll = (std::max)(0, state.modsDetailScroll - 8);
+            }
+            upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
+            rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
+            backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
 
         if (state.modsFocus == 0) {
             if (upDown && !upWasDown) {
-                state.selectedModsTab = (state.selectedModsTab + 3) % 4;
+                state.selectedModsTab = (state.selectedModsTab + 4) % 5;
                 LoadModsTab(state, runtimeRoot, userModsDir);
                 loadedQuery = state.modsSearchQuery;
             }
             if (downDown && !downWasDown) {
-                state.selectedModsTab = (state.selectedModsTab + 1) % 4;
+                state.selectedModsTab = (state.selectedModsTab + 1) % 5;
                 LoadModsTab(state, runtimeRoot, userModsDir);
                 loadedQuery = state.modsSearchQuery;
             }
@@ -3866,7 +5033,7 @@ static void ShowModsPage(
                 state.selectedModIndex = (std::max)(state.selectedModIndex - step, 0);
             }
 
-            if (!state.modsExhausted && (state.selectedModsTab == 1 || state.selectedModsTab == 2) && count > 0 &&
+            if (!state.modsExhausted && (state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4) && count > 0 &&
                 ((downDown && !downWasDown) || (pageDownDown && !pageDownWasDown))) {
                 const int lastRow = (count - 1) / 2;
                 if (state.selectedModIndex / 2 >= lastRow) {
@@ -3878,37 +5045,53 @@ static void ShowModsPage(
                 ensureSelectionVisible();
             }
 
-            if (selectDown && !selectWasDown && state.selectedModIndex >= 0 && state.selectedModIndex < count) {
-                ModCard selected = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
-                if (state.selectedModsTab == 0) {
-                    if (!selected.filePath.empty()) {
-                        WriteLogF(L"Deleting installed mod %s", selected.filePath.c_str());
-                        DeleteFileW(selected.filePath.c_str());
-                        DeleteFileW(ModMetaPath(runtimeRoot, selected.filePath.substr(selected.filePath.find_last_of(L'\\') + 1)).c_str());
-                    }
+            if (state.selectedModsTab == 0 && xDown && !xWasDown &&
+                state.selectedModIndex >= 0 && state.selectedModIndex < count) {
+                const ModCard& sel = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
+                if (sel.projectId == L"__profile__" && sel.filePath != kVanillaProfileId) {
+                    DeleteProfile(runtimeRoot, sel.filePath);
+                    const std::wstring deleted = sel.title;
                     LoadModsTab(state, runtimeRoot, userModsDir);
-                    loadedQuery = state.modsSearchQuery;
                     if (state.selectedModIndex >= static_cast<int>(state.modsCards.size())) {
                         state.selectedModIndex = (std::max)(0, static_cast<int>(state.modsCards.size()) - 1);
                     }
-                    if (state.modsCards.empty()) state.modsFocus = 0;
                     ensureSelectionVisible();
-                } else {
-                    state.status = L"Installing " + selected.title;
-                    state.isError = false;
-                    RenderAuth(renderer, state);
+                    state.status = L"Deleted " + deleted;
+                }
+            }
 
-                    std::vector<std::wstring> installed;
-                    std::wstring error;
-                    if (InstallModrinthProject(selected, runtimeRoot, userModsDir, installed, error)) {
-                        state.status = installed.empty()
-                            ? L"Already installed"
-                            : L"Installed " + std::to_wstring(installed.size()) + L" file(s)";
-                        state.isError = false;
-                    } else {
-                        state.status = error.empty() ? L"Install failed" : error;
-                        state.isError = true;
+            if (selectDown && !selectWasDown && state.selectedModIndex >= 0 && state.selectedModIndex < count) {
+                ModCard selected = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
+                if (state.selectedModsTab == 0) {
+                    if (selected.projectId == L"__new__") {
+                        const std::wstring pid = CreateAutoProfile(runtimeRoot);
+                        SetActiveProfileId(runtimeRoot, pid);
+                        LoadModsTab(state, runtimeRoot, userModsDir);
+                        ensureSelectionVisible();
+                        state.status = L"New profile ready. Browse mods to fill it.";
+                    } else if (selected.projectId == L"__profile__") {
+                        state.modsProfileOpen = true;
+                        state.modsProfileId = selected.filePath;
+                        state.modsProfileName = selected.title;
+                        state.modsProfileBuiltin = (selected.filePath == kVanillaProfileId);
+                        state.modsProfileMods = ListProfileMods(runtimeRoot, selected.filePath);
+                        state.modsProfileScroll = 0;
+                        state.modsProfileFocus = 0;
+                        state.modsProfileSel = 0;
+                        state.status.clear();
                     }
+                } else {
+                    state.modsDetailCard = selected;
+                    state.modsDetailOpen = true;
+                    state.modsDetailScroll = 0;
+                    state.modsDetailBody.clear();
+                    state.modsDetailBold.clear();
+                    state.modsDetailHead.clear();
+                    state.modsDetailMeta.clear();
+                    state.modsDetailLoading = true;
+                    state.modsDetailReqId = StartDetailFetch(selected);
+                    state.status.clear();
+                    state.isError = false;
                 }
             }
         }
@@ -3922,6 +5105,7 @@ static void ShowModsPage(
         backWasDown = backDown;
         pageUpWasDown = pageUpDown;
         pageDownWasDown = pageDownDown;
+        xWasDown = xDown; yWasDown = yDown;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
@@ -5195,7 +6379,9 @@ public:
         const std::wstring packageRuntimeDir = packageDir + L"\\runtime";
         const std::wstring packagedLibrariesDir = packageRuntimeDir + L"\\libraries";
         const std::wstring bundledModsDir = gameDir + L"\\mods";
-        const std::wstring userModsDir = gameDir + L"\\user-mods";
+        EnsureProfilesInitialized(exeDir);
+        const std::wstring activeProfile = GetActiveProfileId(exeDir);
+        const std::wstring userModsDir = ProfileModsDir(exeDir, activeProfile);
         const std::wstring clientJar = gameDir + L"\\versions\\" + minecraftVersion + L"\\" + minecraftVersion + L".jar";
         const std::wstring argsPath = exeDir + L"\\java_args.txt";
         const std::wstring javaLog = exeDir + L"\\java_output.log";

@@ -44,7 +44,11 @@ Targets for NeoForge, Forge, and older vanilla versions may appear in the catalo
 - Dynamic official Minecraft, asset, library, and Fabric downloads into UWP `LocalState`.
 - Multiple Minecraft launch targets without rebuilding the APPX.
 - Profile targets, so each profile can carry its own Minecraft version and loader.
+- Persistent isolated profile storage under UWP `LocalState`.
 - Modrinth browsing and install support for the selected target.
+- Remote file manager over your local network for uploads and log downloads.
+- Browser based mod, resource pack, and datapack uploads to the active profile.
+- Current and previous run logs, plus packaged crash report zips.
 - Per version Fabric loader support.
 - Java 21 runtime support for mods that pin or require Java 21.
 - Packaged Java 25 runtime for the current default target.
@@ -69,6 +73,64 @@ For modern targets:
 For legacy targets such as `1.19.2` and `1.16.5`, Bandit Launcher also includes its own controller support layer. Sodium can still help performance, but older Sodium versions may need launcher compatibility settings that are seeded automatically.
 
 Cobblemon has been verified on `1.21.1 + Fabric 0.19.2` using the Java 21 runtime.
+
+## Remote Files
+
+The launcher includes a remote file manager for devices on the same local network. Start it from the launcher, open the shown URL and PIN in a browser, then manage files without using Xbox Device Portal.
+
+Remote Files can:
+
+- Upload `.jar` mods to the active profile.
+- Upload `.zip` resource packs to the active profile.
+- Upload `.zip` datapacks into a selected world under the active profile.
+- Browse active profile files, saves, mods, resource packs, logs, crash reports, and the shared runtime cache.
+- Download current logs, previous run logs, and crash report zips for debugging.
+
+Uploads are scoped to known safe folders. Remote Files does not provide arbitrary write access to all of `LocalState`.
+
+## Persistent Storage
+
+The installed app keeps downloaded runtime files, profiles, saves, configs, mods, resource packs, datapacks, logs, and crash reports in UWP `LocalState`. Updating or reinstalling the APPX should not wipe normal profile data.
+
+Profile data is isolated by profile:
+
+```text
+LocalState
+  profiles
+    <profile-id>
+      game
+        mods
+        resourcepacks
+        saves
+          <world>
+            datapacks
+        config
+        screenshots
+        logs
+```
+
+Shared downloaded runtime data is kept separately:
+
+```text
+LocalState
+  game
+    libraries
+    versions
+  assets
+```
+
+Launcher diagnostics are organized separately from game data:
+
+```text
+LocalState
+  logs
+    current
+  logs_previous
+  crash-reports
+  state
+```
+
+`logs/current` is the latest launcher run. On the next launcher start, those files move to `logs_previous` before new logs are written. Crash report zips collect launcher logs, previous logs, profile game logs, and Minecraft crash files when possible.
 
 ## Known Issues
 
@@ -107,6 +169,7 @@ Generated build output goes to `staging` and `output`. These folders are ignored
 | `scripts/` | Setup, cleanup, asset, patch, manifest, and build helpers. |
 | `mesa-runtime/` | Mesa UWP runtime DLLs used by local builds. |
 | `build.ps1` | Main APPX build script. |
+| `docs/` | Build, patching, and legal notes. |
 
 ## Local Inputs
 
@@ -120,7 +183,7 @@ Not included:
 - Local signing certificates.
 - Saves, logs, or local debug output.
 
-Runtime game files are downloaded by the installed app after ownership verification.
+Runtime game files are downloaded by the installed app after ownership verification. User profile data, uploaded mods, resource packs, datapacks, saves, configs, logs, and crash reports are written to UWP `LocalState`.
 
 ## How It Works
 
@@ -132,11 +195,13 @@ Runtime game files are downloaded by the installed app after ownership verificat
 6. The selected profile chooses the launch target.
 7. The app verifies and downloads official files for that target into `LocalState`.
 8. The app seeds launcher owned support files and compatibility mods.
-9. The app publishes the live UWP `CoreWindow` for EGL.
-10. The app loads `jvm.dll` and starts Java in the same process.
-11. Fabric launches Minecraft.
-12. LWJGL loads the custom `glfw.dll`.
-13. Mesa translates OpenGL calls to D3D12 on the Xbox graphics path.
+9. The app uses the selected profile's isolated game folder for saves, mods, resource packs, config, and logs.
+10. The app publishes the live UWP `CoreWindow` for EGL.
+11. The app loads `jvm.dll` and starts Java in the same process.
+12. Fabric launches Minecraft.
+13. LWJGL loads the custom `glfw.dll`.
+14. Mesa translates OpenGL calls to D3D12 on the Xbox graphics path.
+15. Remote Files can be started from the launcher to upload profile files or download diagnostics from another device.
 
 ## Documentation
 

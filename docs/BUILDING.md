@@ -378,7 +378,7 @@ To include all ignored files, including downloaded cache files:
 - Missing `client-intermediary.jar`: run the Fabric client once from the local desktop cache as shown above.
 - Missing native DLLs: fill `staging\cache\natives-1.21` with the native DLLs required by the Minecraft and LWJGL runtime.
 - First launch downloads every required official file after sign in. A later launch should verify and skip files that are already downloaded.
-- Runtime download failure: check `LocalState\mc_launch.log` for the manifest path, URL, HTTP status, or SHA1 mismatch.
-- Modrinth browse/install failure: check `LocalState\mc_launch.log` for `Modrinth search`, `Modrinth versions`, HTTP status, download, or SHA1 verification messages.
+- Runtime download failure: check `LocalState\logs\current\mc_launch.log` for the manifest path, URL, HTTP status, or SHA1 mismatch.
+- Modrinth browse/install failure: check `LocalState\logs\current\mc_launch.log` for `Modrinth search`, `Modrinth versions`, HTTP status, download, or SHA1 verification messages.
 - Package signing failure: delete the ignored local `.pfx` under `staging\certs` and rerun `build.ps1`, or set `APPX_CERT_SUBJECT`.
 - If you can't find your appdata folder, type `%appdata%` into your address bar in your file explorer.

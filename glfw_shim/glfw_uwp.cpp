@@ -2,6 +2,7 @@
 // Replaces glfw.dll inside lwjgl-glfw-3.3.3-natives-windows.jar.
 
 #define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,6 +18,11 @@
 #include <windows.system.h>
 #include <windows.ui.core.h>
 #include <windows.graphics.display.h>
+#include <vector>
+#include <windows.devices.input.h>
+#include <windows.ui.input.h>
+#include <windows.applicationmodel.datatransfer.h>
+#pragma comment(lib, "ws2_32.lib")
 
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
@@ -26,6 +32,8 @@ using namespace ABI::Windows::Foundation::Collections;
 using namespace ABI::Windows::Graphics::Display;
 using namespace ABI::Windows::System;
 using namespace ABI::Windows::UI::Core;
+using namespace ABI::Windows::UI::Input;
+using namespace ABI::Windows::ApplicationModel::DataTransfer;
 
 // ---------------------------------------------------------------------------
 // Minimal GLFW 3.3.x types
@@ -159,6 +167,24 @@ typedef struct { unsigned char buttons[15]; float axes[6]; } GLFWgamepadstate;
 #define GLFW_KEY_RIGHT_ALT        346
 #define GLFW_KEY_RIGHT_SUPER      347
 #define GLFW_KEY_MENU             348
+#define GLFW_MOUSE_BUTTON_LEFT    0
+#define GLFW_MOUSE_BUTTON_RIGHT   1
+#define GLFW_MOUSE_BUTTON_MIDDLE  2
+#define GLFW_MOUSE_BUTTON_4       3
+#define GLFW_MOUSE_BUTTON_5       4
+#define GLFW_CURSOR_HIDDEN   0x00034002
+#define GLFW_RAW_MOUSE_MOTION 0x00033005
+#define GLFW_KEY_APOSTROPHE        39
+#define GLFW_KEY_COMMA             44
+#define GLFW_KEY_MINUS             45
+#define GLFW_KEY_PERIOD            46
+#define GLFW_KEY_SLASH             47
+#define GLFW_KEY_SEMICOLON         59
+#define GLFW_KEY_EQUAL             61
+#define GLFW_KEY_LEFT_BRACKET      91
+#define GLFW_KEY_BACKSLASH         92
+#define GLFW_KEY_RIGHT_BRACKET     93
+#define GLFW_KEY_GRAVE_ACCENT      96
 #define GLFW_MOD_SHIFT           0x0001
 #define GLFW_MOD_CONTROL         0x0002
 #define GLFW_MOD_ALT             0x0004
@@ -388,6 +414,141 @@ static void* g_joystick_user_pointer = NULL;
 static ComPtr<ICoreWindow> g_coreWindow;
 static ComPtr<ICoreDispatcher> g_dispatcher;
 static ComPtr<IInspectable> g_nativeWindowPropertySet;
+
+enum PointerDispatchKind {
+    PointerDispatchMove,
+    PointerDispatchPress,
+    PointerDispatchRelease,
+    PointerDispatchWheel,
+    PointerDispatchEnter,
+    PointerDispatchExit,
+    PointerDispatchCaptureLost
+};
+static constexpr double kProtocolWidth = 1920.0;
+static constexpr double kProtocolHeight = 1080.0;
+
+using CoreWindowPointerHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CPointerEventArgs_t;
+using MouseDeviceMovedHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CDevices__CInput__CMouseDevice_Windows__CDevices__CInput__CMouseEventArgs_t;
+static char g_clipboard_buf[65536] = {};
+static float g_content_scale = 1.f;
+static unsigned char g_controller_key_state[512] = {};
+static bool g_controller_lb_down = false;
+static unsigned char g_controller_mouse_state[8] = {};
+static bool g_controller_rb_down = false;
+static bool g_cursorDisabled = true;
+static int g_cursorMode = GLFW_CURSOR_DISABLED;
+static bool g_cursor_inside = false;
+static SOCKET g_cursor_overlay_socket = INVALID_SOCKET;
+static double g_cursor_x = 960.0;
+static double g_cursor_y = 540.0;
+static int g_gameinput_log_count = 0;
+static bool g_haveGameInputMouseState = false;
+static bool g_have_mouse_relay_status_addr = false;
+static int g_height = 1080;
+static GameInputMouseState g_lastGameInputMouseState = {};
+static double g_menu_abs_x = 960.0;
+static double g_menu_abs_y = 540.0;
+static ULONGLONG g_modeChangeTime = 0;
+static ComPtr<ABI::Windows::Devices::Input::IMouseDevice> g_mouseDevice;
+static bool g_mouseDeviceHooksInstalled = false;
+static ComPtr<MouseDeviceMovedHandler> g_mouseMovedHandler;
+static EventRegistrationToken g_mouseMovedToken = {};
+static int g_mouse_log_count = 0;
+static sockaddr_in g_mouse_relay_status_addr = {};
+static SRWLOCK g_mouse_relay_status_lock = SRWLOCK_INIT;
+static SOCKET g_mouse_relay_status_socket = INVALID_SOCKET;
+static unsigned char g_mouse_state[8] = {};
+static int g_pendingMode = -1;
+static ComPtr<CoreWindowPointerHandler> g_pointerCaptureLostHandler;
+static EventRegistrationToken g_pointerCaptureLostToken = {};
+static ComPtr<CoreWindowPointerHandler> g_pointerEnteredHandler;
+static EventRegistrationToken g_pointerEnteredToken = {};
+static ComPtr<CoreWindowPointerHandler> g_pointerExitedHandler;
+static EventRegistrationToken g_pointerExitedToken = {};
+static bool g_pointerHooksInstalled = false;
+static ComPtr<CoreWindowPointerHandler> g_pointerMovedHandler;
+static EventRegistrationToken g_pointerMovedToken = {};
+static ComPtr<CoreWindowPointerHandler> g_pointerPressedHandler;
+static EventRegistrationToken g_pointerPressedToken = {};
+static ComPtr<CoreWindowPointerHandler> g_pointerReleasedHandler;
+static EventRegistrationToken g_pointerReleasedToken = {};
+static ComPtr<CoreWindowPointerHandler> g_pointerWheelHandler;
+static EventRegistrationToken g_pointerWheelToken = {};
+static bool g_raw_mouse_motion = false;
+static bool g_remote_mouse_abs_pending = false;
+static double g_remote_mouse_abs_x = 960.0;
+static double g_remote_mouse_abs_y = 540.0;
+static int g_remote_mouse_button_changes = 0;
+static int g_remote_mouse_buttons = 0;
+static double g_remote_mouse_dx = 0.0;
+static double g_remote_mouse_dy = 0.0;
+static SRWLOCK g_remote_mouse_lock = SRWLOCK_INIT;
+static int g_remote_mouse_log_count = 0;
+static volatile LONG g_remote_mouse_seen = 0;
+static volatile LONG g_remote_mouse_server_started = 0;
+static double g_remote_mouse_wheel_y = 0.0;
+static int g_reportedMode = GLFW_CURSOR_DISABLED;
+static int g_width = 1920;
+static volatile LONG g_processing_events = 0;
+static int g_process_events_error_log_count = 0;
+static int g_nested_process_log_count = 0;
+static int g_process_events_offthread_log_count = 0;
+static bool g_controller_bridge_enabled = false;
+
+static double CurrentPointerScaleX();
+static double CurrentPointerScaleY();
+static void DispatchCursorEnter(bool entered);
+static void DispatchCursorPos(double x, double y);
+static double ClampDouble(double value, double minValue, double maxValue);
+static double CursorMaxX();
+static double CursorMaxY();
+static double ProtocolToWindowX(double x);
+static double ProtocolToWindowY(double y);
+static double WindowToProtocolX(double x);
+static double WindowToProtocolY(double y);
+static void SendCursorOverlayState();
+static void RememberMouseRelayStatusAddress(const sockaddr_in& remote);
+static void SendMouseRelayStatusText(const char* text);
+static void SendMouseRelayCursorSync(double x, double y);
+static void DispatchMouseDelta(double dx, double dy);
+static void DispatchMouseAbsolute(double x, double y);
+static void FireRemoteMouseButtonCallback(int button, int action);
+static void SetRemoteMouseButtonState(int button, int action);
+static void SetMouseButtonState(int button, int action, bool fireCallback);
+static bool AnyMouseButtonDown();
+static void QueueRemoteMouseButton(int buttonBit, int value, int& buttons, int& changes);
+static void DrainRemoteMouseInput();
+static void StartRemoteMouseServer();
+static int SyntheticScancodeForKey(int key);
+static void SetControllerKeyState(int key, bool down);
+static void ReleaseControllerKeys();
+static void SetControllerMouseButtonState(int button, bool down);
+static void ReleaseControllerMouseButtons();
+static int ClampInt64ToInt(int64_t value);
+static bool SyncMouseButtonsFromProperties(ABI::Windows::UI::Input::IPointerPointProperties* props, bool fireCallbacks);
+static bool ButtonActionFromUpdateKind(
+    ABI::Windows::UI::Input::PointerUpdateKind kind,
+    int* button,
+    int* action);
+static bool ReadPointerEvent(
+    IPointerEventArgs* args,
+    double* x,
+    double* y,
+    ComPtr<ABI::Windows::UI::Input::IPointerPointProperties>* propsOut);
+static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind);
+static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs* args);
+static void PollCoreWindowPointerPosition();
+static void SyncGameInputMouseButtons(GameInputMouseButtons buttons);
+static void PollGameInputMouse();
+static float ApplyDeadzone(float value, float deadzone);
+static bool IsGamepadButtonDown(const GameInputGamepadState& state, GameInputGamepadButtons button);
+static void UpdateControllerBridge(const GameInputGamepadState& state);
+static void ReleaseControllerBridge();
+static void RemoveMouseDeviceHooks();
+static bool InstallMouseDeviceHooks();
+static void RemovePointerHooks();
+static bool InstallPointerHooks();
+static IClipboardStatics* GetClipboardStatics();
 
 struct FakeWindow {
     DWORD magic;
@@ -657,14 +818,27 @@ static int MapVirtualKeyToGlfw(VirtualKey key) {
     case VirtualKey_Subtract: return GLFW_KEY_KP_SUBTRACT;
     case VirtualKey_Add: return GLFW_KEY_KP_ADD;
     case VirtualKey_LeftShift: return GLFW_KEY_LEFT_SHIFT;
+    case VirtualKey_Shift: return GLFW_KEY_LEFT_SHIFT;
     case VirtualKey_RightShift: return GLFW_KEY_RIGHT_SHIFT;
     case VirtualKey_LeftControl: return GLFW_KEY_LEFT_CONTROL;
+    case VirtualKey_Control: return GLFW_KEY_LEFT_CONTROL;
     case VirtualKey_RightControl: return GLFW_KEY_RIGHT_CONTROL;
     case VirtualKey_LeftMenu: return GLFW_KEY_LEFT_ALT;
     case VirtualKey_RightMenu: return GLFW_KEY_RIGHT_ALT;
     case VirtualKey_LeftWindows: return GLFW_KEY_LEFT_SUPER;
     case VirtualKey_RightWindows: return GLFW_KEY_RIGHT_SUPER;
     case VirtualKey_Menu: return GLFW_KEY_MENU;
+    case (VirtualKey)188: return GLFW_KEY_COMMA;
+    case (VirtualKey)190: return GLFW_KEY_PERIOD;
+    case (VirtualKey)191: return GLFW_KEY_SLASH;
+    case (VirtualKey)186: return GLFW_KEY_SEMICOLON;
+    case (VirtualKey)222: return GLFW_KEY_APOSTROPHE;
+    case (VirtualKey)219: return GLFW_KEY_LEFT_BRACKET;
+    case (VirtualKey)221: return GLFW_KEY_RIGHT_BRACKET;
+    case (VirtualKey)220: return GLFW_KEY_BACKSLASH;
+    case (VirtualKey)189: return GLFW_KEY_MINUS;
+    case (VirtualKey)187: return GLFW_KEY_EQUAL;
+    case (VirtualKey)192: return GLFW_KEY_GRAVE_ACCENT;
     default:
         return GLFW_KEY_UNKNOWN;
     }
@@ -709,14 +883,34 @@ static bool CoreWindowAcceptsInput() {
     return changed == 0 || ((LONGLONG)GetTickCount64() - changed) >= 250;
 }
 
+static int DisambiguateLeftRightKey(VirtualKey virtualKey, const CorePhysicalKeyStatus& status, int glfwKey) {
+    switch ((int)virtualKey) {
+    case 16:  
+    case 160: 
+    case 161: 
+        return (status.ScanCode == 0x36) ? GLFW_KEY_RIGHT_SHIFT : GLFW_KEY_LEFT_SHIFT;
+    case 17:  
+    case 162: 
+    case 163: 
+        return status.IsExtendedKey ? GLFW_KEY_RIGHT_CONTROL : GLFW_KEY_LEFT_CONTROL;
+    case 18:  
+    case 164: 
+    case 165: 
+        return status.IsExtendedKey ? GLFW_KEY_RIGHT_ALT : GLFW_KEY_LEFT_ALT;
+    default:
+        return glfwKey;
+    }
+}
+
 static void DispatchKeyEvent(VirtualKey virtualKey, const CorePhysicalKeyStatus& status, int action) {
     if (!CoreWindowAcceptsInput()) {
         ClearKeyboardState();
         return;
     }
 
-    const int glfwKey = MapVirtualKeyToGlfw(virtualKey);
+    int glfwKey = MapVirtualKeyToGlfw(virtualKey);
     if (glfwKey == GLFW_KEY_UNKNOWN) return;
+    glfwKey = DisambiguateLeftRightKey(virtualKey, status, glfwKey);
 
     const int glfwAction = (action == GLFW_PRESS && status.WasKeyDown) ? GLFW_REPEAT : action;
     UpdateKeyState(glfwKey, glfwAction);
@@ -848,6 +1042,9 @@ static bool PollGameInputGamepad(bool fireCallbacks) {
     if (!present) {
         ClearGamepadState();
         g_haveGameInputGamepadState = false;
+        if (fireCallbacks) {
+            ReleaseControllerBridge();
+        }
 
         if (previousPresent && fireCallbacks && g_joystick_cb) {
             g_joystick_cb(GLFW_JOYSTICK_1, GLFW_DISCONNECTED);
@@ -860,6 +1057,9 @@ static bool PollGameInputGamepad(bool fireCallbacks) {
     }
 
     ConvertGameInputGamepadState(state);
+    if (fireCallbacks) {
+        UpdateControllerBridge(state);
+    }
 
     if (!g_haveGameInputGamepadState) {
         g_haveGameInputGamepadState = true;
@@ -1060,6 +1260,9 @@ static bool AcquireCoreWindow() {
     g_coreWindow->get_Dispatcher(g_dispatcher.GetAddressOf());
     InstallCoreWindowLifecycleHooks();
     InstallKeyboardHooks();
+    InstallPointerHooks();
+    InstallMouseDeviceHooks();
+    StartRemoteMouseServer();
     return true;
 }
 
@@ -1511,6 +1714,912 @@ extern "C" __declspec(dllexport) int glfwInit(void) {
     return GLFW_TRUE;
 }
 
+static double CurrentPointerScaleX() {
+    Rect bounds = {};
+    if (g_coreWindow && SUCCEEDED(g_coreWindow->get_Bounds(&bounds)) && bounds.Width > 0) {
+        return g_window_width > 0 ? (double)g_window_width / (double)bounds.Width : 1.0;
+    }
+    return 1.0;
+}
+static double CurrentPointerScaleY() {
+    Rect bounds = {};
+    if (g_coreWindow && SUCCEEDED(g_coreWindow->get_Bounds(&bounds)) && bounds.Height > 0) {
+        return g_window_height > 0 ? (double)g_window_height / (double)bounds.Height : 1.0;
+    }
+    return 1.0;
+}
+static void DispatchCursorEnter(bool entered) {
+    if (g_cursor_inside == entered) return;
+    g_cursor_inside = entered;
+    if (g_cursorenter_cb) {
+        g_cursorenter_cb((GLFWwindow*)&g_fake_window, entered ? GLFW_TRUE : GLFW_FALSE);
+    }
+}
+static void DispatchCursorPos(double x, double y) {
+    if (g_cursorMode != GLFW_CURSOR_DISABLED) {
+        if (x < 0.0) x = 0.0;
+        if (y < 0.0) y = 0.0;
+        if (g_window_width > 0 && x > (double)g_window_width) x = (double)g_window_width;
+        if (g_window_height > 0 && y > (double)g_window_height) y = (double)g_window_height;
+    }
+
+    g_cursor_x = x;
+    g_cursor_y = y;
+
+    
+    
+    
+    
+    
+    
+    
+    if (g_cursorMode != GLFW_CURSOR_DISABLED) {
+        g_menu_abs_x = g_cursor_x;
+        g_menu_abs_y = g_cursor_y;
+        SendCursorOverlayState();
+    }
+
+    DispatchCursorEnter(true);
+    if (g_cursorpos_cb) {
+        g_cursorpos_cb((GLFWwindow*)&g_fake_window, g_cursor_x, g_cursor_y);
+    }
+}
+static double ClampDouble(double value, double minValue, double maxValue) {
+    if (value < minValue) return minValue;
+    if (value > maxValue) return maxValue;
+    return value;
+}
+static double CursorMaxX() {
+    return g_window_width > 1 ? (double)(g_window_width - 1) : 0.0;
+}
+static double CursorMaxY() {
+    return g_window_height > 1 ? (double)(g_window_height - 1) : 0.0;
+}
+static double ProtocolToWindowX(double x) {
+    return g_window_width > 0 ? x * ((double)g_window_width / kProtocolWidth) : x;
+}
+static double ProtocolToWindowY(double y) {
+    return g_window_height > 0 ? y * ((double)g_window_height / kProtocolHeight) : y;
+}
+static double WindowToProtocolX(double x) {
+    return g_window_width > 0 ? x * (kProtocolWidth / (double)g_window_width) : x;
+}
+static double WindowToProtocolY(double y) {
+    return g_window_height > 0 ? y * (kProtocolHeight / (double)g_window_height) : y;
+}
+static void SendCursorOverlayState() {
+    WSADATA wsa{};
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+
+    if (g_cursor_overlay_socket == INVALID_SOCKET) {
+        g_cursor_overlay_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_cursor_overlay_socket == INVALID_SOCKET) return;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(7333);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    char packet[64] = {};
+    const int visible = (g_cursorMode == GLFW_CURSOR_NORMAL) ? 1 : 0;
+    
+    sprintf_s(packet, "CURSOR:%.0f,%.0f,%d",
+        WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y), visible);
+    sendto(g_cursor_overlay_socket, packet, (int)strlen(packet), 0,
+        reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+}
+static void RememberMouseRelayStatusAddress(const sockaddr_in& remote) {
+    sockaddr_in statusTo = remote;
+    statusTo.sin_port = htons(7332);
+    AcquireSRWLockExclusive(&g_mouse_relay_status_lock);
+    g_mouse_relay_status_addr = statusTo;
+    g_have_mouse_relay_status_addr = true;
+    ReleaseSRWLockExclusive(&g_mouse_relay_status_lock);
+}
+static void SendMouseRelayStatusText(const char* text) {
+    WSADATA wsa{};
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+
+    if (g_mouse_relay_status_socket == INVALID_SOCKET) {
+        g_mouse_relay_status_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_mouse_relay_status_socket == INVALID_SOCKET) return;
+    }
+
+    sockaddr_in statusTo{};
+    bool haveAddress = false;
+    AcquireSRWLockShared(&g_mouse_relay_status_lock);
+    if (g_have_mouse_relay_status_addr) {
+        statusTo = g_mouse_relay_status_addr;
+        haveAddress = true;
+    }
+    ReleaseSRWLockShared(&g_mouse_relay_status_lock);
+
+    if (!haveAddress) return;
+    sendto(g_mouse_relay_status_socket, text, (int)strlen(text), 0,
+        reinterpret_cast<const sockaddr*>(&statusTo), sizeof(statusTo));
+}
+static void SendMouseRelayCursorSync(double x, double y) {
+    char packet[64] = {};
+    sprintf_s(packet, "SYNC:%.0f,%.0f", x, y);
+    SendMouseRelayStatusText(packet);
+}
+static void DispatchMouseDelta(double dx, double dy) {
+    if (dx == 0.0 && dy == 0.0) return;
+
+    if (!g_cursorDisabled) {
+        g_menu_abs_x = ClampDouble(g_menu_abs_x + dx, 0.0, CursorMaxX());
+        g_menu_abs_y = ClampDouble(g_menu_abs_y + dy, 0.0, CursorMaxY());
+        DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    } else {
+        DispatchCursorPos(g_cursor_x + dx, g_cursor_y + dy);
+    }
+
+    if (g_mouse_log_count < 24) {
+        ++g_mouse_log_count;
+        ShimLog("Mouse delta dx=%.3f dy=%.3f cursor=%.1f,%.1f mode=%d",
+            dx, dy, g_cursor_x, g_cursor_y, g_cursorMode);
+    }
+}
+static void DispatchMouseAbsolute(double x, double y) {
+    
+    g_menu_abs_x = ClampDouble(ProtocolToWindowX(x), 0.0, CursorMaxX());
+    g_menu_abs_y = ClampDouble(ProtocolToWindowY(y), 0.0, CursorMaxY());
+    DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    SendCursorOverlayState();
+    if (g_remote_mouse_log_count < 12) {
+        ++g_remote_mouse_log_count;
+        ShimLog("RemoteMouse ABS protocol=%.1f,%.1f -> window=%.1f,%.1f (win %dx%d fb %dx%d scale %.3f)",
+            x, y, g_menu_abs_x, g_menu_abs_y,
+            g_window_width, g_window_height, g_width, g_height, g_content_scale);
+    }
+}
+static void FireRemoteMouseButtonCallback(int button, int action) {
+    if (g_mousebutton_cb) {
+        const int mods = CurrentGlfwMods();
+        g_mousebutton_cb((GLFWwindow*)&g_fake_window, button, action, mods);
+    }
+}
+static void SetRemoteMouseButtonState(int button, int action) {
+    if (button < 0 || button >= (int)sizeof(g_mouse_state)) return;
+    const unsigned char state = action == GLFW_RELEASE ? GLFW_RELEASE : GLFW_PRESS;
+    if (g_mouse_state[button] == state) return;
+
+    g_mouse_state[button] = state;
+    FireRemoteMouseButtonCallback(button, action);
+}
+static void SetMouseButtonState(int button, int action, bool fireCallback) {
+}
+static bool AnyMouseButtonDown() {
+    for (int i = 0; i < (int)sizeof(g_mouse_state); ++i) {
+        if (g_mouse_state[i]) return true;
+    }
+    return false;
+}
+static void QueueRemoteMouseButton(int buttonBit, int value, int& buttons, int& changes) {
+    if (value < 0) return;
+    changes |= buttonBit;
+    if (value) buttons |= buttonBit;
+    else buttons &= ~buttonBit;
+}
+static void DrainRemoteMouseInput() {
+    double dx = 0.0;
+    double dy = 0.0;
+    bool absPending = false;
+    double absX = 0.0;
+    double absY = 0.0;
+    double wheelY = 0.0;
+    int buttons = 0;
+    int buttonChanges = 0;
+
+    AcquireSRWLockExclusive(&g_remote_mouse_lock);
+    dx = g_remote_mouse_dx;
+    dy = g_remote_mouse_dy;
+    absPending = g_remote_mouse_abs_pending;
+    absX = g_remote_mouse_abs_x;
+    absY = g_remote_mouse_abs_y;
+    wheelY = g_remote_mouse_wheel_y;
+    buttons = g_remote_mouse_buttons;
+    buttonChanges = g_remote_mouse_button_changes;
+    g_remote_mouse_dx = 0.0;
+    g_remote_mouse_dy = 0.0;
+    g_remote_mouse_abs_pending = false;
+    g_remote_mouse_wheel_y = 0.0;
+    g_remote_mouse_button_changes = 0;
+    ReleaseSRWLockExclusive(&g_remote_mouse_lock);
+
+    if (absPending) {
+        DispatchMouseAbsolute(absX, absY);
+    } else if (dx != 0.0 || dy != 0.0) {
+        DispatchMouseDelta(dx, dy);
+    }
+    if (wheelY != 0.0 && g_scroll_cb) {
+        g_scroll_cb((GLFWwindow*)&g_fake_window, 0.0, wheelY);
+    }
+
+    if (buttonChanges) {
+        if (buttonChanges & 1) {
+        SetRemoteMouseButtonState(GLFW_MOUSE_BUTTON_LEFT,
+            (buttons & 1) ? GLFW_PRESS : GLFW_RELEASE);
+        }
+        if (buttonChanges & 2) {
+        SetRemoteMouseButtonState(GLFW_MOUSE_BUTTON_RIGHT,
+            (buttons & 2) ? GLFW_PRESS : GLFW_RELEASE);
+        }
+        if (buttonChanges & 4) {
+        SetRemoteMouseButtonState(GLFW_MOUSE_BUTTON_MIDDLE,
+            (buttons & 4) ? GLFW_PRESS : GLFW_RELEASE);
+        }
+        if (buttonChanges & 8) {
+        SetRemoteMouseButtonState(GLFW_MOUSE_BUTTON_4,
+            (buttons & 8) ? GLFW_PRESS : GLFW_RELEASE);
+        }
+        if (buttonChanges & 16) {
+        SetRemoteMouseButtonState(GLFW_MOUSE_BUTTON_5,
+            (buttons & 16) ? GLFW_PRESS : GLFW_RELEASE);
+        }
+    }
+}
+static void StartRemoteMouseServer() {
+    if (InterlockedExchange(&g_remote_mouse_server_started, 1) != 0) {
+        return;
+    }
+
+    HANDLE thread = CreateThread(
+        nullptr,
+        0,
+        [](LPVOID) -> DWORD {
+            constexpr unsigned short kRemoteMousePort = 7331;
+            ShimLog("RemoteMouse: UDP thread starting on port %u", kRemoteMousePort);
+
+            WSADATA wsa{};
+            const int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsa);
+            if (wsaResult != 0) {
+                ShimLog("RemoteMouse: WSAStartup failed err=%d", wsaResult);
+                return 0;
+            }
+
+            SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock == INVALID_SOCKET) {
+                ShimLog("RemoteMouse: socket failed err=%d", WSAGetLastError());
+                WSACleanup();
+                return 0;
+            }
+
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(kRemoteMousePort);
+            addr.sin_addr.s_addr = INADDR_ANY;
+            if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+                ShimLog("RemoteMouse: bind UDP %u failed err=%d", kRemoteMousePort, WSAGetLastError());
+                closesocket(sock);
+                WSACleanup();
+                return 0;
+            }
+
+            
+            
+            
+            int rcvBuf = 256 * 1024;
+            setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+                reinterpret_cast<const char*>(&rcvBuf), sizeof(rcvBuf));
+            DWORD rcvTimeoutMs = 50;
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+                reinterpret_cast<const char*>(&rcvTimeoutMs), sizeof(rcvTimeoutMs));
+
+            ShimLog("RemoteMouse: listening on UDP port %u", kRemoteMousePort);
+            char buf[64];
+            unsigned int packetCount = 0;
+            int lastSentStatusMode = -1;
+            auto getStableModeForStatus = [&]() -> int {
+                const int pendingMode = g_pendingMode;
+                if (pendingMode >= 0) {
+                    const ULONGLONG elapsed = GetTickCount64() - g_modeChangeTime;
+                    if (elapsed < 150) {
+                        return g_reportedMode;
+                    }
+                    g_reportedMode = pendingMode;
+                    g_pendingMode = -1;
+                }
+                return g_reportedMode;
+            };
+            auto sendModeStatus = [&](bool force) {
+                const int statusMode = getStableModeForStatus();
+                if (!force && statusMode == lastSentStatusMode) return;
+                lastSentStatusMode = statusMode;
+                const char* status = (statusMode == GLFW_CURSOR_DISABLED) ? "MODE:GAMEPLAY" : "MODE:MENU";
+                SendMouseRelayStatusText(status);
+            };
+
+            while (true) {
+                sockaddr_in from{};
+                int fromLen = sizeof(from);
+                const int len = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                    reinterpret_cast<sockaddr*>(&from), &fromLen);
+                if (len <= 0) {
+                    
+                    
+                    sendModeStatus(false);
+                    continue;
+                }
+                buf[len] = 0;
+                RememberMouseRelayStatusAddress(from);
+
+                if (strcmp(buf, "hello") == 0 || strcmp(buf, "ping") == 0) {
+                    char ack[160] = {};
+                    const int statusMode = getStableModeForStatus();
+                    
+                    
+                    sprintf_s(ack, "javauwp_glfw_mouse:ready mode=%d cursor=%.0f,%.0f size=%dx%d",
+                        statusMode, WindowToProtocolX(g_cursor_x), WindowToProtocolY(g_cursor_y),
+                        g_window_width, g_window_height);
+                    sendto(sock, ack, (int)strlen(ack), 0,
+                        reinterpret_cast<sockaddr*>(&from), fromLen);
+                    sendModeStatus(true);
+                    ShimLog("RemoteMouse: handshake replied");
+                    continue;
+                }
+
+                float dx = 0.0f, dy = 0.0f, wheelY = 0.0f;
+                int lb = -1, rb = -1, mb = -1, x1 = -1, x2 = -1;
+                bool absolutePacket = false;
+                int fields = 0;
+                if (strncmp(buf, "ABS:", 4) == 0) {
+                    absolutePacket = true;
+                    fields = sscanf_s(buf + 4, "%f,%f,%d,%d,%d,%f,%d,%d",
+                        &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
+                } else {
+                    fields = sscanf_s(buf, "%f,%f,%d,%d,%d,%f,%d,%d",
+                        &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
+                }
+                if (fields != 8) {
+                    const char bad[] = "javauwp_glfw_mouse:bad_packet";
+                    sendto(sock, bad, (int)sizeof(bad) - 1, 0,
+                        reinterpret_cast<sockaddr*>(&from), fromLen);
+                    continue;
+                }
+
+                AcquireSRWLockExclusive(&g_remote_mouse_lock);
+                if (absolutePacket) {
+                    g_remote_mouse_abs_x = (double)dx;
+                    g_remote_mouse_abs_y = (double)dy;
+                    g_remote_mouse_abs_pending = true;
+                } else {
+                    g_remote_mouse_dx += (double)dx;
+                    g_remote_mouse_dy += (double)dy;
+                }
+                g_remote_mouse_wheel_y += (double)wheelY;
+                QueueRemoteMouseButton(1, lb, g_remote_mouse_buttons, g_remote_mouse_button_changes);
+                QueueRemoteMouseButton(2, rb, g_remote_mouse_buttons, g_remote_mouse_button_changes);
+                QueueRemoteMouseButton(4, mb, g_remote_mouse_buttons, g_remote_mouse_button_changes);
+                QueueRemoteMouseButton(8, x1, g_remote_mouse_buttons, g_remote_mouse_button_changes);
+                QueueRemoteMouseButton(16, x2, g_remote_mouse_buttons, g_remote_mouse_button_changes);
+                ReleaseSRWLockExclusive(&g_remote_mouse_lock);
+                InterlockedExchange(&g_remote_mouse_seen, 1);
+                
+                
+                
+                sendModeStatus(false);
+
+                ++packetCount;
+                if (packetCount == 1 || (packetCount % 120) == 0) {
+                    char ack[160] = {};
+                    const int statusMode = getStableModeForStatus();
+                    sprintf_s(ack, "javauwp_glfw_mouse:receiving mode=%d cursor=%.0f,%.0f size=%dx%d",
+                        statusMode, WindowToProtocolX(g_cursor_x), WindowToProtocolY(g_cursor_y),
+                        g_window_width, g_window_height);
+                    sendto(sock, ack, (int)strlen(ack), 0,
+                        reinterpret_cast<sockaddr*>(&from), fromLen);
+                    ShimLog("RemoteMouse: packets=%u last dx=%.3f dy=%.3f wheel=%.3f buttons=%d,%d,%d,%d,%d",
+                        packetCount, dx, dy, wheelY, lb, rb, mb, x1, x2);
+                }
+            }
+        },
+        nullptr,
+        0,
+        nullptr);
+
+    if (thread) {
+        CloseHandle(thread);
+    } else {
+        ShimLog("RemoteMouse: CreateThread failed err=%u", GetLastError());
+        InterlockedExchange(&g_remote_mouse_server_started, 0);
+    }
+}
+static int SyntheticScancodeForKey(int key) {
+    switch (key) {
+    case GLFW_KEY_ESCAPE: return 1;
+    case GLFW_KEY_Q: return 16;
+    case GLFW_KEY_W: return 17;
+    case GLFW_KEY_E: return 18;
+    case GLFW_KEY_A: return 30;
+    case GLFW_KEY_S: return 31;
+    case GLFW_KEY_D: return 32;
+    case GLFW_KEY_SPACE: return 57;
+    case GLFW_KEY_ENTER: return 28;
+    case GLFW_KEY_LEFT: return 75;
+    case GLFW_KEY_RIGHT: return 77;
+    case GLFW_KEY_UP: return 72;
+    case GLFW_KEY_DOWN: return 80;
+    case GLFW_KEY_LEFT_SHIFT: return 42;
+    case GLFW_KEY_LEFT_CONTROL: return 29;
+    default: return 0;
+    }
+}
+static void SetControllerKeyState(int key, bool down) {
+    if (key < 0 || key >= (int)sizeof(g_controller_key_state)) return;
+
+    const unsigned char state = down ? GLFW_PRESS : GLFW_RELEASE;
+    if (g_controller_key_state[key] == state) return;
+
+    g_controller_key_state[key] = state;
+    UpdateKeyState(key, state);
+
+    if (g_key_cb) {
+        g_key_cb((GLFWwindow*)&g_fake_window, key, SyntheticScancodeForKey(key),
+            state, CurrentGlfwMods());
+    }
+}
+static void ReleaseControllerKeys() {
+    for (int i = 0; i < (int)sizeof(g_controller_key_state); ++i) {
+        if (g_controller_key_state[i]) {
+            SetControllerKeyState(i, false);
+        }
+    }
+}
+static void SetControllerMouseButtonState(int button, bool down) {
+    if (button < 0 || button >= (int)sizeof(g_controller_mouse_state)) return;
+
+    const unsigned char state = down ? GLFW_PRESS : GLFW_RELEASE;
+    if (g_controller_mouse_state[button] == state) return;
+
+    g_controller_mouse_state[button] = state;
+    SetMouseButtonState(button, state, true);
+}
+static void ReleaseControllerMouseButtons() {
+    for (int i = 0; i < (int)sizeof(g_controller_mouse_state); ++i) {
+        if (g_controller_mouse_state[i]) {
+            SetControllerMouseButtonState(i, false);
+        }
+    }
+}
+static int ClampInt64ToInt(int64_t value) {
+    if (value > INT_MAX) return INT_MAX;
+    if (value < INT_MIN) return INT_MIN;
+    return (int)value;
+}
+static bool SyncMouseButtonsFromProperties(ABI::Windows::UI::Input::IPointerPointProperties* props, bool fireCallbacks) {
+    if (!props) return false;
+
+    unsigned char next[5] = {};
+    boolean down = false;
+    if (SUCCEEDED(props->get_IsLeftButtonPressed(&down)) && down) next[GLFW_MOUSE_BUTTON_LEFT] = GLFW_PRESS;
+    down = false;
+    if (SUCCEEDED(props->get_IsRightButtonPressed(&down)) && down) next[GLFW_MOUSE_BUTTON_RIGHT] = GLFW_PRESS;
+    down = false;
+    if (SUCCEEDED(props->get_IsMiddleButtonPressed(&down)) && down) next[GLFW_MOUSE_BUTTON_MIDDLE] = GLFW_PRESS;
+    down = false;
+    if (SUCCEEDED(props->get_IsXButton1Pressed(&down)) && down) next[GLFW_MOUSE_BUTTON_4] = GLFW_PRESS;
+    down = false;
+    if (SUCCEEDED(props->get_IsXButton2Pressed(&down)) && down) next[GLFW_MOUSE_BUTTON_5] = GLFW_PRESS;
+
+    bool changed = false;
+    for (int i = 0; i < 5; ++i) {
+        if (g_mouse_state[i] != next[i]) {
+            changed = true;
+            SetMouseButtonState(i, next[i] ? GLFW_PRESS : GLFW_RELEASE, fireCallbacks);
+        }
+    }
+    return changed;
+}
+static bool ButtonActionFromUpdateKind(
+    ABI::Windows::UI::Input::PointerUpdateKind kind,
+    int* button,
+    int* action) {
+    using namespace ABI::Windows::UI::Input;
+    switch (kind) {
+    case PointerUpdateKind_LeftButtonPressed: *button = GLFW_MOUSE_BUTTON_LEFT; *action = GLFW_PRESS; return true;
+    case PointerUpdateKind_LeftButtonReleased: *button = GLFW_MOUSE_BUTTON_LEFT; *action = GLFW_RELEASE; return true;
+    case PointerUpdateKind_RightButtonPressed: *button = GLFW_MOUSE_BUTTON_RIGHT; *action = GLFW_PRESS; return true;
+    case PointerUpdateKind_RightButtonReleased: *button = GLFW_MOUSE_BUTTON_RIGHT; *action = GLFW_RELEASE; return true;
+    case PointerUpdateKind_MiddleButtonPressed: *button = GLFW_MOUSE_BUTTON_MIDDLE; *action = GLFW_PRESS; return true;
+    case PointerUpdateKind_MiddleButtonReleased: *button = GLFW_MOUSE_BUTTON_MIDDLE; *action = GLFW_RELEASE; return true;
+    case PointerUpdateKind_XButton1Pressed: *button = GLFW_MOUSE_BUTTON_4; *action = GLFW_PRESS; return true;
+    case PointerUpdateKind_XButton1Released: *button = GLFW_MOUSE_BUTTON_4; *action = GLFW_RELEASE; return true;
+    case PointerUpdateKind_XButton2Pressed: *button = GLFW_MOUSE_BUTTON_5; *action = GLFW_PRESS; return true;
+    case PointerUpdateKind_XButton2Released: *button = GLFW_MOUSE_BUTTON_5; *action = GLFW_RELEASE; return true;
+    default:
+        return false;
+    }
+}
+static bool ReadPointerEvent(
+    IPointerEventArgs* args,
+    double* x,
+    double* y,
+    ComPtr<ABI::Windows::UI::Input::IPointerPointProperties>* propsOut) {
+    if (!args) return false;
+
+    ComPtr<ABI::Windows::UI::Input::IPointerPoint> point;
+    if (FAILED(args->get_CurrentPoint(point.GetAddressOf())) || !point) return false;
+
+    Point position = {};
+    if (FAILED(point->get_Position(&position))) return false;
+
+    if (x) *x = (double)position.X * CurrentPointerScaleX();
+    if (y) *y = (double)position.Y * CurrentPointerScaleY();
+
+    if (propsOut) {
+        ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
+        if (SUCCEEDED(point->get_Properties(props.GetAddressOf()))) {
+            *propsOut = props;
+        }
+    }
+    return true;
+}
+static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind) {
+    if (kind == PointerDispatchExit) {
+        DispatchCursorEnter(false);
+        return;
+    }
+
+    if (kind == PointerDispatchCaptureLost) {
+        for (int i = 0; i < 5; ++i) {
+            SetMouseButtonState(i, GLFW_RELEASE, true);
+        }
+        return;
+    }
+
+    double x = g_cursor_x;
+    double y = g_cursor_y;
+    ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
+    const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
+    if (hasPoint) {
+        DispatchCursorPos(x, y);
+    } else if (kind == PointerDispatchEnter) {
+        DispatchCursorEnter(true);
+    }
+
+    if (props) {
+        const bool changed = SyncMouseButtonsFromProperties(props.Get(), true);
+        if (!changed && (kind == PointerDispatchPress || kind == PointerDispatchRelease)) {
+            ABI::Windows::UI::Input::PointerUpdateKind updateKind = ABI::Windows::UI::Input::PointerUpdateKind_Other;
+            if (SUCCEEDED(props->get_PointerUpdateKind(&updateKind))) {
+                int button = -1;
+                int action = GLFW_RELEASE;
+                if (ButtonActionFromUpdateKind(updateKind, &button, &action)) {
+                    SetMouseButtonState(button, action, true);
+                }
+            }
+        }
+
+        if (kind == PointerDispatchWheel && g_scroll_cb) {
+            INT32 wheelDelta = 0;
+            boolean horizontal = false;
+            props->get_IsHorizontalMouseWheel(&horizontal);
+            if (SUCCEEDED(props->get_MouseWheelDelta(&wheelDelta)) && wheelDelta != 0) {
+                const double offset = (double)wheelDelta / 120.0;
+                g_scroll_cb((GLFWwindow*)&g_fake_window, horizontal ? offset : 0.0, horizontal ? 0.0 : offset);
+            }
+        }
+    }
+
+    if (kind == PointerDispatchPress && g_coreWindow) {
+        HRESULT hr = g_coreWindow->SetPointerCapture();
+        if (FAILED(hr) && g_mouse_log_count < 8) {
+            ++g_mouse_log_count;
+            ShimLog("SetPointerCapture failed hr=0x%08X", hr);
+        }
+    } else if (kind == PointerDispatchRelease && g_coreWindow &&
+               g_cursorMode != GLFW_CURSOR_DISABLED && !AnyMouseButtonDown()) {
+        g_coreWindow->ReleasePointerCapture();
+    }
+
+    if (g_mouse_log_count < 24 &&
+        (kind == PointerDispatchMove || kind == PointerDispatchPress ||
+         kind == PointerDispatchRelease || kind == PointerDispatchWheel ||
+         kind == PointerDispatchEnter)) {
+        ++g_mouse_log_count;
+        ShimLog("Pointer event kind=%d cursor=%.1f,%.1f buttons=%d%d%d%d%d",
+            (int)kind, g_cursor_x, g_cursor_y,
+            g_mouse_state[0], g_mouse_state[1], g_mouse_state[2], g_mouse_state[3], g_mouse_state[4]);
+    }
+}
+static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs* args) {
+    if (!args) return;
+
+    ABI::Windows::Devices::Input::MouseDelta delta = {};
+    if (FAILED(args->get_MouseDelta(&delta))) return;
+    DispatchMouseDelta(delta.X, delta.Y);
+}
+static void PollCoreWindowPointerPosition() {
+    if (!g_coreWindow || g_cursorDisabled ||
+        InterlockedCompareExchange(&g_remote_mouse_seen, 0, 0)) {
+        return;
+    }
+
+    Point position = {};
+    if (FAILED(g_coreWindow->get_PointerPosition(&position))) return;
+
+    const double x = (double)position.X * CurrentPointerScaleX();
+    const double y = (double)position.Y * CurrentPointerScaleY();
+    if (x == g_cursor_x && y == g_cursor_y) return;
+
+    g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
+    g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
+    DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    if (g_mouse_log_count < 24) {
+        ++g_mouse_log_count;
+        ShimLog("Pointer position poll cursor=%.1f,%.1f", g_cursor_x, g_cursor_y);
+    }
+}
+static void SyncGameInputMouseButtons(GameInputMouseButtons buttons) {
+    SetMouseButtonState(GLFW_MOUSE_BUTTON_LEFT,
+        (buttons & GameInputMouseLeftButton) ? GLFW_PRESS : GLFW_RELEASE, true);
+    SetMouseButtonState(GLFW_MOUSE_BUTTON_RIGHT,
+        (buttons & GameInputMouseRightButton) ? GLFW_PRESS : GLFW_RELEASE, true);
+    SetMouseButtonState(GLFW_MOUSE_BUTTON_MIDDLE,
+        (buttons & GameInputMouseMiddleButton) ? GLFW_PRESS : GLFW_RELEASE, true);
+    SetMouseButtonState(GLFW_MOUSE_BUTTON_4,
+        (buttons & GameInputMouseButton4) ? GLFW_PRESS : GLFW_RELEASE, true);
+    SetMouseButtonState(GLFW_MOUSE_BUTTON_5,
+        (buttons & GameInputMouseButton5) ? GLFW_PRESS : GLFW_RELEASE, true);
+}
+static void PollGameInputMouse() {
+    if (!EnsureGameInput()) return;
+
+    ComPtr<IGameInputReading> reading;
+    HRESULT hr = g_gameInput->GetCurrentReading(GameInputKindMouse, nullptr, reading.GetAddressOf());
+    if (FAILED(hr) || !reading) {
+        if (g_gameinput_log_count < 8) {
+            ++g_gameinput_log_count;
+            ShimLog("GameInput mouse reading unavailable hr=0x%08X", hr);
+        }
+        return;
+    }
+
+    GameInputMouseState state = {};
+    if (!reading->GetMouseState(&state)) {
+        if (g_gameinput_log_count < 8) {
+            ++g_gameinput_log_count;
+            ShimLog("GameInput GetMouseState returned false kind=0x%X", reading->GetInputKind());
+        }
+        return;
+    }
+
+    SyncGameInputMouseButtons(state.buttons);
+
+    if (!g_haveGameInputMouseState) {
+        g_lastGameInputMouseState = state;
+        g_haveGameInputMouseState = true;
+        if (g_gameinput_log_count < 16) {
+            ++g_gameinput_log_count;
+            ShimLog("GameInput mouse ready kind=0x%X buttons=0x%X pos=%lld,%lld wheel=%lld,%lld",
+                reading->GetInputKind(), (unsigned)state.buttons,
+                (long long)state.positionX, (long long)state.positionY,
+                (long long)state.wheelX, (long long)state.wheelY);
+        }
+        return;
+    }
+
+    const int64_t dx = state.positionX - g_lastGameInputMouseState.positionX;
+    const int64_t dy = state.positionY - g_lastGameInputMouseState.positionY;
+    const int64_t wheelX = state.wheelX - g_lastGameInputMouseState.wheelX;
+    const int64_t wheelY = state.wheelY - g_lastGameInputMouseState.wheelY;
+    g_lastGameInputMouseState = state;
+
+    if (dx || dy) {
+        DispatchMouseDelta(ClampInt64ToInt(dx), ClampInt64ToInt(dy));
+    }
+    if ((wheelX || wheelY) && g_scroll_cb) {
+        g_scroll_cb((GLFWwindow*)&g_fake_window, (double)wheelX, (double)wheelY);
+    }
+
+    if (g_gameinput_log_count < 32 && (dx || dy || wheelX || wheelY || state.buttons)) {
+        ++g_gameinput_log_count;
+        ShimLog("GameInput mouse delta dx=%lld dy=%lld wheel=%lld,%lld buttons=0x%X cursor=%.1f,%.1f",
+            (long long)dx, (long long)dy,
+            (long long)wheelX, (long long)wheelY,
+            (unsigned)state.buttons, g_cursor_x, g_cursor_y);
+    }
+}
+static float ApplyDeadzone(float value, float deadzone) {
+    const float absValue = value < 0.0f ? -value : value;
+    return absValue < deadzone ? 0.0f : ClampGamepadAxis(value);
+}
+static bool IsGamepadButtonDown(const GameInputGamepadState& state, GameInputGamepadButtons button) {
+    return (state.buttons & button) != 0;
+}
+static void UpdateControllerBridge(const GameInputGamepadState& state) {
+    const float leftX = ApplyDeadzone(state.leftThumbstickX, 0.28f);
+    const float leftY = ApplyDeadzone(state.leftThumbstickY, 0.28f);
+    const float rightX = ApplyDeadzone(state.rightThumbstickX, 0.18f);
+    const float rightY = ApplyDeadzone(state.rightThumbstickY, 0.18f);
+
+    SetControllerKeyState(GLFW_KEY_W, leftY > 0.0f);
+    SetControllerKeyState(GLFW_KEY_S, leftY < 0.0f);
+    SetControllerKeyState(GLFW_KEY_A, leftX < 0.0f);
+    SetControllerKeyState(GLFW_KEY_D, leftX > 0.0f);
+
+    SetControllerKeyState(GLFW_KEY_UP, IsGamepadButtonDown(state, GameInputGamepadDPadUp));
+    SetControllerKeyState(GLFW_KEY_DOWN, IsGamepadButtonDown(state, GameInputGamepadDPadDown));
+    SetControllerKeyState(GLFW_KEY_LEFT, IsGamepadButtonDown(state, GameInputGamepadDPadLeft));
+    SetControllerKeyState(GLFW_KEY_RIGHT, IsGamepadButtonDown(state, GameInputGamepadDPadRight));
+
+    const bool aDown = IsGamepadButtonDown(state, GameInputGamepadA);
+    SetControllerKeyState(GLFW_KEY_SPACE, aDown);
+    SetControllerKeyState(GLFW_KEY_ENTER, aDown);
+    SetControllerKeyState(GLFW_KEY_ESCAPE,
+        IsGamepadButtonDown(state, GameInputGamepadB) ||
+        IsGamepadButtonDown(state, GameInputGamepadMenu));
+    SetControllerKeyState(GLFW_KEY_E, false);
+    SetControllerKeyState(GLFW_KEY_Q, IsGamepadButtonDown(state, GameInputGamepadY));
+    SetControllerKeyState(GLFW_KEY_LEFT_SHIFT, IsGamepadButtonDown(state, GameInputGamepadLeftThumbstick));
+    SetControllerKeyState(GLFW_KEY_LEFT_CONTROL, IsGamepadButtonDown(state, GameInputGamepadRightThumbstick));
+
+    SetControllerMouseButtonState(GLFW_MOUSE_BUTTON_LEFT, state.rightTrigger > 0.35f);
+    SetControllerMouseButtonState(GLFW_MOUSE_BUTTON_RIGHT, state.leftTrigger > 0.35f);
+
+    const bool lbDown = IsGamepadButtonDown(state, GameInputGamepadLeftShoulder);
+    const bool rbDown = IsGamepadButtonDown(state, GameInputGamepadRightShoulder);
+    if (g_scroll_cb && lbDown && !g_controller_lb_down) {
+        g_scroll_cb((GLFWwindow*)&g_fake_window, 0.0, 1.0);
+    }
+    if (g_scroll_cb && rbDown && !g_controller_rb_down) {
+        g_scroll_cb((GLFWwindow*)&g_fake_window, 0.0, -1.0);
+    }
+    g_controller_lb_down = lbDown;
+    g_controller_rb_down = rbDown;
+
+    const int dx = (int)(rightX * 32.0f);
+    const int dy = (int)(-rightY * 32.0f);
+    if (dx || dy) {
+        DispatchMouseDelta(dx, dy);
+    }
+}
+static void ReleaseControllerBridge() {
+    ReleaseControllerKeys();
+    ReleaseControllerMouseButtons();
+    g_controller_lb_down = false;
+    g_controller_rb_down = false;
+}
+static void RemoveMouseDeviceHooks() {
+    if (g_mouseDevice && g_mouseMovedToken.value) {
+        g_mouseDevice->remove_MouseMoved(g_mouseMovedToken);
+    }
+    ZeroMemory(&g_mouseMovedToken, sizeof(g_mouseMovedToken));
+    g_mouseMovedHandler.Reset();
+    g_mouseDevice.Reset();
+    g_mouseDeviceHooksInstalled = false;
+}
+static bool InstallMouseDeviceHooks() {
+    if (g_mouseDeviceHooksInstalled) return true;
+
+    ComPtr<ABI::Windows::Devices::Input::IMouseDeviceStatics> mouseStatics;
+    HRESULT hr = GetActivationFactory(
+        HStringReference(RuntimeClass_Windows_Devices_Input_MouseDevice).Get(),
+        mouseStatics.GetAddressOf());
+    if (FAILED(hr) || !mouseStatics) {
+        ShimLog("MouseDevice activation failed hr=0x%08X", hr);
+        return false;
+    }
+
+    hr = mouseStatics->GetForCurrentView(g_mouseDevice.GetAddressOf());
+    if (FAILED(hr) || !g_mouseDevice) {
+        ShimLog("MouseDevice::GetForCurrentView failed hr=0x%08X", hr);
+        return false;
+    }
+
+    g_mouseMovedHandler = Callback<MouseDeviceMovedHandler>(
+        [](ABI::Windows::Devices::Input::IMouseDevice*,
+           ABI::Windows::Devices::Input::IMouseEventArgs* args) -> HRESULT {
+            HandleMouseDeviceMoved(args);
+            return S_OK;
+        });
+    hr = g_mouseDevice->add_MouseMoved(g_mouseMovedHandler.Get(), &g_mouseMovedToken);
+    if (FAILED(hr)) {
+        ShimLog("MouseDevice add_MouseMoved failed hr=0x%08X", hr);
+        RemoveMouseDeviceHooks();
+        return false;
+    }
+
+    g_mouseDeviceHooksInstalled = true;
+    ShimLog("MouseDevice hooks installed");
+    return true;
+}
+static void RemovePointerHooks() {
+    if (g_coreWindow) {
+        if (g_pointerMovedToken.value) g_coreWindow->remove_PointerMoved(g_pointerMovedToken);
+        if (g_pointerPressedToken.value) g_coreWindow->remove_PointerPressed(g_pointerPressedToken);
+        if (g_pointerReleasedToken.value) g_coreWindow->remove_PointerReleased(g_pointerReleasedToken);
+        if (g_pointerWheelToken.value) g_coreWindow->remove_PointerWheelChanged(g_pointerWheelToken);
+        if (g_pointerEnteredToken.value) g_coreWindow->remove_PointerEntered(g_pointerEnteredToken);
+        if (g_pointerExitedToken.value) g_coreWindow->remove_PointerExited(g_pointerExitedToken);
+        if (g_pointerCaptureLostToken.value) g_coreWindow->remove_PointerCaptureLost(g_pointerCaptureLostToken);
+    }
+
+    ZeroMemory(&g_pointerMovedToken, sizeof(g_pointerMovedToken));
+    ZeroMemory(&g_pointerPressedToken, sizeof(g_pointerPressedToken));
+    ZeroMemory(&g_pointerReleasedToken, sizeof(g_pointerReleasedToken));
+    ZeroMemory(&g_pointerWheelToken, sizeof(g_pointerWheelToken));
+    ZeroMemory(&g_pointerEnteredToken, sizeof(g_pointerEnteredToken));
+    ZeroMemory(&g_pointerExitedToken, sizeof(g_pointerExitedToken));
+    ZeroMemory(&g_pointerCaptureLostToken, sizeof(g_pointerCaptureLostToken));
+    g_pointerMovedHandler.Reset();
+    g_pointerPressedHandler.Reset();
+    g_pointerReleasedHandler.Reset();
+    g_pointerWheelHandler.Reset();
+    g_pointerEnteredHandler.Reset();
+    g_pointerExitedHandler.Reset();
+    g_pointerCaptureLostHandler.Reset();
+    g_pointerHooksInstalled = false;
+}
+static bool InstallPointerHooks() {
+    if (g_pointerHooksInstalled) return true;
+    if (!g_coreWindow) return false;
+
+    g_pointerMovedHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchMove);
+            return S_OK;
+        });
+    g_pointerPressedHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchPress);
+            return S_OK;
+        });
+    g_pointerReleasedHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchRelease);
+            return S_OK;
+        });
+    g_pointerWheelHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchWheel);
+            return S_OK;
+        });
+    g_pointerEnteredHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchEnter);
+            return S_OK;
+        });
+    g_pointerExitedHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchExit);
+            return S_OK;
+        });
+    g_pointerCaptureLostHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow*, IPointerEventArgs* args) -> HRESULT {
+            HandlePointerEvent(args, PointerDispatchCaptureLost);
+            return S_OK;
+        });
+
+    HRESULT hr = g_coreWindow->add_PointerMoved(g_pointerMovedHandler.Get(), &g_pointerMovedToken);
+    if (FAILED(hr)) { ShimLog("add_PointerMoved failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+    hr = g_coreWindow->add_PointerPressed(g_pointerPressedHandler.Get(), &g_pointerPressedToken);
+    if (FAILED(hr)) { ShimLog("add_PointerPressed failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+    hr = g_coreWindow->add_PointerReleased(g_pointerReleasedHandler.Get(), &g_pointerReleasedToken);
+    if (FAILED(hr)) { ShimLog("add_PointerReleased failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+    hr = g_coreWindow->add_PointerWheelChanged(g_pointerWheelHandler.Get(), &g_pointerWheelToken);
+    if (FAILED(hr)) { ShimLog("add_PointerWheelChanged failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+    hr = g_coreWindow->add_PointerEntered(g_pointerEnteredHandler.Get(), &g_pointerEnteredToken);
+    if (FAILED(hr)) { ShimLog("add_PointerEntered failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+    hr = g_coreWindow->add_PointerExited(g_pointerExitedHandler.Get(), &g_pointerExitedToken);
+    if (FAILED(hr)) { ShimLog("add_PointerExited failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+    hr = g_coreWindow->add_PointerCaptureLost(g_pointerCaptureLostHandler.Get(), &g_pointerCaptureLostToken);
+    if (FAILED(hr)) { ShimLog("add_PointerCaptureLost failed hr=0x%08X", hr); RemovePointerHooks(); return false; }
+
+    g_pointerHooksInstalled = true;
+    ShimLog("CoreWindow pointer hooks installed");
+    return true;
+}
+static IClipboardStatics* GetClipboardStatics() {
+    IClipboardStatics* statics = nullptr;
+    GetActivationFactory(
+        HStringReference(RuntimeClass_Windows_ApplicationModel_DataTransfer_Clipboard).Get(),
+        &statics);
+    return statics; 
+}
+
 extern "C" __declspec(dllexport) void glfwTerminate(void) {
     ShimLog("glfwTerminate");
     if (g_coreWindow && g_keyboardHooksInstalled) {
@@ -1518,6 +2627,8 @@ extern "C" __declspec(dllexport) void glfwTerminate(void) {
         g_coreWindow->remove_KeyUp(g_keyUpToken);
         g_coreWindow->remove_CharacterReceived(g_charReceivedToken);
     }
+    RemovePointerHooks();
+    RemoveMouseDeviceHooks();
     ZeroMemory(&g_keyDownToken, sizeof(g_keyDownToken));
     ZeroMemory(&g_keyUpToken, sizeof(g_keyUpToken));
     ZeroMemory(&g_charReceivedToken, sizeof(g_charReceivedToken));
@@ -1741,9 +2852,33 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
         ShimLog("glfwPollEvents #%d", g_poll_log_count);
     }
     if (g_dispatcher) {
-        g_dispatcher->ProcessEvents(CoreProcessEventsOption_ProcessAllIfPresent);
+        boolean hasDispatcherAccess = false;
+        const HRESULT accessHr = g_dispatcher->get_HasThreadAccess(&hasDispatcherAccess);
+        if (SUCCEEDED(accessHr) && hasDispatcherAccess) {
+            if (InterlockedCompareExchange(&g_processing_events, 1, 0) == 0) {
+                const HRESULT hr = g_dispatcher->ProcessEvents(CoreProcessEventsOption_ProcessAllIfPresent);
+                InterlockedExchange(&g_processing_events, 0);
+                if (FAILED(hr) && g_process_events_error_log_count < 8) {
+                    ++g_process_events_error_log_count;
+                    ShimLog("ProcessEvents failed hr=0x%08X", hr);
+                }
+            } else if (g_nested_process_log_count < 8) {
+                ++g_nested_process_log_count;
+                ShimLog("Skipping nested ProcessEvents #%d", g_nested_process_log_count);
+            }
+        } else if (g_process_events_offthread_log_count < 8) {
+            ++g_process_events_offthread_log_count;
+            ShimLog("Skipping ProcessEvents off dispatcher thread hr=0x%08X access=%d", accessHr, hasDispatcherAccess ? 1 : 0);
+        }
     }
-    PollGameInputGamepad(true);
+    DrainRemoteMouseInput();
+    PollGameInputMouse();
+    if (g_controller_bridge_enabled) {
+        PollGameInputGamepad(true);
+    }
+    if (!g_gamepad_present) {
+        PollCoreWindowPointerPosition();
+    }
     RefreshWindowMetrics(true);
 }
 extern "C" __declspec(dllexport) void glfwWaitEvents(void) {
@@ -1766,8 +2901,55 @@ extern "C" __declspec(dllexport) void glfwWaitEventsTimeout(double) {
     glfwPollEvents();
 }
 extern "C" __declspec(dllexport) void glfwPostEmptyEvent(void) {}
-extern "C" __declspec(dllexport) int  glfwGetInputMode(GLFWwindow*, int m) { return m == GLFW_CURSOR ? GLFW_CURSOR_NORMAL : 0; }
-extern "C" __declspec(dllexport) void glfwSetInputMode(GLFWwindow*, int, int) {}
+extern "C" __declspec(dllexport) int  glfwGetInputMode(GLFWwindow*, int m) {
+    if (m == GLFW_CURSOR) return g_cursorMode;
+    if (m == GLFW_RAW_MOUSE_MOTION) return g_raw_mouse_motion ? GLFW_TRUE : GLFW_FALSE;
+    return 0;
+}
+extern "C" __declspec(dllexport) void glfwSetInputMode(GLFWwindow*, int mode, int value) {
+    if (mode == GLFW_RAW_MOUSE_MOTION) {
+        g_raw_mouse_motion = (value != GLFW_FALSE);
+        ShimLog("Raw mouse motion %s", g_raw_mouse_motion ? "enabled" : "disabled");
+        return;
+    }
+    if (mode != GLFW_CURSOR) return;
+
+    if (value != GLFW_CURSOR_NORMAL &&
+        value != GLFW_CURSOR_HIDDEN &&
+        value != GLFW_CURSOR_DISABLED) {
+        return;
+    }
+
+    if (g_cursorMode != value) {
+        g_pendingMode = value;
+        g_modeChangeTime = GetTickCount64();
+    }
+    g_cursorMode = value;
+    g_cursorDisabled = (value == GLFW_CURSOR_DISABLED);
+    if (!g_cursorDisabled) {
+        g_menu_abs_x = ClampDouble(g_cursor_x, 0.0, CursorMaxX());
+        g_menu_abs_y = ClampDouble(g_cursor_y, 0.0, CursorMaxY());
+        DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    }
+    if (value == GLFW_CURSOR_NORMAL) {
+        
+        
+        SendMouseRelayCursorSync(WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y));
+    }
+    SendCursorOverlayState();
+    ShimLog("Cursor mode %s", g_cursorDisabled ? "GAMEPLAY" : "MENU");
+    if (!AcquireCoreWindow()) return;
+
+    if (g_cursorDisabled) {
+        const HRESULT hr = g_coreWindow->SetPointerCapture();
+        if (FAILED(hr) && g_mouse_log_count < 8) {
+            ++g_mouse_log_count;
+            ShimLog("SetPointerCapture(cursor disabled) failed hr=0x%08X", hr);
+        }
+    } else if (!AnyMouseButtonDown()) {
+        g_coreWindow->ReleasePointerCapture();
+    }
+}
 extern "C" __declspec(dllexport) int  glfwRawMouseMotionSupported(void) { return GLFW_FALSE; }
 static const char* KeyNameFromGlfwKey(int key) {
     switch (key) {
@@ -1875,15 +3057,144 @@ extern "C" __declspec(dllexport) int  glfwGetKey(GLFWwindow*, int key) {
     if (key < 0 || key >= (int)sizeof(g_key_state)) return GLFW_RELEASE;
     return g_key_state[key] ? GLFW_PRESS : GLFW_RELEASE;
 }
-extern "C" __declspec(dllexport) int  glfwGetMouseButton(GLFWwindow*, int) { return GLFW_RELEASE; }
-extern "C" __declspec(dllexport) void glfwGetCursorPos(GLFWwindow*, double*x, double*y) { if(x)*x=0.; if(y)*y=0.; }
-extern "C" __declspec(dllexport) void glfwSetCursorPos(GLFWwindow*, double, double) {}
+extern "C" __declspec(dllexport) int  glfwGetMouseButton(GLFWwindow*, int button) {
+    if (button < 0 || button >= (int)sizeof(g_mouse_state)) return GLFW_RELEASE;
+    const int state = g_mouse_state[button] ? GLFW_PRESS : GLFW_RELEASE;
+    return state;
+}
+extern "C" __declspec(dllexport) void glfwGetCursorPos(GLFWwindow*, double*x, double*y) {
+    if (x) *x = g_cursor_x;
+    if (y) *y = g_cursor_y;
+}
+extern "C" __declspec(dllexport) void glfwSetCursorPos(GLFWwindow*, double x, double y) {
+    if (g_cursorDisabled) {
+        return;
+    }
+
+    
+    g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
+    g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
+    DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    SendCursorOverlayState();
+
+    if (!AcquireCoreWindow()) return;
+    ComPtr<ICoreWindow2> coreWindow2;
+    if (SUCCEEDED(g_coreWindow.As(&coreWindow2)) && coreWindow2) {
+        Point position = {};
+        const double sx = CurrentPointerScaleX();
+        const double sy = CurrentPointerScaleY();
+        position.X = (FLOAT)(sx > 0.0 ? g_menu_abs_x / sx : g_menu_abs_x);
+        position.Y = (FLOAT)(sy > 0.0 ? g_menu_abs_y / sy : g_menu_abs_y);
+        coreWindow2->put_PointerPosition(position);
+    }
+}
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateCursor(const GLFWimage*, int, int) { return (GLFWcursor*)1; }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateStandardCursor(int) { return (GLFWcursor*)1; }
 extern "C" __declspec(dllexport) void glfwDestroyCursor(GLFWcursor*) {}
 extern "C" __declspec(dllexport) void glfwSetCursor(GLFWwindow*, GLFWcursor*) {}
-extern "C" __declspec(dllexport) const char* glfwGetClipboardString(GLFWwindow*) { return ""; }
-extern "C" __declspec(dllexport) void glfwSetClipboardString(GLFWwindow*, const char*) {}
+extern "C" __declspec(dllexport) const char* glfwGetClipboardString(GLFWwindow*) {
+    g_clipboard_buf[0] = '\0';
+
+    ComPtr<IClipboardStatics> clip(GetClipboardStatics());
+    if (!clip) { ShimLog("Clipboard: IClipboardStatics unavailable (sandbox?)"); return g_clipboard_buf; }
+
+    ComPtr<IDataPackageView> view;
+    if (FAILED(clip->GetContent(&view)) || !view) {
+        ShimLog("Clipboard: GetContent failed");
+        return g_clipboard_buf;
+    }
+
+    
+    boolean hasText = FALSE;
+    {
+        HSTRING fmtText = nullptr;
+        WindowsCreateString(L"Text", 4, &fmtText);
+        view->Contains(fmtText, &hasText);
+        WindowsDeleteString(fmtText);
+    }
+    if (!hasText) { ShimLog("Clipboard: no text content"); return g_clipboard_buf; }
+
+    ComPtr<IAsyncOperation<HSTRING>> asyncOp;
+    if (FAILED(view->GetTextAsync(&asyncOp)) || !asyncOp) {
+        ShimLog("Clipboard: GetTextAsync failed");
+        return g_clipboard_buf;
+    }
+
+    
+    
+    ComPtr<IAsyncInfo> asyncInfo;
+    if (FAILED(asyncOp.As(&asyncInfo)) || !asyncInfo) {
+        ShimLog("Clipboard: IAsyncInfo QI failed");
+        return g_clipboard_buf;
+    }
+
+    
+    AsyncStatus status = AsyncStatus::Started;
+    for (int i = 0; i < 200 && status == AsyncStatus::Started; ++i) {
+        asyncInfo->get_Status(&status);
+        if (status == AsyncStatus::Started) Sleep(1);
+    }
+    if (status != AsyncStatus::Completed) {
+        ShimLog("Clipboard: GetTextAsync timed out or failed (status=%d)", (int)status);
+        return g_clipboard_buf;
+    }
+
+    HSTRING hstr = nullptr;
+    if (FAILED(asyncOp->GetResults(&hstr)) || !hstr) return g_clipboard_buf;
+
+    UINT32 len = 0;
+    const wchar_t* buf = WindowsGetStringRawBuffer(hstr, &len);
+    if (buf && len > 0) {
+        const int needed = WideCharToMultiByte(CP_UTF8, 0, buf, (int)len,
+                                               nullptr, 0, nullptr, nullptr);
+        if (needed > 0 && needed < (int)sizeof(g_clipboard_buf)) {
+            WideCharToMultiByte(CP_UTF8, 0, buf, (int)len,
+                                g_clipboard_buf, needed, nullptr, nullptr);
+            g_clipboard_buf[needed] = '\0';
+        }
+    }
+    WindowsDeleteString(hstr);
+    ShimLog("Clipboard: paste %d chars", (int)strlen(g_clipboard_buf));
+    return g_clipboard_buf;
+}
+extern "C" __declspec(dllexport) void glfwSetClipboardString(GLFWwindow*, const char* text) {
+    if (!text) return;
+
+    
+    const int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    if (wlen <= 0) return;
+    std::vector<wchar_t> wtext(wlen);
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext.data(), wlen);
+
+    HSTRING hstr = nullptr;
+    if (FAILED(WindowsCreateString(wtext.data(), (UINT32)(wlen - 1), &hstr))) return;
+
+    
+    ComPtr<IDataPackage> pkg;
+    {
+        ComPtr<IInspectable> insp;
+        if (FAILED(RoActivateInstance(
+                HStringReference(RuntimeClass_Windows_ApplicationModel_DataTransfer_DataPackage).Get(),
+                &insp)) || !insp) {
+            WindowsDeleteString(hstr);
+            return;
+        }
+        insp.As(&pkg);
+    }
+    if (!pkg) { WindowsDeleteString(hstr); return; }
+    if (FAILED(pkg->SetText(hstr))) { WindowsDeleteString(hstr); return; }
+    WindowsDeleteString(hstr);
+
+    ComPtr<IClipboardStatics> clip(GetClipboardStatics());
+    if (!clip) return;
+    if (FAILED(clip->SetContent(pkg.Get()))) {
+        ShimLog("Clipboard: SetContent failed");
+        return;
+    }
+    
+    clip->Flush();
+    ShimLog("Clipboard: copy %d chars", (int)strlen(text));
+}
 
 static LARGE_INTEGER g_freq, g_start;
 static BOOL g_time_init = FALSE;
@@ -1916,12 +3227,15 @@ extern "C" __declspec(dllexport) void glfwMakeContextCurrent(GLFWwindow* w) {
     const DWORD tid = GetCurrentThreadId();
     ShimLog("MakeContextCurrent %p tid=%lu previousTid=%lu", (void*)w, tid, g_eglContextThreadId);
     if (!w) {
+        if (g_eglContextThreadId != 0 && g_eglContextThreadId != tid) {
+            ShimLog("MakeContextCurrent(NULL) ignored: context owned by thread %u, caller %u",
+                (unsigned)g_eglContextThreadId, (unsigned)tid);
+            return;
+        }
         if (p_eglMakeCurrent && g_eglDisplay != EGL_NO_DISPLAY) {
             p_eglMakeCurrent(g_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         }
-        if (g_eglContextThreadId == tid) {
-            g_eglContextThreadId = 0;
-        }
+        g_eglContextThreadId = 0;
         return;
     }
     if (!CreateEglContext()) return;

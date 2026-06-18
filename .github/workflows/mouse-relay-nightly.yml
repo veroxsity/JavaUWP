@@ -1,0 +1,122 @@
+name: Mouse relay nightly
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/mouse-relay-nightly.yml"
+      - "tools/mouse-relay/**"
+  workflow_dispatch:
+
+concurrency:
+  group: mouse-relay-nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build Windows portable zip
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Package Windows relay
+        shell: powershell
+        run: .\tools\mouse-relay\scripts\package-windows.ps1
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BanditMouseRelay-nightly-win-x64
+          path: |
+            dist/mouse-relay/BanditMouseRelay-nightly-win-x64.zip
+            dist/mouse-relay/BanditMouseRelay-nightly-win-x64.sha256
+          if-no-files-found: error
+
+  android:
+    name: Build Android debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+
+      - name: Build Android APK
+        working-directory: tools/mouse-relay/android
+        shell: bash
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Stage Android artifact
+        shell: bash
+        run: |
+          mkdir -p dist/mouse-relay
+          cp tools/mouse-relay/android/app/build/outputs/apk/debug/app-debug.apk dist/mouse-relay/BanditMouseRelay-nightly-android-debug.apk
+          cd dist/mouse-relay
+          sha256sum BanditMouseRelay-nightly-android-debug.apk > BanditMouseRelay-nightly-android-debug.sha256
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BanditMouseRelay-nightly-android-debug
+          path: |
+            dist/mouse-relay/BanditMouseRelay-nightly-android-debug.apk
+            dist/mouse-relay/BanditMouseRelay-nightly-android-debug.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish companion assets
+    runs-on: ubuntu-latest
+    needs:
+      - windows
+      - android
+    timeout-minutes: 15
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish to nightly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view nightly >/dev/null 2>&1; then
+            gh release create nightly --target "$GITHUB_SHA" --title nightly --prerelease --notes "Automated nightly companion assets."
+          fi
+
+          gh release upload nightly \
+            dist/BanditMouseRelay-nightly-win-x64/BanditMouseRelay-nightly-win-x64.zip \
+            dist/BanditMouseRelay-nightly-win-x64/BanditMouseRelay-nightly-win-x64.sha256 \
+            dist/BanditMouseRelay-nightly-android-debug/BanditMouseRelay-nightly-android-debug.apk \
+            dist/BanditMouseRelay-nightly-android-debug/BanditMouseRelay-nightly-android-debug.sha256 \
+            --clobber
+

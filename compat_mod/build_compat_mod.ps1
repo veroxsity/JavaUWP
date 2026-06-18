@@ -75,6 +75,10 @@ if ($controllerCompatVersions -notcontains $MinecraftVersion) {
     $disabledMixins += @("BanditControllerClientMixin", "BanditControllerGameRendererMixin", "BanditControllerHandledScreenMixin", "BanditControllerRecipeBookScreenMixin", "BanditControllerScreenMixin")
     $disabledSources += @("BanditControllerCompat", "BanditControllerSettings", "BanditControllerSettingsScreen")
 }
+if ($MinecraftVersion -ne $mixinAuthorVersion) {
+    $disabledMixins += @("BanditMouseCursorRecipeBookScreenMixin", "BanditMouseCursorScreenMixin")
+    $disabledSources += "BanditMouseCursorOverlay"
+}
 
 $sources = Get-ChildItem $srcJava -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName
 

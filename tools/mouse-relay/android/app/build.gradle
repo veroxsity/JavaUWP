@@ -1,0 +1,62 @@
+plugins {
+    id "com.android.application"
+}
+
+def sdlVersion = "3.4.10"
+def sdlAarName = "SDL3-${sdlVersion}.aar"
+def sdlAar = layout.projectDirectory.file("libs/${sdlAarName}")
+
+tasks.register("downloadSdlAar") {
+    outputs.file(sdlAar)
+    doLast {
+        def target = sdlAar.asFile
+        target.parentFile.mkdirs()
+        if (!target.exists()) {
+            def url = "https://github.com/libsdl-org/SDL/releases/download/release-${sdlVersion}/${sdlAarName}"
+            logger.lifecycle("Downloading ${url}")
+            new URI(url).toURL().withInputStream { input ->
+                target.withOutputStream { output ->
+                    output << input
+                }
+            }
+        }
+    }
+}
+
+android {
+    namespace "dev.bandit.mouserelay"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "dev.bandit.mouserelay"
+        minSdk 23
+        targetSdk 36
+        versionCode 1
+        versionName "0.1.0"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++20"
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("../../CMakeLists.txt")
+            version "3.22.1"
+        }
+    }
+
+    buildFeatures {
+        prefab true
+    }
+}
+
+preBuild.dependsOn("downloadSdlAar")
+
+dependencies {
+    implementation files("libs/${sdlAarName}")
+}
+

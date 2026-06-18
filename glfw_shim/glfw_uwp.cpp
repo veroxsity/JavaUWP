@@ -325,6 +325,8 @@ static int g_window_width = 1920;
 static int g_window_height = 1080;
 static int g_framebuffer_width = 1920;
 static int g_framebuffer_height = 1080;
+static int g_menu_window_width = 960;
+static int g_menu_window_height = 540;
 static float g_content_scale_x = 1.0f;
 static float g_content_scale_y = 1.0f;
 static int g_swap_log_count = 0;
@@ -476,6 +478,7 @@ static ComPtr<CoreWindowPointerHandler> g_pointerWheelHandler;
 static EventRegistrationToken g_pointerWheelToken = {};
 static bool g_raw_mouse_motion = false;
 static bool g_remote_mouse_abs_pending = false;
+static bool g_remote_mouse_abs_window = false;
 static double g_remote_mouse_abs_x = 960.0;
 static double g_remote_mouse_abs_y = 540.0;
 static int g_remote_mouse_button_changes = 0;
@@ -515,6 +518,7 @@ static void SendMouseRelayStatusText(const char* text);
 static void SendMouseRelayCursorSync(double x, double y);
 static void DispatchMouseDelta(double dx, double dy);
 static void DispatchMouseAbsolute(double x, double y);
+static void DispatchMouseWindowAbsolute(double x, double y);
 static void FireRemoteMouseButtonCallback(int button, int action);
 static void SetRemoteMouseButtonState(int button, int action);
 static void SetMouseButtonState(int button, int action, bool fireCallback);
@@ -1860,6 +1864,11 @@ static void SendMouseRelayCursorSync(double x, double y) {
     sprintf_s(packet, "SYNC:%.0f,%.0f", x, y);
     SendMouseRelayStatusText(packet);
 }
+static void SendMouseRelayWindowCursorSync(double x, double y) {
+    char packet[64] = {};
+    sprintf_s(packet, "SYNCW:%.0f,%.0f", x, y);
+    SendMouseRelayStatusText(packet);
+}
 static void DispatchMouseDelta(double dx, double dy) {
     if (dx == 0.0 && dy == 0.0) return;
 
@@ -1887,6 +1896,18 @@ static void DispatchMouseAbsolute(double x, double y) {
         ++g_remote_mouse_log_count;
         ShimLog("RemoteMouse ABS protocol=%.1f,%.1f -> window=%.1f,%.1f (win %dx%d fb %dx%d scale %.3f)",
             x, y, g_menu_abs_x, g_menu_abs_y,
+            g_window_width, g_window_height, g_width, g_height, g_content_scale);
+    }
+}
+static void DispatchMouseWindowAbsolute(double x, double y) {
+    g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
+    g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
+    DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    SendCursorOverlayState();
+    if (g_remote_mouse_log_count < 12) {
+        ++g_remote_mouse_log_count;
+        ShimLog("RemoteMouse ABSW window=%.1f,%.1f (win %dx%d fb %dx%d scale %.3f)",
+            g_menu_abs_x, g_menu_abs_y,
             g_window_width, g_window_height, g_width, g_height, g_content_scale);
     }
 }
@@ -1960,18 +1981,24 @@ static void DrainRemoteMouseInput() {
     absPending = g_remote_mouse_abs_pending;
     absX = g_remote_mouse_abs_x;
     absY = g_remote_mouse_abs_y;
+    const bool absWindow = g_remote_mouse_abs_window;
     wheelY = g_remote_mouse_wheel_y;
     buttons = g_remote_mouse_buttons;
     buttonChanges = g_remote_mouse_button_changes;
     g_remote_mouse_dx = 0.0;
     g_remote_mouse_dy = 0.0;
     g_remote_mouse_abs_pending = false;
+    g_remote_mouse_abs_window = false;
     g_remote_mouse_wheel_y = 0.0;
     g_remote_mouse_button_changes = 0;
     ReleaseSRWLockExclusive(&g_remote_mouse_lock);
 
     if (absPending) {
-        DispatchMouseAbsolute(absX, absY);
+        if (absWindow) {
+            DispatchMouseWindowAbsolute(absX, absY);
+        } else {
+            DispatchMouseAbsolute(absX, absY);
+        }
     } else if (dx != 0.0 || dy != 0.0) {
         DispatchMouseDelta(dx, dy);
     }
@@ -2070,7 +2097,13 @@ static void StartRemoteMouseServer() {
                 if (!force && statusMode == lastSentStatusMode) return;
                 lastSentStatusMode = statusMode;
                 const char* status = (statusMode == GLFW_CURSOR_DISABLED) ? "MODE:GAMEPLAY" : "MODE:MENU";
-                SendMouseRelayStatusText(status);
+                char packet[160] = {};
+                sprintf_s(packet, "%s cursorw=%.0f,%.0f size=%dx%d menu=%dx%d",
+                    status,
+                    g_menu_abs_x, g_menu_abs_y,
+                    g_window_width, g_window_height,
+                    g_menu_window_width, g_menu_window_height);
+                SendMouseRelayStatusText(packet);
             };
 
             while (true) {
@@ -2093,9 +2126,12 @@ static void StartRemoteMouseServer() {
                     const int statusMode = getStableModeForStatus();
                     
                     
-                    sprintf_s(ack, "javauwp_glfw_mouse:ready mode=%d cursor=%.0f,%.0f size=%dx%d",
-                        statusMode, WindowToProtocolX(g_cursor_x), WindowToProtocolY(g_cursor_y),
-                        g_window_width, g_window_height);
+                    sprintf_s(ack, "javauwp_glfw_mouse:ready mode=%d cursor=%.0f,%.0f cursorw=%.0f,%.0f size=%dx%d menu=%dx%d",
+                        statusMode,
+                        WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y),
+                        g_menu_abs_x, g_menu_abs_y,
+                        g_window_width, g_window_height,
+                        g_menu_window_width, g_menu_window_height);
                     sendto(sock, ack, (int)strlen(ack), 0,
                         reinterpret_cast<sockaddr*>(&from), fromLen);
                     sendModeStatus(true);
@@ -2106,8 +2142,14 @@ static void StartRemoteMouseServer() {
                 float dx = 0.0f, dy = 0.0f, wheelY = 0.0f;
                 int lb = -1, rb = -1, mb = -1, x1 = -1, x2 = -1;
                 bool absolutePacket = false;
+                bool absoluteWindowPacket = false;
                 int fields = 0;
-                if (strncmp(buf, "ABS:", 4) == 0) {
+                if (strncmp(buf, "ABSW:", 5) == 0) {
+                    absolutePacket = true;
+                    absoluteWindowPacket = true;
+                    fields = sscanf_s(buf + 5, "%f,%f,%d,%d,%d,%f,%d,%d",
+                        &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
+                } else if (strncmp(buf, "ABS:", 4) == 0) {
                     absolutePacket = true;
                     fields = sscanf_s(buf + 4, "%f,%f,%d,%d,%d,%f,%d,%d",
                         &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
@@ -2126,6 +2168,7 @@ static void StartRemoteMouseServer() {
                 if (absolutePacket) {
                     g_remote_mouse_abs_x = (double)dx;
                     g_remote_mouse_abs_y = (double)dy;
+                    g_remote_mouse_abs_window = absoluteWindowPacket;
                     g_remote_mouse_abs_pending = true;
                 } else {
                     g_remote_mouse_dx += (double)dx;
@@ -2148,9 +2191,12 @@ static void StartRemoteMouseServer() {
                 if (packetCount == 1 || (packetCount % 120) == 0) {
                     char ack[160] = {};
                     const int statusMode = getStableModeForStatus();
-                    sprintf_s(ack, "javauwp_glfw_mouse:receiving mode=%d cursor=%.0f,%.0f size=%dx%d",
-                        statusMode, WindowToProtocolX(g_cursor_x), WindowToProtocolY(g_cursor_y),
-                        g_window_width, g_window_height);
+                    sprintf_s(ack, "javauwp_glfw_mouse:receiving mode=%d cursor=%.0f,%.0f cursorw=%.0f,%.0f size=%dx%d menu=%dx%d",
+                        statusMode,
+                        WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y),
+                        g_menu_abs_x, g_menu_abs_y,
+                        g_window_width, g_window_height,
+                        g_menu_window_width, g_menu_window_height);
                     sendto(sock, ack, (int)strlen(ack), 0,
                         reinterpret_cast<sockaddr*>(&from), fromLen);
                     ShimLog("RemoteMouse: packets=%u last dx=%.3f dy=%.3f wheel=%.3f buttons=%d,%d,%d,%d,%d",
@@ -2739,12 +2785,14 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
     if (!g_initialised && !glfwInit()) return NULL;
 
     if (w > 0) {
+        g_menu_window_width = w;
         g_window_width = w;
         g_framebuffer_width = UseRawScaledFramebuffer()
             ? ScaleDimensionToPixels((FLOAT)w, g_content_scale_x, g_framebuffer_width)
             : w;
     }
     if (h > 0) {
+        g_menu_window_height = h;
         g_window_height = h;
         g_framebuffer_height = UseRawScaledFramebuffer()
             ? ScaleDimensionToPixels((FLOAT)h, g_content_scale_y, g_framebuffer_height)
@@ -2997,6 +3045,7 @@ extern "C" __declspec(dllexport) void glfwSetInputMode(GLFWwindow*, int mode, in
         
         
         SendMouseRelayCursorSync(WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y));
+        SendMouseRelayWindowCursorSync(g_menu_abs_x, g_menu_abs_y);
     }
     SendCursorOverlayState();
     ShimLog("Cursor mode %s", g_cursorDisabled ? "GAMEPLAY" : "MENU");

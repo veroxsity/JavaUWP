@@ -74,6 +74,16 @@
 __pycache__/
 *.pyc
 
+# Mouse relay local build outputs
+/tools/mouse-relay/build/
+/tools/mouse-relay/out/
+/tools/mouse-relay/android/.gradle/
+/tools/mouse-relay/android/build/
+/tools/mouse-relay/android/local.properties
+/tools/mouse-relay/android/app/.cxx/
+/tools/mouse-relay/android/app/build/
+/tools/mouse-relay/android/app/libs/*.aar
+
 .local/
 *.appx
 

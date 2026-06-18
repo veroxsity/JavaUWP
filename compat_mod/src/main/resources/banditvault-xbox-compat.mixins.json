@@ -9,6 +9,8 @@
     "BanditControllerHandledScreenMixin",
     "BanditControllerRecipeBookScreenMixin",
     "BanditControllerScreenMixin",
+    "BanditMouseCursorRecipeBookScreenMixin",
+    "BanditMouseCursorScreenMixin",
     "CobblemonShowdownFileSystemMixin",
     "MinecraftClientExitMixin",
     "MinecraftClientProbeMixin",

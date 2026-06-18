@@ -18,6 +18,7 @@
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <timeapi.h>
 using SocketHandle = SOCKET;
 static constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #else
@@ -86,6 +87,19 @@ static double NowSeconds() {
     using Clock = std::chrono::steady_clock;
     static const Clock::time_point start = Clock::now();
     return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
+static void SleepUntil(double deadline) {
+    for (;;) {
+        const double remaining = deadline - NowSeconds();
+        if (remaining <= 0.0) {
+            return;
+        }
+        // sleep the bulk, spin the last ~1ms since SDL_Delay only resolves to the timer tick
+        if (remaining > 0.002) {
+            SDL_Delay(static_cast<Uint32>((remaining - 0.001) * 1000.0));
+        }
+    }
 }
 
 static std::string ModeName(RelayMode mode) {
@@ -260,6 +274,17 @@ struct WinsockRuntime {
     bool ok = false;
 };
 
+struct TimerResolution {
+    // windows scheduler ticks at ~15.6ms by default, capping SDL_Delay and the loop
+    // at ~64hz; request 1ms so the 240hz send pacing is actually reachable
+    bool raised = (timeBeginPeriod(1) == TIMERR_NOERROR);
+    ~TimerResolution() {
+        if (raised) {
+            timeEndPeriod(1);
+        }
+    }
+};
+
 static bool SocketWouldBlock() {
     const int err = WSAGetLastError();
     return err == WSAEWOULDBLOCK || err == WSAEINTR;
@@ -279,6 +304,8 @@ static bool SetNonblocking(SocketHandle sock) {
 struct WinsockRuntime {
     bool ok = true;
 };
+
+struct TimerResolution {};
 
 static bool SocketWouldBlock() {
     return errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR;
@@ -1412,6 +1439,8 @@ int main(int, char**) {
         return 2;
     }
 
+    TimerResolution timerResolution;
+
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
@@ -1438,6 +1467,7 @@ int main(int, char**) {
     {
         RelayApp app(window, renderer);
         double lastRender = -kRenderIntervalSeconds;
+        double nextTick = NowSeconds();
         while (app.Running()) {
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
@@ -1450,7 +1480,12 @@ int main(int, char**) {
                 app.Render();
                 lastRender = now;
             }
-            SDL_Delay(1);
+
+            nextTick += kSendIntervalSeconds;
+            if (nextTick < now) {
+                nextTick = now;
+            }
+            SleepUntil(nextTick);
         }
     }
 

@@ -32,7 +32,7 @@ else()
   target_link_libraries(BanditMouseRelay PRIVATE SDL3::SDL3)
 
   if(WIN32)
-    target_link_libraries(BanditMouseRelay PRIVATE ws2_32)
+    target_link_libraries(BanditMouseRelay PRIVATE ws2_32 winmm)
   endif()
 endif()
 

@@ -3370,12 +3370,302 @@ extern "C" __declspec(dllexport) GLFWwindow* glfwGetCurrentContext(void) {
     }
     return current;
 }
+
+// mouse cursor overlay drawn in the swap path, so it lands above whatever
+// minecraft rendered on any version or loader. saves and restores every bit
+// of gl state it touches so the game pipeline is unchanged after it returns.
+namespace bandit_cursor {
+
+typedef unsigned int GLenum;
+typedef unsigned int GLuint;
+typedef int GLint;
+typedef int GLsizei;
+typedef unsigned char GLboolean;
+typedef char GLchar;
+typedef float GLfloat;
+typedef ptrdiff_t GLsizeiptr;
+
+// gles entry points use the khronos __stdcall convention on win32
+typedef void   (__stdcall *PFN_genVao)(GLsizei, GLuint*);
+typedef void   (__stdcall *PFN_bindVao)(GLuint);
+typedef void   (__stdcall *PFN_genBuf)(GLsizei, GLuint*);
+typedef void   (__stdcall *PFN_bindBuf)(GLenum, GLuint);
+typedef void   (__stdcall *PFN_bufData)(GLenum, GLsizeiptr, const void*, GLenum);
+typedef GLuint (__stdcall *PFN_createShader)(GLenum);
+typedef void   (__stdcall *PFN_shaderSrc)(GLuint, GLsizei, const GLchar* const*, const GLint*);
+typedef void   (__stdcall *PFN_compileShader)(GLuint);
+typedef void   (__stdcall *PFN_getShaderiv)(GLuint, GLenum, GLint*);
+typedef void   (__stdcall *PFN_delShader)(GLuint);
+typedef GLuint (__stdcall *PFN_createProg)(void);
+typedef void   (__stdcall *PFN_attachShader)(GLuint, GLuint);
+typedef void   (__stdcall *PFN_linkProg)(GLuint);
+typedef void   (__stdcall *PFN_getProgramiv)(GLuint, GLenum, GLint*);
+typedef void   (__stdcall *PFN_useProg)(GLuint);
+typedef GLint  (__stdcall *PFN_getAttribLoc)(GLuint, const GLchar*);
+typedef void   (__stdcall *PFN_enableVaa)(GLuint);
+typedef void   (__stdcall *PFN_vaPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
+typedef void   (__stdcall *PFN_drawArrays)(GLenum, GLint, GLsizei);
+typedef void   (__stdcall *PFN_viewport)(GLint, GLint, GLsizei, GLsizei);
+typedef void   (__stdcall *PFN_enable)(GLenum);
+typedef void   (__stdcall *PFN_disable)(GLenum);
+typedef GLboolean (__stdcall *PFN_isEnabled)(GLenum);
+typedef void   (__stdcall *PFN_blendFunc)(GLenum, GLenum);
+typedef void   (__stdcall *PFN_blendFuncSep)(GLenum, GLenum, GLenum, GLenum);
+typedef void   (__stdcall *PFN_getIntegerv)(GLenum, GLint*);
+typedef void   (__stdcall *PFN_bindFb)(GLenum, GLuint);
+
+static const GLenum GL_C_TRIANGLES = 0x0004;
+static const GLenum GL_C_ARRAY_BUFFER = 0x8892;
+static const GLenum GL_C_DYNAMIC_DRAW = 0x88E8;
+static const GLenum GL_C_FLOAT = 0x1406;
+static const GLenum GL_C_FRAGMENT_SHADER = 0x8B30;
+static const GLenum GL_C_VERTEX_SHADER = 0x8B31;
+static const GLenum GL_C_COMPILE_STATUS = 0x8B81;
+static const GLenum GL_C_LINK_STATUS = 0x8B82;
+static const GLenum GL_C_BLEND = 0x0BE2;
+static const GLenum GL_C_SRC_ALPHA = 0x0302;
+static const GLenum GL_C_ONE_MINUS_SRC_ALPHA = 0x0303;
+static const GLenum GL_C_DEPTH_TEST = 0x0B71;
+static const GLenum GL_C_CULL_FACE = 0x0B44;
+static const GLenum GL_C_SCISSOR_TEST = 0x0C11;
+static const GLenum GL_C_CURRENT_PROGRAM = 0x8B8D;
+static const GLenum GL_C_ARRAY_BUFFER_BINDING = 0x8894;
+static const GLenum GL_C_VERTEX_ARRAY_BINDING = 0x85B5;
+static const GLenum GL_C_FRAMEBUFFER = 0x8D40;
+static const GLenum GL_C_FRAMEBUFFER_BINDING = 0x8CA6;
+static const GLenum GL_C_VIEWPORT = 0x0BA2;
+static const GLenum GL_C_BLEND_SRC_RGB = 0x80C9;
+static const GLenum GL_C_BLEND_DST_RGB = 0x80C8;
+static const GLenum GL_C_BLEND_SRC_ALPHA = 0x80CB;
+static const GLenum GL_C_BLEND_DST_ALPHA = 0x80CA;
+
+static PFN_genVao        p_genVao = nullptr;
+static PFN_bindVao       p_bindVao = nullptr;
+static PFN_genBuf        p_genBuf = nullptr;
+static PFN_bindBuf       p_bindBuf = nullptr;
+static PFN_bufData       p_bufData = nullptr;
+static PFN_createShader  p_createShader = nullptr;
+static PFN_shaderSrc     p_shaderSrc = nullptr;
+static PFN_compileShader p_compileShader = nullptr;
+static PFN_getShaderiv   p_getShaderiv = nullptr;
+static PFN_delShader     p_delShader = nullptr;
+static PFN_createProg    p_createProg = nullptr;
+static PFN_attachShader  p_attachShader = nullptr;
+static PFN_linkProg      p_linkProg = nullptr;
+static PFN_getProgramiv  p_getProgramiv = nullptr;
+static PFN_useProg       p_useProg = nullptr;
+static PFN_getAttribLoc  p_getAttribLoc = nullptr;
+static PFN_enableVaa     p_enableVaa = nullptr;
+static PFN_vaPointer     p_vaPointer = nullptr;
+static PFN_drawArrays    p_drawArrays = nullptr;
+static PFN_viewport      p_viewport = nullptr;
+static PFN_enable        p_enable = nullptr;
+static PFN_disable       p_disable = nullptr;
+static PFN_isEnabled     p_isEnabled = nullptr;
+static PFN_blendFunc     p_blendFunc = nullptr;
+static PFN_blendFuncSep  p_blendFuncSep = nullptr;
+static PFN_getIntegerv   p_getIntegerv = nullptr;
+static PFN_bindFb        p_bindFb = nullptr;
+
+static bool g_ready = false;
+static bool g_failed = false;
+static GLuint g_prog = 0;
+static GLuint g_vao = 0;
+static GLuint g_vbo = 0;
+static GLint g_locPos = -1;
+static GLint g_locColor = -1;
+
+static void* Resolve(const char* name) {
+    void* p = nullptr;
+    if (g_libGLESv2) p = (void*)GetProcAddress(g_libGLESv2, name);
+    if (!p && p_eglGetProcAddress) p = p_eglGetProcAddress(name);
+    if (!p && g_opengl32) p = (void*)GetProcAddress(g_opengl32, name);
+    return p;
+}
+
+static GLuint CompileShader(GLenum type, const char* src) {
+    GLuint s = p_createShader(type);
+    if (!s) return 0;
+    p_shaderSrc(s, 1, &src, nullptr);
+    p_compileShader(s);
+    GLint ok = 0;
+    p_getShaderiv(s, GL_C_COMPILE_STATUS, &ok);
+    if (!ok) {
+        p_delShader(s);
+        return 0;
+    }
+    return s;
+}
+
+static bool LoadFns() {
+    // vao funcs fall back to the OES variant for older gles2 contexts
+    p_genVao = (PFN_genVao)Resolve("glGenVertexArrays");
+    if (!p_genVao) p_genVao = (PFN_genVao)Resolve("glGenVertexArraysOES");
+    p_bindVao = (PFN_bindVao)Resolve("glBindVertexArray");
+    if (!p_bindVao) p_bindVao = (PFN_bindVao)Resolve("glBindVertexArrayOES");
+
+    p_genBuf = (PFN_genBuf)Resolve("glGenBuffers");
+    p_bindBuf = (PFN_bindBuf)Resolve("glBindBuffer");
+    p_bufData = (PFN_bufData)Resolve("glBufferData");
+    p_createShader = (PFN_createShader)Resolve("glCreateShader");
+    p_shaderSrc = (PFN_shaderSrc)Resolve("glShaderSource");
+    p_compileShader = (PFN_compileShader)Resolve("glCompileShader");
+    p_getShaderiv = (PFN_getShaderiv)Resolve("glGetShaderiv");
+    p_delShader = (PFN_delShader)Resolve("glDeleteShader");
+    p_createProg = (PFN_createProg)Resolve("glCreateProgram");
+    p_attachShader = (PFN_attachShader)Resolve("glAttachShader");
+    p_linkProg = (PFN_linkProg)Resolve("glLinkProgram");
+    p_getProgramiv = (PFN_getProgramiv)Resolve("glGetProgramiv");
+    p_useProg = (PFN_useProg)Resolve("glUseProgram");
+    p_getAttribLoc = (PFN_getAttribLoc)Resolve("glGetAttribLocation");
+    p_enableVaa = (PFN_enableVaa)Resolve("glEnableVertexAttribArray");
+    p_vaPointer = (PFN_vaPointer)Resolve("glVertexAttribPointer");
+    p_drawArrays = (PFN_drawArrays)Resolve("glDrawArrays");
+    p_viewport = (PFN_viewport)Resolve("glViewport");
+    p_enable = (PFN_enable)Resolve("glEnable");
+    p_disable = (PFN_disable)Resolve("glDisable");
+    p_isEnabled = (PFN_isEnabled)Resolve("glIsEnabled");
+    p_blendFunc = (PFN_blendFunc)Resolve("glBlendFunc");
+    p_blendFuncSep = (PFN_blendFuncSep)Resolve("glBlendFuncSeparate");
+    p_getIntegerv = (PFN_getIntegerv)Resolve("glGetIntegerv");
+    p_bindFb = (PFN_bindFb)Resolve("glBindFramebuffer");
+
+    return p_genVao && p_bindVao && p_genBuf && p_bindBuf && p_bufData &&
+        p_createShader && p_shaderSrc && p_compileShader && p_getShaderiv && p_delShader &&
+        p_createProg && p_attachShader && p_linkProg && p_getProgramiv && p_useProg &&
+        p_getAttribLoc && p_enableVaa && p_vaPointer && p_drawArrays && p_viewport &&
+        p_enable && p_disable && p_isEnabled && p_blendFunc && p_blendFuncSep &&
+        p_getIntegerv && p_bindFb;
+}
+
+static bool Init() {
+    if (!LoadFns()) return false;
+
+    const char* vs =
+        "attribute vec2 aPos;attribute vec4 aColor;varying vec4 vColor;"
+        "void main(){vColor=aColor;gl_Position=vec4(aPos,0.0,1.0);}";
+    const char* fs =
+        "precision mediump float;varying vec4 vColor;"
+        "void main(){gl_FragColor=vColor;}";
+
+    GLuint v = CompileShader(GL_C_VERTEX_SHADER, vs);
+    GLuint f = CompileShader(GL_C_FRAGMENT_SHADER, fs);
+    if (!v || !f) return false;
+
+    g_prog = p_createProg();
+    p_attachShader(g_prog, v);
+    p_attachShader(g_prog, f);
+    p_linkProg(g_prog);
+    GLint ok = 0;
+    p_getProgramiv(g_prog, GL_C_LINK_STATUS, &ok);
+    p_delShader(v);
+    p_delShader(f);
+    if (!ok) return false;
+
+    g_locPos = p_getAttribLoc(g_prog, "aPos");
+    g_locColor = p_getAttribLoc(g_prog, "aColor");
+    if (g_locPos < 0 || g_locColor < 0) return false;
+
+    p_genVao(1, &g_vao);
+    p_genBuf(1, &g_vbo);
+    p_bindVao(g_vao);
+    p_bindBuf(GL_C_ARRAY_BUFFER, g_vbo);
+    const GLsizei stride = 6 * (GLsizei)sizeof(GLfloat);
+    p_enableVaa((GLuint)g_locPos);
+    p_vaPointer((GLuint)g_locPos, 2, GL_C_FLOAT, 0, stride, (const void*)0);
+    p_enableVaa((GLuint)g_locColor);
+    p_vaPointer((GLuint)g_locColor, 4, GL_C_FLOAT, 0, stride, (const void*)(2 * sizeof(GLfloat)));
+    p_bindVao(0);
+    return true;
+}
+
+static void PushRect(GLfloat* buf, int& n, float x0, float y0, float x1, float y1,
+                     float fbw, float fbh, float r, float g, float b, float a) {
+    auto nx = [&](float px) { return px / fbw * 2.0f - 1.0f; };
+    auto ny = [&](float py) { return 1.0f - py / fbh * 2.0f; };
+    const float X0 = nx(x0), X1 = nx(x1), Y0 = ny(y0), Y1 = ny(y1);
+    const float pts[6][2] = { {X0,Y0},{X1,Y0},{X1,Y1}, {X0,Y0},{X1,Y1},{X0,Y1} };
+    for (int i = 0; i < 6; ++i) {
+        buf[n++] = pts[i][0]; buf[n++] = pts[i][1];
+        buf[n++] = r; buf[n++] = g; buf[n++] = b; buf[n++] = a;
+    }
+}
+
+static void Draw() {
+    if (g_failed) return;
+    if (!g_ready) {
+        g_ready = Init();
+        if (!g_ready) { g_failed = true; return; }
+    }
+
+    const float fbw = (float)(g_framebuffer_width > 0 ? g_framebuffer_width : 1920);
+    const float fbh = (float)(g_framebuffer_height > 0 ? g_framebuffer_height : 1080);
+    const float sx = g_window_width > 0 ? fbw / (float)g_window_width : 1.0f;
+    const float sy = g_window_height > 0 ? fbh / (float)g_window_height : 1.0f;
+    const float cx = (float)g_menu_abs_x * sx;
+    const float cy = (float)g_menu_abs_y * sy;
+
+    const float L = 14.0f, T = 2.0f, B = 5.0f;
+    GLfloat buf[3 * 6 * 6];
+    int n = 0;
+    PushRect(buf, n, cx - B, cy - B, cx + B, cy + B, fbw, fbh, 0.0f, 0.0f, 0.0f, 0.40f);
+    PushRect(buf, n, cx - L, cy - T, cx + L, cy + T, fbw, fbh, 1.0f, 1.0f, 1.0f, 1.0f);
+    PushRect(buf, n, cx - T, cy - L, cx + T, cy + L, fbw, fbh, 1.0f, 1.0f, 1.0f, 1.0f);
+    const GLsizei vertCount = (GLsizei)(n / 6);
+
+    GLint prevProg = 0, prevArr = 0, prevVao = 0, prevFb = 0, prevVp[4] = { 0,0,0,0 };
+    GLint bSrcRgb = 0, bDstRgb = 0, bSrcA = 0, bDstA = 0;
+    p_getIntegerv(GL_C_CURRENT_PROGRAM, &prevProg);
+    p_getIntegerv(GL_C_ARRAY_BUFFER_BINDING, &prevArr);
+    p_getIntegerv(GL_C_VERTEX_ARRAY_BINDING, &prevVao);
+    p_getIntegerv(GL_C_FRAMEBUFFER_BINDING, &prevFb);
+    p_getIntegerv(GL_C_VIEWPORT, prevVp);
+    p_getIntegerv(GL_C_BLEND_SRC_RGB, &bSrcRgb);
+    p_getIntegerv(GL_C_BLEND_DST_RGB, &bDstRgb);
+    p_getIntegerv(GL_C_BLEND_SRC_ALPHA, &bSrcA);
+    p_getIntegerv(GL_C_BLEND_DST_ALPHA, &bDstA);
+    const GLboolean wasBlend = p_isEnabled(GL_C_BLEND);
+    const GLboolean wasDepth = p_isEnabled(GL_C_DEPTH_TEST);
+    const GLboolean wasCull = p_isEnabled(GL_C_CULL_FACE);
+    const GLboolean wasScissor = p_isEnabled(GL_C_SCISSOR_TEST);
+
+    p_bindFb(GL_C_FRAMEBUFFER, 0);
+    p_viewport(0, 0, (GLsizei)fbw, (GLsizei)fbh);
+    if (!wasBlend) p_enable(GL_C_BLEND);
+    p_blendFunc(GL_C_SRC_ALPHA, GL_C_ONE_MINUS_SRC_ALPHA);
+    if (wasDepth) p_disable(GL_C_DEPTH_TEST);
+    if (wasCull) p_disable(GL_C_CULL_FACE);
+    if (wasScissor) p_disable(GL_C_SCISSOR_TEST);
+
+    p_useProg(g_prog);
+    p_bindVao(g_vao);
+    p_bindBuf(GL_C_ARRAY_BUFFER, g_vbo);
+    p_bufData(GL_C_ARRAY_BUFFER, (GLsizeiptr)(n * sizeof(GLfloat)), buf, GL_C_DYNAMIC_DRAW);
+    p_drawArrays(GL_C_TRIANGLES, 0, vertCount);
+
+    p_bindVao((GLuint)prevVao);
+    p_bindBuf(GL_C_ARRAY_BUFFER, (GLuint)prevArr);
+    p_useProg((GLuint)prevProg);
+    p_bindFb(GL_C_FRAMEBUFFER, (GLuint)prevFb);
+    p_viewport(prevVp[0], prevVp[1], (GLsizei)prevVp[2], (GLsizei)prevVp[3]);
+    p_blendFuncSep((GLenum)bSrcRgb, (GLenum)bDstRgb, (GLenum)bSrcA, (GLenum)bDstA);
+    if (!wasBlend) p_disable(GL_C_BLEND);
+    if (wasDepth) p_enable(GL_C_DEPTH_TEST);
+    if (wasCull) p_enable(GL_C_CULL_FACE);
+    if (wasScissor) p_enable(GL_C_SCISSOR_TEST);
+}
+
+} // namespace bandit_cursor
+
 extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
     if (g_swap_log_count < 12) {
         ++g_swap_log_count;
         ShimLog("glfwSwapBuffers #%d", g_swap_log_count);
     }
     if (!p_eglSwapBuffers || g_eglDisplay == EGL_NO_DISPLAY || g_eglSurface == EGL_NO_SURFACE) return;
+    if (MouseCompanionActive() && g_cursorMode == GLFW_CURSOR_NORMAL) {
+        bandit_cursor::Draw();
+    }
     if (!p_eglSwapBuffers(g_eglDisplay, g_eglSurface)) {
         ReportEglError("eglSwapBuffers");
     }

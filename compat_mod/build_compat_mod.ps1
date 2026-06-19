@@ -75,10 +75,9 @@ if ($controllerCompatVersions -notcontains $MinecraftVersion) {
     $disabledMixins += @("BanditControllerClientMixin", "BanditControllerGameRendererMixin", "BanditControllerHandledScreenMixin", "BanditControllerRecipeBookScreenMixin", "BanditControllerScreenMixin")
     $disabledSources += @("BanditControllerCompat", "BanditControllerSettings", "BanditControllerSettingsScreen")
 }
-if ($MinecraftVersion -ne $mixinAuthorVersion) {
-    $disabledMixins += @("BanditMouseCursorRecipeBookScreenMixin", "BanditMouseCursorScreenMixin")
-    $disabledSources += "BanditMouseCursorOverlay"
-}
+# cursor overlay now lives in the glfw shim, so the mod never draws it on any version
+$disabledMixins += @("BanditMouseCursorRecipeBookScreenMixin", "BanditMouseCursorScreenMixin")
+$disabledSources += "BanditMouseCursorOverlay"
 
 $sources = Get-ChildItem $srcJava -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName
 

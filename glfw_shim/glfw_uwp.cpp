@@ -407,6 +407,8 @@ static volatile LONGLONG g_coreWindowInputStateChangedMs = 0;
 static bool g_legacyControllerModModeLogged = false;
 static bool g_lastLegacyControllerModMode = false;
 static unsigned char g_key_state[512] = {};
+static unsigned char g_physical_key_state[512] = {};
+static unsigned char g_controller_key_state[512] = {};
 static GameInputGamepadState g_lastGameInputGamepadState = {};
 static GLFWgamepadstate g_gamepad_state = {};
 static float g_joystick_axes[6] = {};
@@ -433,7 +435,6 @@ using CoreWindowPointerHandler = ABI::Windows::Foundation::__FITypedEventHandler
 using MouseDeviceMovedHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CDevices__CInput__CMouseDevice_Windows__CDevices__CInput__CMouseEventArgs_t;
 static char g_clipboard_buf[65536] = {};
 static float g_content_scale = 1.f;
-static unsigned char g_controller_key_state[512] = {};
 static bool g_controller_lb_down = false;
 static unsigned char g_controller_mouse_state[8] = {};
 static bool g_controller_rb_down = false;
@@ -887,13 +888,21 @@ static int CurrentGlfwMods() {
     return mods;
 }
 
-static void UpdateKeyState(int key, int action) {
-    if (key < 0 || key >= (int)sizeof(g_key_state)) return;
-    g_key_state[key] = (action == GLFW_RELEASE) ? GLFW_RELEASE : GLFW_PRESS;
+static bool UpdatePhysicalKeyState(int key, int action) {
+    if (key < 0 || key >= (int)sizeof(g_key_state)) return false;
+    const unsigned char previous = g_key_state[key];
+    g_physical_key_state[key] = (action == GLFW_RELEASE) ? GLFW_RELEASE : GLFW_PRESS;
+    g_key_state[key] = (g_physical_key_state[key] || g_controller_key_state[key])
+        ? GLFW_PRESS
+        : GLFW_RELEASE;
+    return previous != g_key_state[key];
 }
 
 static void ClearKeyboardState() {
-    ZeroMemory(g_key_state, sizeof(g_key_state));
+    ZeroMemory(g_physical_key_state, sizeof(g_physical_key_state));
+    for (int key = 0; key < (int)sizeof(g_key_state); ++key) {
+        g_key_state[key] = g_controller_key_state[key] ? GLFW_PRESS : GLFW_RELEASE;
+    }
 }
 
 static void ClearGamepadState() {
@@ -945,14 +954,14 @@ static void DispatchKeyEvent(VirtualKey virtualKey, const CorePhysicalKeyStatus&
     glfwKey = DisambiguateLeftRightKey(virtualKey, status, glfwKey);
 
     const int glfwAction = (action == GLFW_PRESS && status.WasKeyDown) ? GLFW_REPEAT : action;
-    UpdateKeyState(glfwKey, glfwAction);
+    const bool effectiveStateChanged = UpdatePhysicalKeyState(glfwKey, glfwAction);
     const int mods = CurrentGlfwMods();
     if (g_key_log_count < 24) {
         ++g_key_log_count;
         ShimLog("Key event vk=%d glfw=%d action=%d scancode=%u mods=0x%X repeat=%u",
             (int)virtualKey, glfwKey, glfwAction, status.ScanCode, mods, status.RepeatCount);
     }
-    if (g_key_cb) {
+    if (g_key_cb && (effectiveStateChanged || glfwAction == GLFW_REPEAT)) {
         g_key_cb((GLFWwindow*)&g_fake_window, glfwKey, (int)status.ScanCode, glfwAction, mods);
     }
 }
@@ -2303,12 +2312,15 @@ static void SetControllerKeyState(int key, bool down) {
     const unsigned char state = down ? GLFW_PRESS : GLFW_RELEASE;
     if (g_controller_key_state[key] == state) return;
 
+    const unsigned char previous = g_key_state[key];
     g_controller_key_state[key] = state;
-    UpdateKeyState(key, state);
+    g_key_state[key] = (g_physical_key_state[key] || g_controller_key_state[key])
+        ? GLFW_PRESS
+        : GLFW_RELEASE;
 
-    if (g_key_cb) {
+    if (g_key_cb && previous != g_key_state[key]) {
         g_key_cb((GLFWwindow*)&g_fake_window, key, SyntheticScancodeForKey(key),
-            state, CurrentGlfwMods());
+            g_key_state[key], CurrentGlfwMods());
     }
 }
 static void ReleaseControllerKeys() {
@@ -2800,6 +2812,8 @@ extern "C" __declspec(dllexport) void glfwTerminate(void) {
     g_charReceivedHandler.Reset();
     g_keyboardHooksInstalled = false;
     ZeroMemory(g_key_state, sizeof(g_key_state));
+    ZeroMemory(g_physical_key_state, sizeof(g_physical_key_state));
+    ZeroMemory(g_controller_key_state, sizeof(g_controller_key_state));
     g_haveGameInputPollCache = false;
     g_lastGameInputPollMs = 0;
     if (p_eglMakeCurrent && g_eglDisplay != EGL_NO_DISPLAY) {

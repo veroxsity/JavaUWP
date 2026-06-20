@@ -245,7 +245,7 @@ public final class ForgeControllerCompat {
             crouchToggled = false;
             sneakHeld = button(GLFW.GLFW_GAMEPAD_BUTTON_B);
         }
-        setHeld(keys.sneak, sneakHeld);
+        sneakHeld = setHeld(keys.sneak, sneakHeld);
         setSneakInput(client.f_91074_, sneakHeld);
 
         setHeld(keys.attack, trigger(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER));
@@ -465,22 +465,36 @@ public final class ForgeControllerCompat {
         setHeld(keys.left, false);
         setHeld(keys.right, false);
         setHeld(keys.jump, false);
-        setHeld(keys.sneak, false);
-        setSneakInput(client.f_91074_, false);
+        boolean sneakHeld = setHeld(keys.sneak, false);
+        setSneakInput(client.f_91074_, sneakHeld);
         setHeld(keys.sprint, false);
         setHeld(keys.attack, false);
         setHeld(keys.use, false);
     }
 
-    private static void setHeld(KeyMapping key, boolean held) {
+    private static boolean setHeld(KeyMapping key, boolean held) {
         if (key == null) {
-            return;
+            return false;
         }
-        key.m_7249_(held);
         InputConstants.Key inputKey = key.getKey();
+        boolean effectiveHeld = held || isBoundInputHeld(inputKey);
+        key.m_7249_(effectiveHeld);
         if (inputKey != null) {
-            KeyMapping.m_90837_(inputKey, held);
+            KeyMapping.m_90837_(inputKey, effectiveHeld);
         }
+        return effectiveHeld;
+    }
+
+    private static boolean isBoundInputHeld(InputConstants.Key inputKey) {
+        Minecraft client = Minecraft.m_91087_();
+        if (inputKey == null || client == null || client.m_91268_() == null) {
+            return false;
+        }
+        long window = client.m_91268_().m_85439_();
+        int code = inputKey.m_84873_();
+        return GLFW.glfwGetKey(window, code) == GLFW.GLFW_PRESS
+            || (code >= 0 && code <= GLFW.GLFW_MOUSE_BUTTON_LAST
+                && GLFW.glfwGetMouseButton(window, code) == GLFW.GLFW_PRESS);
     }
 
     private static void setSneakInput(LocalPlayer player, boolean sneak) {

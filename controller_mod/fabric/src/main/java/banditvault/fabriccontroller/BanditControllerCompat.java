@@ -371,8 +371,21 @@ public final class BanditControllerCompat {
         if (key == null) {
             return;
         }
-        key.method_23481(held);
-        class_304.method_1416(key.method_1429(), held);
+        boolean effectiveHeld = held || isBoundInputHeld(key);
+        key.method_23481(effectiveHeld);
+        class_304.method_1416(key.method_1429(), effectiveHeld);
+    }
+
+    private static boolean isBoundInputHeld(class_304 key) {
+        class_310 client = class_310.method_1551();
+        if (client == null || client.method_22683() == null) {
+            return false;
+        }
+        long window = client.method_22683().method_4490();
+        int code = key.method_1429().method_1444();
+        return GLFW.glfwGetKey(window, code) == GLFW.GLFW_PRESS
+            || (code >= 0 && code <= GLFW.GLFW_MOUSE_BUTTON_LAST
+                && GLFW.glfwGetMouseButton(window, code) == GLFW.GLFW_PRESS);
     }
 
     private static void pressKey(class_304 key) {

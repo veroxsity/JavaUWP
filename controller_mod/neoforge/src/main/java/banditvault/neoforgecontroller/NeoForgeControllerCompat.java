@@ -91,7 +91,7 @@ public final class NeoForgeControllerCompat {
                 NeoForgeControllerLog.log("No GLFW gamepad detected on joystick 1 (tick=" + tickCount + ")");
             }
             if (active) {
-                releaseGameplayKeys(client);
+                releaseGameplayKeys(client, client.screen == null);
                 crouchToggled = false;
                 sprintToggled = false;
                 active = false;
@@ -108,7 +108,7 @@ public final class NeoForgeControllerCompat {
 
         if (client.screen != null) {
             lastLookNanos = 0L;
-            releaseGameplayKeys(client);
+            releaseGameplayKeys(client, false);
             tickScreen(client, client.screen);
         } else {
             tickGameplay(client);
@@ -563,30 +563,37 @@ public final class NeoForgeControllerCompat {
             && System.nanoTime() - renderFrameActiveNanos < 100_000_000L;
     }
 
-    private static void releaseGameplayKeys(Minecraft client) {
+    private static void releaseGameplayKeys(Minecraft client, boolean preservePhysicalInput) {
         Options options = client.options;
         if (options == null) {
             return;
         }
         NeoForgeControllerKeys keys = new NeoForgeControllerKeys(options);
-        setHeld(keys.forward, false);
-        setHeld(keys.back, false);
-        setHeld(keys.left, false);
-        setHeld(keys.right, false);
-        setHeld(keys.jump, false);
-        boolean sneakHeld = setHeld(keys.sneak, false);
+        setHeld(keys.forward, false, preservePhysicalInput);
+        setHeld(keys.back, false, preservePhysicalInput);
+        setHeld(keys.left, false, preservePhysicalInput);
+        setHeld(keys.right, false, preservePhysicalInput);
+        setHeld(keys.jump, false, preservePhysicalInput);
+        boolean sneakHeld = setHeld(keys.sneak, false, preservePhysicalInput);
         setSneakInput(client.player, sneakHeld);
-        setHeld(keys.sprint, false);
-        setHeld(keys.attack, false);
-        setHeld(keys.use, false);
+        setHeld(keys.sprint, false, preservePhysicalInput);
+        setHeld(keys.attack, false, preservePhysicalInput);
+        setHeld(keys.use, false, preservePhysicalInput);
     }
 
     private static boolean setHeld(KeyMapping key, boolean held) {
+        return setHeld(key, held, true);
+    }
+
+    private static boolean setHeld(KeyMapping key, boolean held, boolean preservePhysicalInput) {
         if (key == null) {
             return false;
         }
         InputConstants.Key inputKey = key.getKey();
-        boolean effectiveHeld = held || isBoundInputHeld(inputKey);
+        boolean effectiveHeld = ControllerRuntime.shouldHoldKey(
+            held,
+            preservePhysicalInput && isBoundInputHeld(inputKey),
+            preservePhysicalInput);
         key.setDown(effectiveHeld);
         if (inputKey != null) {
             KeyMapping.set(inputKey, effectiveHeld);

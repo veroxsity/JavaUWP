@@ -139,6 +139,10 @@ public final class ControllerRuntime {
         return Math.copySign((abs - deadzone) / (1.0f - deadzone), value);
     }
 
+    public static boolean shouldHoldKey(boolean controllerHeld, boolean physicalHeld, boolean preservePhysicalInput) {
+        return controllerHeld || (preservePhysicalInput && physicalHeld);
+    }
+
     public static double clamp(double value, double min, double max) {
         if (value < min) {
             return min;

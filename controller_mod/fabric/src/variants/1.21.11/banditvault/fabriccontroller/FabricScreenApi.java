@@ -11,7 +11,6 @@ final class FabricScreenApi {
     }
 
     static void renderBackground(class_437 screen, class_332 context, int mouseX, int mouseY, float delta) {
-        screen.method_25420(context, mouseX, mouseY, delta);
     }
 
     static void drawCursor(class_332 context, int x, int y) {

@@ -3,7 +3,6 @@ package banditvault.controllercore;
 import java.util.List;
 
 public final class GridNavigation {
-    // ponytail: vanilla slot grids align within four pixels; add per-screen graphs if custom menus exceed that.
     private static final int ALIGN_TOLERANCE = 4;
 
     public enum Direction {

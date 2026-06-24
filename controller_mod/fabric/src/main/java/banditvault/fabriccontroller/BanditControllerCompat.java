@@ -56,7 +56,7 @@ public final class BanditControllerCompat {
 
         if (!poll()) {
             if (active) {
-                releaseGameplayKeys(client);
+                releaseGameplayKeys(client, client.field_1755 == null);
                 crouchToggled = false;
                 sprintToggled = false;
                 followingCompanion = false;
@@ -73,7 +73,7 @@ public final class BanditControllerCompat {
 
         if (client.field_1755 != null) {
             lastLookNanos = 0L;
-            releaseGameplayKeys(client);
+            releaseGameplayKeys(client, false);
             tickScreen(client, client.field_1755);
         } else {
             followingCompanion = false;
@@ -354,24 +354,31 @@ public final class BanditControllerCompat {
         }
     }
 
-    private static void releaseGameplayKeys(class_310 client) {
+    private static void releaseGameplayKeys(class_310 client, boolean preservePhysicalInput) {
         class_315 options = client.field_1690;
-        setHeld(options.field_1894, false);
-        setHeld(options.field_1881, false);
-        setHeld(options.field_1913, false);
-        setHeld(options.field_1849, false);
-        setHeld(options.field_1903, false);
-        setHeld(options.field_1832, false);
-        setHeld(options.field_1867, false);
-        setHeld(options.field_1886, false);
-        setHeld(options.field_1904, false);
+        setHeld(options.field_1894, false, preservePhysicalInput);
+        setHeld(options.field_1881, false, preservePhysicalInput);
+        setHeld(options.field_1913, false, preservePhysicalInput);
+        setHeld(options.field_1849, false, preservePhysicalInput);
+        setHeld(options.field_1903, false, preservePhysicalInput);
+        setHeld(options.field_1832, false, preservePhysicalInput);
+        setHeld(options.field_1867, false, preservePhysicalInput);
+        setHeld(options.field_1886, false, preservePhysicalInput);
+        setHeld(options.field_1904, false, preservePhysicalInput);
     }
 
     private static void setHeld(class_304 key, boolean held) {
+        setHeld(key, held, true);
+    }
+
+    private static void setHeld(class_304 key, boolean held, boolean preservePhysicalInput) {
         if (key == null) {
             return;
         }
-        boolean effectiveHeld = held || isBoundInputHeld(key);
+        boolean effectiveHeld = ControllerRuntime.shouldHoldKey(
+            held,
+            preservePhysicalInput && isBoundInputHeld(key),
+            preservePhysicalInput);
         key.method_23481(effectiveHeld);
         class_304.method_1416(key.method_1429(), effectiveHeld);
     }

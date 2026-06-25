@@ -104,7 +104,7 @@ public final class ForgeControllerSettingsScreen extends Screen {
         }
 
         int doneWidth = Math.min(210, panelWidth);
-        int doneY = Math.max(y + row, this.f_96544_ - 26);
+        int doneY = Math.max(4, this.f_96544_ - 26);
         addButton(ForgeControllerCompat.createButton(this.f_96543_ / 2 - doneWidth / 2, doneY, doneWidth, 20, "Done", button -> close()));
     }
 

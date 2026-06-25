@@ -45,56 +45,97 @@ public final class BanditControllerSettingsScreen extends class_437 {
     private void rebuildButtons() {
         clearWidgets();
         BanditControllerSettings settings = BanditControllerSettings.get();
-        int x = this.field_22789 / 2 - 105;
-        int y = 42;
-        addButton(newButton(x, y, 210, 20, crouchLabel(settings), button -> {
-            settings.toggleCrouch = !settings.toggleCrouch;
-            BanditControllerSettings.save();
-            rebuildButtons();
-        }));
-        y += 24;
-        addButton(newButton(x, y, 210, 20, sprintLabel(settings), button -> {
-            settings.toggleSprint = !settings.toggleSprint;
-            BanditControllerSettings.save();
-            rebuildButtons();
-        }));
-        y += 24;
-        addButton(newButton(x, y, 210, 20, invertLabel(settings), button -> {
-            settings.invertY = !settings.invertY;
-            BanditControllerSettings.save();
-            rebuildButtons();
-        }));
-        y += 28;
-        addStepper(x, y, "Look speed", Math.round(settings.lookSpeed), -15.0, 15.0, 30.0, 300.0, value -> settings.lookSpeed = (float)value);
-        y += 24;
-        addStepper(x, y, "Cursor speed", settings.cursorSpeed, -1.0, 1.0, 4.0, 40.0, value -> settings.cursorSpeed = value);
-        y += 24;
-        addStepper(x, y, "Scroll speed", settings.scrollAmount, -0.25, 0.25, 0.25, 4.0, value -> settings.scrollAmount = value);
-        y += 24;
-        addStepper(x, y, "Move deadzone", settings.moveDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.moveDeadzone = (float)value);
-        y += 24;
-        addStepper(x, y, "Look deadzone", settings.lookDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.lookDeadzone = (float)value);
-        y += 24;
-        addStepper(x, y, "Cursor deadzone", settings.cursorDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.cursorDeadzone = (float)value);
-        y += 30;
-        addButton(newButton(x, y, 210, 20, "Done", button -> close()));
+        int panelWidth = Math.min(426, Math.max(250, this.field_22789 - 24));
+        int x = this.field_22789 / 2 - panelWidth / 2;
+        int y = this.field_22790 < 260 ? 32 : 42;
+        int row = this.field_22790 < 260 ? 21 : 24;
+
+        if (panelWidth >= 390) {
+            int leftWidth = 158;
+            int gap = 12;
+            int rightX = x + leftWidth + gap;
+            int rightWidth = panelWidth - leftWidth - gap;
+            int leftY = y;
+            int rightY = y;
+
+            addToggle(x, leftY, leftWidth, crouchLabel(settings), () -> settings.toggleCrouch = !settings.toggleCrouch);
+            leftY += row;
+            addToggle(x, leftY, leftWidth, sprintLabel(settings), () -> settings.toggleSprint = !settings.toggleSprint);
+            leftY += row;
+            addToggle(x, leftY, leftWidth, invertLabel(settings), () -> settings.invertY = !settings.invertY);
+            leftY += row + 4;
+            addButton(newButton(x, leftY, leftWidth, 20, "Reset defaults", button -> reset(settings)));
+
+            addStepper(rightX, rightY, rightWidth, "Look", Math.round(settings.lookSpeed), -15.0, 15.0, 30.0, 300.0, value -> settings.lookSpeed = (float)value);
+            rightY += row;
+            addStepper(rightX, rightY, rightWidth, "Cursor", settings.cursorSpeed, -1.0, 1.0, 4.0, 40.0, value -> settings.cursorSpeed = value);
+            rightY += row;
+            addStepper(rightX, rightY, rightWidth, "Scroll", settings.scrollAmount, -0.25, 0.25, 0.25, 4.0, value -> settings.scrollAmount = value);
+            rightY += row;
+            addStepper(rightX, rightY, rightWidth, "Move dz", settings.moveDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.moveDeadzone = (float)value);
+            rightY += row;
+            addStepper(rightX, rightY, rightWidth, "Look dz", settings.lookDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.lookDeadzone = (float)value);
+            rightY += row;
+            addStepper(rightX, rightY, rightWidth, "Cursor dz", settings.cursorDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.cursorDeadzone = (float)value);
+            rightY += row;
+            addStepper(rightX, rightY, rightWidth, "Trigger dz", settings.triggerDeadzone, -0.05, 0.05, 0.0, 0.95, value -> settings.triggerDeadzone = (float)value);
+        } else {
+            addToggle(x, y, panelWidth, crouchLabel(settings), () -> settings.toggleCrouch = !settings.toggleCrouch);
+            y += row;
+            addToggle(x, y, panelWidth, sprintLabel(settings), () -> settings.toggleSprint = !settings.toggleSprint);
+            y += row;
+            addToggle(x, y, panelWidth, invertLabel(settings), () -> settings.invertY = !settings.invertY);
+            y += row + 4;
+            addStepper(x, y, panelWidth, "Look", Math.round(settings.lookSpeed), -15.0, 15.0, 30.0, 300.0, value -> settings.lookSpeed = (float)value);
+            y += row;
+            addStepper(x, y, panelWidth, "Cursor", settings.cursorSpeed, -1.0, 1.0, 4.0, 40.0, value -> settings.cursorSpeed = value);
+            y += row;
+            addStepper(x, y, panelWidth, "Move dz", settings.moveDeadzone, -0.05, 0.05, 0.0, 0.75, value -> settings.moveDeadzone = (float)value);
+            y += row;
+            addButton(newButton(x, y, panelWidth, 20, "Reset defaults", button -> reset(settings)));
+        }
+
+        int doneWidth = Math.min(210, panelWidth);
+        int doneY = Math.max(4, this.field_22790 - 26);
+        addButton(newButton(this.field_22789 / 2 - doneWidth / 2, doneY, doneWidth, 20, "Done", button -> close()));
     }
 
-    private void addStepper(int x, int y, String label, double value, double down, double up, double min, double max, Setter setter) {
-        addButton(newButton(x, y, 42, 20, "-", button -> adjust(value, down, min, max, setter)));
-        addButton(newButton(x + 46, y, 118, 20, label + ": " + format(value), button -> { }));
-        addButton(newButton(x + 168, y, 42, 20, "+", button -> adjust(value, up, min, max, setter)));
+    private void addToggle(int x, int y, int width, String label, Runnable action) {
+        addButton(newButton(x, y, width, 20, label, button -> {
+            action.run();
+            saveAndRebuild();
+        }));
+    }
+
+    private void addStepper(int x, int y, int width, String label, double value, double down, double up, double min, double max, Setter setter) {
+        int buttonWidth = 36;
+        int gap = 6;
+        int labelWidth = Math.max(82, width - buttonWidth * 2 - gap * 2);
+        addButton(newButton(x, y, buttonWidth, 20, "-", button -> adjust(value, down, min, max, setter)));
+        addButton(newButton(x + buttonWidth + gap, y, labelWidth, 20, label + ": " + format(value), button -> { }));
+        addButton(newButton(x + buttonWidth + gap + labelWidth + gap, y, buttonWidth, 20, "+", button -> adjust(value, up, min, max, setter)));
     }
 
     private void adjust(double value, double delta, double min, double max, Setter setter) {
-        double next = value + delta;
-        if (next < min) {
-            next = min;
-        }
-        if (next > max) {
-            next = max;
-        }
-        setter.set(next);
+        setter.set(Math.max(min, Math.min(max, value + delta)));
+        saveAndRebuild();
+    }
+
+    private void reset(BanditControllerSettings settings) {
+        settings.toggleCrouch = false;
+        settings.toggleSprint = false;
+        settings.invertY = false;
+        settings.lookSpeed = 135.0f;
+        settings.cursorSpeed = 14.0;
+        settings.scrollAmount = 1.0;
+        settings.moveDeadzone = 0.35f;
+        settings.lookDeadzone = 0.12f;
+        settings.cursorDeadzone = 0.12f;
+        settings.triggerDeadzone = 0.25f;
+        saveAndRebuild();
+    }
+
+    private void saveAndRebuild() {
         BanditControllerSettings.save();
         rebuildButtons();
     }

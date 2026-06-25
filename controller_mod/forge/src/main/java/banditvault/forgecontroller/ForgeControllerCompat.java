@@ -4,6 +4,8 @@ import banditvault.controllercore.ControllerAxis;
 import banditvault.controllercore.ControllerButton;
 import banditvault.controllercore.ControllerRuntime;
 import banditvault.controllercore.ControllerState;
+import banditvault.controllercore.GridNavigation;
+import banditvault.forgecontroller.mixin.ForgeControllerContainerAccessor;
 import com.mojang.blaze3d.platform.InputConstants;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -31,6 +33,7 @@ public final class ForgeControllerCompat {
     private static final GLFWGamepadState GLFW_STATE = GLFWGamepadState.create();
     private static final ControllerState CONTROLLER_STATE = new ControllerState();
     private static final ReflectionCache REFLECTION = new ReflectionCache();
+    private static final ForgeMenuNavigation MENU_NAVIGATION = new ForgeMenuNavigation();
 
     private static boolean active;
     private static boolean loggedReady;
@@ -54,6 +57,16 @@ public final class ForgeControllerCompat {
     private static double lastRelayCursorX = Double.NaN;
     private static double lastRelayCursorY = Double.NaN;
     private static boolean relayOwnsCursor;
+    private static double renderedCursorX = -1.0;
+    private static double renderedCursorY = -1.0;
+    private static long lastRenderedCursorNanos;
+    private static boolean snapStickLatched;
+    private static CursorMode cursorMode = CursorMode.SNAP;
+
+    private enum CursorMode {
+        SNAP,
+        FREE
+    }
 
     private ForgeControllerCompat() {
     }
@@ -141,11 +154,11 @@ public final class ForgeControllerCompat {
         if (!active || screen == null || graphics == null) {
             return;
         }
-        if (relayOwnsCursor || cursorX < 0.0 || cursorY < 0.0) {
+        if (relayOwnsCursor || renderedCursorX < 0.0 || renderedCursorY < 0.0) {
             return;
         }
-        int x = (int) Math.round(cursorX);
-        int y = (int) Math.round(cursorY);
+        int x = (int) Math.round(renderedCursorX);
+        int y = (int) Math.round(renderedCursorY);
         graphics.m_280168_().m_85836_();
         graphics.m_280168_().m_85837_(0.0, 0.0, 1000.0);
         graphics.m_280509_(x - 3, y - 3, x + 4, y + 4, 0x66000000);
@@ -166,8 +179,17 @@ public final class ForgeControllerCompat {
         observeRelayCursor(screen);
         if (relayOwnsCursor) {
             invokeScreenMouseMoved(screen, lastRelayCursorX, lastRelayCursorY);
+            lastRenderedCursorNanos = System.nanoTime();
+            return;
         }
-        updateScreenCursor(Minecraft.m_91087_(), screen, true);
+        if (cursorMode == CursorMode.FREE) {
+            updateScreenCursor(Minecraft.m_91087_(), screen, true);
+            renderedCursorX = cursorX;
+            renderedCursorY = cursorY;
+        } else {
+            advanceRenderedCursor();
+            invokeScreenMouseMoved(screen, cursorX, cursorY);
+        }
     }
 
     public static int screenMouseX(int fallback) {
@@ -301,34 +323,73 @@ public final class ForgeControllerCompat {
         ensureScreenCursor(screen);
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
 
+        if (cursorMode == CursorMode.SNAP && !relayOwnsCursor) {
+            applySnapTarget(screen, MENU_NAVIGATION.synchronize(screen, cursorX, cursorY));
+        }
+
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
-            if (screen instanceof ForgeControllerSettingsScreen) {
-                ((ForgeControllerSettingsScreen) screen).close();
+            takeControllerCursor();
+            cursorMode = cursorMode == CursorMode.SNAP ? CursorMode.FREE : CursorMode.SNAP;
+            snapStickLatched = false;
+            MENU_NAVIGATION.reset(screen);
+            if (cursorMode == CursorMode.SNAP) {
+                applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
             } else {
-                client.m_91152_(new ForgeControllerSettingsScreen(screen));
+                ForgeMenuNavigation.clearFocus(screen);
+                renderedCursorX = cursorX;
+                renderedCursorY = cursorY;
             }
+            ForgeControllerLog.log("Menu cursor mode changed to " + cursorMode + " screen=" + screen.getClass().getName());
             return;
         }
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
-            invokeScreenMousePressed(screen, cursorX, cursorY, LEFT_CLICK);
+        if (cursorMode == CursorMode.SNAP) {
+            GridNavigation.Direction direction = snapDirection();
+            if (direction != null) {
+                takeControllerCursor();
+                applySnapTarget(screen, MENU_NAVIGATION.move(screen, direction, cursorX, cursorY));
+            }
+        } else {
+            snapStickLatched = false;
         }
-        if (released(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
+
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
+            takeControllerCursor();
+            if (cursorMode == CursorMode.SNAP && MENU_NAVIGATION.usesNativeActivation(screen)) {
+                invokeScreenKeyPressed(screen, GLFW.GLFW_KEY_ENTER, 0, 0);
+            } else {
+                invokeScreenMousePressed(screen, cursorX, cursorY, LEFT_CLICK);
+            }
+        }
+        if (released(GLFW.GLFW_GAMEPAD_BUTTON_A) &&
+            (cursorMode == CursorMode.FREE || !MENU_NAVIGATION.usesNativeActivation(screen))) {
             invokeScreenMouseReleased(screen, cursorX, cursorY, LEFT_CLICK);
         }
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+            takeControllerCursor();
             invokeScreenMousePressed(screen, cursorX, cursorY, RIGHT_CLICK);
         }
         if (released(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
             invokeScreenMouseReleased(screen, cursorX, cursorY, RIGHT_CLICK);
         }
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_B)) {
-            if (!invokeScreenKeyPressed(screen, GLFW.GLFW_KEY_ESCAPE, 0, 0)) {
-                client.m_91152_(null);
+            takeControllerCursor();
+            if (MENU_NAVIGATION.handleBack(screen)) {
+                if (cursorMode == CursorMode.SNAP) {
+                    applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
+                }
+            } else {
+                invokeScreenKeyPressed(screen, GLFW.GLFW_KEY_ESCAPE, 0, 0);
             }
+            return;
         }
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y)) {
+            takeControllerCursor();
             quickMoveFocusedSlot(screen);
+        }
+
+        if (client.f_91080_ != screen) {
+            return;
         }
 
         if (scrollCooldown > 0) {
@@ -336,9 +397,9 @@ public final class ForgeControllerCompat {
         }
         if (scrollCooldown == 0) {
             double scroll = 0.0;
-            if (ry < -0.35f || button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP)) {
+            if (ry < -0.35f || (cursorMode == CursorMode.FREE && button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP))) {
                 scroll = settings.scrollAmount;
-            } else if (ry > 0.35f || button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) {
+            } else if (ry > 0.35f || (cursorMode == CursorMode.FREE && button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN))) {
                 scroll = -settings.scrollAmount;
             }
             if (scroll != 0.0) {
@@ -352,14 +413,74 @@ public final class ForgeControllerCompat {
         if (screen != lastCursorScreen) {
             lastCursorScreen = screen;
             lastScreenCursorNanos = 0L;
+            lastRenderedCursorNanos = 0L;
             cursorX = Math.max(1, screen.f_96543_ / 2);
             cursorY = Math.max(1, screen.f_96544_ / 2);
+            renderedCursorX = cursorX;
+            renderedCursorY = cursorY;
+            snapStickLatched = false;
+            MENU_NAVIGATION.reset(screen);
+            if (cursorMode == CursorMode.SNAP) {
+                applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
+            }
             return;
         }
         if (cursorX < 0.0 || cursorY < 0.0) {
             cursorX = Math.max(1, screen.f_96543_ / 2);
             cursorY = Math.max(1, screen.f_96544_ / 2);
+            renderedCursorX = cursorX;
+            renderedCursorY = cursorY;
         }
+    }
+
+    private static GridNavigation.Direction snapDirection() {
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP)) return GridNavigation.Direction.UP;
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) return GridNavigation.Direction.DOWN;
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_LEFT)) return GridNavigation.Direction.LEFT;
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)) return GridNavigation.Direction.RIGHT;
+
+        float x = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
+        float y = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
+        if (Math.max(Math.abs(x), Math.abs(y)) < 0.35f) {
+            snapStickLatched = false;
+            return null;
+        }
+        if (snapStickLatched || Math.max(Math.abs(x), Math.abs(y)) < 0.65f) {
+            return null;
+        }
+        snapStickLatched = true;
+        if (Math.abs(x) > Math.abs(y)) {
+            return x < 0.0f ? GridNavigation.Direction.LEFT : GridNavigation.Direction.RIGHT;
+        }
+        return y < 0.0f ? GridNavigation.Direction.UP : GridNavigation.Direction.DOWN;
+    }
+
+    private static void applySnapTarget(Screen screen, ForgeMenuNavigation.Position position) {
+        if (screen == null || position == null) {
+            return;
+        }
+        cursorX = clamp(position.x, 0.0, Math.max(1, screen.f_96543_ - 1));
+        cursorY = clamp(position.y, 0.0, Math.max(1, screen.f_96544_ - 1));
+        invokeScreenMouseMoved(screen, cursorX, cursorY);
+    }
+
+    private static void advanceRenderedCursor() {
+        long now = System.nanoTime();
+        double seconds = 1.0 / 60.0;
+        if (lastRenderedCursorNanos != 0L) {
+            seconds = clamp((now - lastRenderedCursorNanos) / 1000000000.0, 0.0, 1.0 / 20.0);
+        }
+        lastRenderedCursorNanos = now;
+        double blend = 1.0 - Math.exp(-18.0 * seconds);
+        renderedCursorX += (cursorX - renderedCursorX) * blend;
+        renderedCursorY += (cursorY - renderedCursorY) * blend;
+        if (Math.abs(renderedCursorX - cursorX) < 0.05) renderedCursorX = cursorX;
+        if (Math.abs(renderedCursorY - cursorY) < 0.05) renderedCursorY = cursorY;
+    }
+
+    private static void takeControllerCursor() {
+        relayOwnsCursor = false;
+        resetRelayCursorBaseline();
     }
 
     private static void updateScreenCursor(Minecraft client, Screen screen, boolean frameTimed) {
@@ -376,7 +497,7 @@ public final class ForgeControllerCompat {
                 lastScreenCursorNanos = System.nanoTime();
                 return;
             }
-            relayOwnsCursor = false;
+            takeControllerCursor();
         }
         double dx = shapedCursorAxis(rawX, settings.cursorDeadzone);
         double dy = shapedCursorAxis(rawY, settings.cursorDeadzone);
@@ -424,10 +545,19 @@ public final class ForgeControllerCompat {
 
         if (Math.abs(mouseX - lastRelayCursorX) > RELAY_CURSOR_MOVE_EPSILON ||
             Math.abs(mouseY - lastRelayCursorY) > RELAY_CURSOR_MOVE_EPSILON) {
+            if (!relayOwnsCursor) {
+                ForgeMenuNavigation.clearFocus(screen);
+            }
             relayOwnsCursor = true;
         }
         lastRelayCursorX = mouseX;
         lastRelayCursorY = mouseY;
+    }
+
+    private static void resetRelayCursorBaseline() {
+        lastRelayCursorScreen = null;
+        lastRelayCursorX = Double.NaN;
+        lastRelayCursorY = Double.NaN;
     }
 
     private static void applyLook(LocalPlayer player, float rx, float ry, float seconds, ForgeControllerSettings settings) {
@@ -548,15 +678,15 @@ public final class ForgeControllerCompat {
         if (!(screen instanceof AbstractContainerScreen)) {
             return;
         }
-        if (REFLECTION.hoveredSlotField == null || REFLECTION.slotClickedMethod == null) {
-            return;
-        }
         try {
-            Slot slot = (Slot) REFLECTION.hoveredSlotField.get(screen);
+            AbstractContainerScreen<?> container = (AbstractContainerScreen<?>) screen;
+            Slot slot = cursorMode == CursorMode.SNAP
+                ? MENU_NAVIGATION.selectedSlot(screen)
+                : (Slot) REFLECTION.hoveredSlotField.get(screen);
             if (slot == null || !slot.m_6657_()) {
                 return;
             }
-            REFLECTION.slotClickedMethod.invoke(screen, slot, slot.f_40219_, 0, ClickType.QUICK_MOVE);
+            ((ForgeControllerContainerAccessor) container).banditvault$slotClicked(slot, slot.f_40219_, 0, ClickType.QUICK_MOVE);
         } catch (Throwable t) {
             if (!loggedScreenReflectionFailure) {
                 loggedScreenReflectionFailure = true;
@@ -802,5 +932,9 @@ public final class ForgeControllerCompat {
         Button.Builder builder = Button.m_253074_(textLiteral(label), onPress);
         builder.m_252987_(x, y, w, h);
         return builder.m_253136_();
+    }
+
+    public static Screen createSettingsScreen(Screen parent) {
+        return new ForgeControllerSettingsScreen(parent);
     }
 }

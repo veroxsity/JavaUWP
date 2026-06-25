@@ -4,9 +4,14 @@
   "package": "banditvault.forgecontroller.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
+    "ForgeControllerContainerAccessor",
+    "ForgeControllerControlsScreenMixin",
     "ForgeControllerGameRendererMixin",
     "ForgeControllerHandledScreenMixin",
     "ForgeControllerInventoryScreenMixin",
+    "ForgeControllerRecipeBookAccessor",
+    "ForgeControllerRecipeBookPageAccessor",
+    "ForgeControllerRecipeOverlayAccessor",
     "ForgeControllerScreenMixin",
     "ForgeControllerTitleScreenMixin"
   ],

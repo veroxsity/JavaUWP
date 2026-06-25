@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "banditvault.fabriccontroller.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "BanditControllerClientMixin",
+    "BanditControllerContainerAccessor",
+    "BanditControllerControlsScreenMixin",
+    "BanditControllerGameRendererMixin",
+    "BanditControllerHandledScreenMixin",
+    "BanditControllerOptionsSubScreenAccessor",
+    "BanditControllerRecipeBookAccessor",
+    "BanditControllerRecipeBookPageAccessor",
+    "BanditControllerRecipeOverlayAccessor",
+    "BanditControllerScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -15,7 +15,6 @@ import net.minecraft.class_1041;
 import net.minecraft.class_1713;
 import net.minecraft.class_1735;
 import net.minecraft.class_2561;
-import net.minecraft.class_4069;
 import net.minecraft.class_437;
 import net.minecraft.class_4185;
 import net.minecraft.class_746;
@@ -505,7 +504,7 @@ public final class BanditControllerCompat {
         if (Math.abs(mouseX - lastRelayCursorX) > RELAY_CURSOR_MOVE_EPSILON ||
             Math.abs(mouseY - lastRelayCursorY) > RELAY_CURSOR_MOVE_EPSILON) {
             if (!relayOwnsCursor) {
-                ((class_4069) screen).method_25395(null);
+                screen.method_48267();
             }
             relayOwnsCursor = true;
         }

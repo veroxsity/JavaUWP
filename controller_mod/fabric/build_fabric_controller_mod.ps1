@@ -71,7 +71,7 @@ if (Test-Path $controllerCoreJava) {
 $variantLayers = @{
     "1.20.1" = @("1.20.1")
     "1.20.4" = @("1.20.4", "1.20.1")
-    "1.21.1" = @("1.21", "1.20.4", "1.20.1")
+    "1.21.1" = @("1.21.1", "1.21", "1.20.4", "1.20.1")
     "1.21.4" = @("1.21.4", "1.21", "1.20.4", "1.20.1")
     "1.21.11" = @("1.21.11", "1.21.4", "1.21", "1.20.4", "1.20.1")
 }
@@ -83,7 +83,7 @@ $overlayNames = @(
     "BanditControllerScreenMixin.java",
     "BanditControllerRecipeBookScreenMixin.java"
 )
-if ($MinecraftVersion -eq "1.21.11") {
+if (Test-Path (Join-Path $PSScriptRoot ("src\variants\$MinecraftVersion\banditvault\fabriccontroller\mixin\BanditControllerHandledScreenMixin.java"))) {
     $overlayNames += "BanditControllerHandledScreenMixin.java"
 }
 if ($variantLayers.ContainsKey($MinecraftVersion)) {
@@ -108,8 +108,8 @@ if ($variantLayers.ContainsKey($MinecraftVersion)) {
         $sources += $variantPath
     }
 }
-if ($MinecraftVersion -eq "1.21.11") {
-    $variantRoot = Join-Path $PSScriptRoot "src\variants\1.21.11"
+if (Test-Path (Join-Path $PSScriptRoot ("src\variants\$MinecraftVersion"))) {
+    $variantRoot = Join-Path $PSScriptRoot "src\variants\$MinecraftVersion"
     $sources += @(Get-ChildItem $variantRoot -Recurse -Filter "*.java" |
         Select-Object -ExpandProperty FullName |
         Where-Object { $sources -notcontains $_ })
@@ -136,11 +136,9 @@ $javacArgs = @(
 if ($LASTEXITCODE -ne 0) { throw "Fabric controller mod compile failed" }
 
 Copy-Item -Recurse "$srcResources\*" $classesDir -Force
-if ($MinecraftVersion -eq "1.21.11") {
-    $variantResources = Join-Path $PSScriptRoot "src\variants\1.21.11\resources"
-    if (Test-Path $variantResources) {
-        Copy-Item -Recurse "$variantResources\*" $classesDir -Force
-    }
+$variantResources = Join-Path $PSScriptRoot "src\variants\$MinecraftVersion\resources"
+if (Test-Path $variantResources) {
+    Copy-Item -Recurse "$variantResources\*" $classesDir -Force
 }
 $fmj = Join-Path $classesDir "fabric.mod.json"
 (Get-Content $fmj -Raw).

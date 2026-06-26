@@ -9,6 +9,7 @@
     "BanditControllerControlsScreenMixin",
     "BanditControllerGameRendererMixin",
     "BanditControllerHandledScreenMixin",
+    "BanditControllerInventoryScreenMixin",
     "BanditControllerOptionsSubScreenAccessor",
     "BanditControllerRecipeBookAccessor",
     "BanditControllerRecipeBookPageAccessor",

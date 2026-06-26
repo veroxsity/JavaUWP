@@ -25,6 +25,7 @@ static constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 using SocketHandle = int;
@@ -40,7 +41,7 @@ constexpr float kTargetHeight = 1080.0f;
 constexpr double kSendIntervalSeconds = 1.0 / 240.0;
 constexpr double kHeldButtonRefreshSeconds = 1.0 / 20.0;
 constexpr double kConnectProbeSeconds = 0.25;
-constexpr double kConnectTimeoutSeconds = 3.0;
+constexpr double kConnectTimeoutSeconds = 10.0;
 constexpr double kRenderIntervalSeconds = 1.0 / 60.0;
 constexpr double kTouchScrollRepeatSeconds = 1.0 / 12.0;
 constexpr float kMenuCoordinateScale = 0.5f;
@@ -66,6 +67,7 @@ enum class UiAction {
     ChangeIp,
     ToggleMode,
     ReleaseButtons,
+    Resume,
     Quit,
 };
 
@@ -340,6 +342,12 @@ public:
         inputSock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (inputSock_ == kInvalidSocket) {
             error = "Could not create input UDP socket";
+            Close();
+            return false;
+        }
+        if (!SetNonblocking(inputSock_)) {
+            error = "Could not make input socket nonblocking";
+            Close();
             return false;
         }
 
@@ -383,17 +391,40 @@ public:
     }
 
     void Close() {
+        CloseSocket(tcpSock_);
         CloseSocket(inputSock_);
         CloseSocket(statusSock_);
+        tcpSock_ = kInvalidSocket;
         inputSock_ = kInvalidSocket;
         statusSock_ = kInvalidSocket;
+        tcpBuffer_.clear();
     }
 
     bool IsOpen() const {
         return inputSock_ != kInvalidSocket && statusSock_ != kInvalidSocket;
     }
 
+    bool HasTcpFallback() const {
+        return tcpSock_ != kInvalidSocket;
+    }
+
+    void TryTcpFallback() {
+        if (tcpSock_ == kInvalidSocket) {
+            TryOpenTcp();
+        }
+    }
+
     bool Send(const std::string& packet) {
+        if (tcpSock_ != kInvalidSocket) {
+            const std::string line = packet + "\n";
+            const int sent = send(tcpSock_, line.data(), static_cast<int>(line.size()), 0);
+            if (sent == static_cast<int>(line.size())) {
+                return true;
+            }
+            CloseSocket(tcpSock_);
+            tcpSock_ = kInvalidSocket;
+        }
+
         if (inputSock_ == kInvalidSocket) {
             return false;
         }
@@ -414,6 +445,76 @@ public:
             return messages;
         }
 
+        ReceiveFromSocket(inputSock_, messages);
+        ReceiveFromSocket(statusSock_, messages);
+        ReceiveFromTcp(messages);
+        return messages;
+    }
+
+private:
+    void TryOpenTcp() {
+        tcpSock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (tcpSock_ == kInvalidSocket) {
+            return;
+        }
+
+        if (!SetNonblocking(tcpSock_)) {
+            CloseSocket(tcpSock_);
+            tcpSock_ = kInvalidSocket;
+            return;
+        }
+
+        const int result = connect(tcpSock_, reinterpret_cast<const sockaddr*>(&destination_), sizeof(destination_));
+        if (result != 0) {
+#ifdef _WIN32
+            const int err = WSAGetLastError();
+            if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS) {
+                CloseSocket(tcpSock_);
+                tcpSock_ = kInvalidSocket;
+                return;
+            }
+#else
+            if (errno != EINPROGRESS) {
+                CloseSocket(tcpSock_);
+                tcpSock_ = kInvalidSocket;
+                return;
+            }
+#endif
+
+            fd_set writeSet;
+            FD_ZERO(&writeSet);
+            FD_SET(tcpSock_, &writeSet);
+            timeval tv{};
+            tv.tv_sec = 0;
+            tv.tv_usec = 500000;
+            if (select(static_cast<int>(tcpSock_ + 1), nullptr, &writeSet, nullptr, &tv) <= 0) {
+                CloseSocket(tcpSock_);
+                tcpSock_ = kInvalidSocket;
+                return;
+            }
+
+            int socketError = 0;
+#ifdef _WIN32
+            int socketErrorSize = sizeof(socketError);
+#else
+            socklen_t socketErrorSize = sizeof(socketError);
+#endif
+            if (getsockopt(tcpSock_, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&socketError), &socketErrorSize) != 0 || socketError != 0) {
+                CloseSocket(tcpSock_);
+                tcpSock_ = kInvalidSocket;
+                return;
+            }
+        }
+
+        int noDelay = 1;
+        setsockopt(tcpSock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&noDelay), sizeof(noDelay));
+    }
+
+    void ReceiveFromSocket(SocketHandle sock, std::vector<std::string>& messages) {
+        if (sock == kInvalidSocket) {
+            return;
+        }
+
         for (;;) {
             char buffer[256]{};
             sockaddr_in from{};
@@ -423,7 +524,7 @@ public:
             socklen_t fromLen = sizeof(from);
 #endif
             const int received = recvfrom(
-                statusSock_,
+                sock,
                 buffer,
                 static_cast<int>(sizeof(buffer) - 1),
                 0,
@@ -442,15 +543,59 @@ public:
                 messages.emplace_back(buffer);
             }
         }
-
-        return messages;
     }
 
-private:
+    void ReceiveFromTcp(std::vector<std::string>& messages) {
+        if (tcpSock_ == kInvalidSocket) {
+            return;
+        }
+
+        for (;;) {
+            char buffer[256]{};
+            const int received = recv(tcpSock_, buffer, static_cast<int>(sizeof(buffer) - 1), 0);
+            if (received == 0) {
+                CloseSocket(tcpSock_);
+                tcpSock_ = kInvalidSocket;
+                return;
+            }
+            if (received < 0) {
+                if (!SocketWouldBlock()) {
+                    messages.emplace_back("STATUS_SOCKET_ERROR");
+                    CloseSocket(tcpSock_);
+                    tcpSock_ = kInvalidSocket;
+                }
+                return;
+            }
+
+            buffer[received] = '\0';
+            tcpBuffer_.append(buffer, received);
+            for (;;) {
+                const size_t newline = tcpBuffer_.find('\n');
+                if (newline == std::string::npos) {
+                    if (tcpBuffer_.size() > 512) {
+                        tcpBuffer_.clear();
+                    }
+                    break;
+                }
+
+                std::string line = tcpBuffer_.substr(0, newline);
+                tcpBuffer_.erase(0, newline + 1);
+                while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+                    line.pop_back();
+                }
+                if (!line.empty()) {
+                    messages.push_back(line);
+                }
+            }
+        }
+    }
+
+    SocketHandle tcpSock_ = kInvalidSocket;
     SocketHandle inputSock_ = kInvalidSocket;
     SocketHandle statusSock_ = kInvalidSocket;
     sockaddr_in destination_{};
     std::string host_;
+    std::string tcpBuffer_;
 };
 
 class RelayApp {
@@ -489,12 +634,12 @@ public:
             HandleKey(event.key.key);
             return;
         case SDL_EVENT_MOUSE_MOTION:
-            if (!enteringIp_) {
+            if (!enteringIp_ && !menuOpen_) {
                 AddMotion(event.motion.xrel, event.motion.yrel);
             }
             return;
         case SDL_EVENT_MOUSE_WHEEL:
-            if (!enteringIp_) {
+            if (!enteringIp_ && !menuOpen_) {
                 const float scroll = event.wheel.integer_y != 0 ? static_cast<float>(event.wheel.integer_y) : event.wheel.y;
                 pendingScroll_ += scroll;
             }
@@ -508,7 +653,7 @@ public:
             HandleFingerButton(event);
             return;
         case SDL_EVENT_FINGER_MOTION:
-            if (!enteringIp_ && !IsTouchControlFinger(event.tfinger.fingerID)) {
+            if (!enteringIp_ && !menuOpen_ && !IsTouchControlFinger(event.tfinger.fingerID)) {
                 AddMotion(event.tfinger.dx * static_cast<float>(windowWidth_), event.tfinger.dy * static_cast<float>(windowHeight_));
             }
             return;
@@ -604,6 +749,10 @@ private:
         }
 
         if (kTouchLayout) {
+            if (menuOpen_) {
+                return BuildMenuButtons(uiWidth, uiHeight);
+            }
+
             const float margin = 16.0f;
             const float utilityWidth = 118.0f;
             const float utilityHeight = 44.0f;
@@ -636,19 +785,30 @@ private:
             return buttons;
         }
 
-        const float buttonWidth = 132.0f;
-        const float buttonHeight = 30.0f;
-        const float gap = 10.0f;
-        const float total = (buttonWidth * 4.0f) + (gap * 3.0f);
-        float x = (uiWidth - total) * 0.5f;
-        const float y = uiHeight - buttonHeight - 18.0f;
+        if (!menuOpen_) {
+            return buttons;
+        }
 
+        return BuildMenuButtons(uiWidth, uiHeight);
+    }
+
+    std::vector<Button> BuildMenuButtons(float uiWidth, float uiHeight) const {
+        std::vector<Button> buttons;
+        const float buttonWidth = 132.0f;
+        const float buttonHeight = kTouchLayout ? 44.0f : 34.0f;
+        const float gap = kTouchLayout ? 12.0f : 10.0f;
+        const float panelHeight = kTouchLayout ? 360.0f : 300.0f;
+        const float x = (uiWidth - buttonWidth) * 0.5f;
+        float y = ((uiHeight - panelHeight) * 0.5f) + 58.0f;
+
+        buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Resume", UiAction::Resume });
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Change IP", UiAction::ChangeIp });
-        x += buttonWidth + gap;
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Toggle", UiAction::ToggleMode });
-        x += buttonWidth + gap;
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Release", UiAction::ReleaseButtons });
-        x += buttonWidth + gap;
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Quit", UiAction::Quit });
         return buttons;
     }
@@ -720,6 +880,7 @@ private:
             break;
         case UiAction::ChangeIp:
             ReleaseAllButtons();
+            menuOpen_ = false;
             enteringIp_ = true;
             ipBuffer_ = host_;
             ipError_.clear();
@@ -734,6 +895,9 @@ private:
             break;
         case UiAction::ReleaseButtons:
             ReleaseAllButtons();
+            break;
+        case UiAction::Resume:
+            ResumeRelay();
             break;
         case UiAction::Quit:
             running_ = false;
@@ -783,9 +947,15 @@ private:
             return;
         }
 
-        if (key == SDLK_F3) {
+        if (key == SDLK_ESCAPE) {
+            if (menuOpen_) {
+                ResumeRelay();
+            } else {
+                OpenRelayMenu();
+            }
+        } else if (key == SDLK_F3) {
             ExecuteAction(UiAction::ChangeIp);
-        } else if (key == SDLK_F8 || key == SDLK_ESCAPE) {
+        } else if (key == SDLK_F8) {
             ExecuteAction(UiAction::Quit);
         } else if (key == SDLK_F9) {
             ExecuteAction(UiAction::ToggleMode);
@@ -795,9 +965,9 @@ private:
     void HandleMouseButton(const SDL_Event& event) {
         std::optional<Button> hit;
         UiAction relayCursorAction = UiAction::None;
-        if (enteringIp_ || mode_ == RelayMode::Menu) {
+        if (enteringIp_ || menuOpen_ || (kTouchLayout && mode_ == RelayMode::Menu)) {
             hit = HitButton(event.button.x, event.button.y);
-            if (!hit) {
+            if (!hit && !menuOpen_) {
                 relayCursorAction = HitActionAtRelayCursor();
             }
         }
@@ -1060,6 +1230,7 @@ private:
         hostSet_ = true;
         connecting_ = false;
         enteringIp_ = false;
+        menuOpen_ = false;
         ipError_.clear();
         SDL_StopTextInput(window_);
         SDL_SetWindowRelativeMouseMode(window_, true);
@@ -1153,6 +1324,10 @@ private:
             ipError_ = "No Bandit launcher response from " + failedHost;
             SDL_StartTextInput(window_);
             return;
+        }
+
+        if (!transport_.HasTcpFallback() && now - connectStart_ >= 2.0) {
+            transport_.TryTcpFallback();
         }
 
         if (lastConnectProbe_ == 0.0 || now - lastConnectProbe_ >= kConnectProbeSeconds) {
@@ -1311,6 +1486,24 @@ private:
         }
     }
 
+    void OpenRelayMenu() {
+        ReleaseAllButtons();
+        pendingScroll_ = 0.0f;
+        accumDx_ = 0.0f;
+        accumDy_ = 0.0f;
+        motionPending_ = false;
+        menuOpen_ = true;
+        SDL_SetWindowRelativeMouseMode(window_, false);
+    }
+
+    void ResumeRelay() {
+        if (enteringIp_) {
+            return;
+        }
+        menuOpen_ = false;
+        SDL_SetWindowRelativeMouseMode(window_, true);
+    }
+
     void DrawText(float x, float y, const std::string& text, SDL_Color color) {
         SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
         SDL_RenderDebugText(renderer_, x, y, text.c_str());
@@ -1390,8 +1583,18 @@ private:
         DrawText(18.0f, 62.0f, "Mouse: " + ModeName(mode_) + "  App: " + appMode + "  UDP: " + network, SDL_Color{ 218, 229, 241, 255 });
         DrawText(18.0f, 82.0f, "Packets: sent=" + std::to_string(sentPackets_) + " status=" + std::to_string(statusPackets_), SDL_Color{ 174, 187, 202, 255 });
         DrawText(18.0f, 102.0f, "Window: " + std::to_string(windowWidth_) + "x" + std::to_string(windowHeight_) + " -> menu " + std::to_string((int)MenuTargetWidth()) + "x" + std::to_string((int)MenuTargetHeight()) + " raw " + std::to_string((int)targetWidth_) + "x" + std::to_string((int)targetHeight_), SDL_Color{ 174, 187, 202, 255 });
-        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: F3 change IP, F8 quit, F9 toggle local mode", SDL_Color{ 145, 158, 174, 255 });
+        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: Esc menu/release mouse, F9 toggle local mode", SDL_Color{ 145, 158, 174, 255 });
         DrawText(18.0f, 142.0f, "Last: " + lastStatus_, SDL_Color{ 145, 158, 174, 255 });
+
+        if (menuOpen_) {
+            const float panelHeight = kTouchLayout ? 360.0f : 300.0f;
+            const SDL_FRect panel{ (uiWidth - 220.0f) * 0.5f, (uiHeight - panelHeight) * 0.5f, 220.0f, panelHeight };
+            SDL_SetRenderDrawColor(renderer_, 13, 18, 26, 235);
+            SDL_RenderFillRect(renderer_, &panel);
+            SDL_SetRenderDrawColor(renderer_, 105, 183, 204, 255);
+            SDL_RenderRect(renderer_, &panel);
+            DrawTextCentered(uiWidth * 0.5f, panel.y + 24.0f, "Relay Menu", SDL_Color{ 246, 249, 252, 255 });
+        }
 
         for (const Button& button : BuildButtons(uiWidth, uiHeight)) {
             DrawButton(button);
@@ -1414,6 +1617,7 @@ private:
 
     bool running_ = true;
     bool enteringIp_ = true;
+    bool menuOpen_ = false;
     bool connecting_ = false;
     bool hostSet_ = false;
     bool connected_ = false;

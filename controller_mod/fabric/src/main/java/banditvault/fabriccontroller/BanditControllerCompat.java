@@ -4,11 +4,15 @@ import banditvault.controllercore.ControllerAxis;
 import banditvault.controllercore.ControllerButton;
 import banditvault.controllercore.ControllerRuntime;
 import banditvault.controllercore.ControllerState;
+import banditvault.controllercore.GridNavigation;
 import com.mojang.blaze3d.systems.RenderSystem;
+import java.util.ArrayList;
+import java.util.List;
 import net.minecraft.class_304;
 import net.minecraft.class_310;
 import net.minecraft.class_315;
 import net.minecraft.class_332;
+import net.minecraft.class_339;
 import net.minecraft.class_465;
 import net.minecraft.class_1041;
 import net.minecraft.class_1713;
@@ -42,9 +46,18 @@ public final class BanditControllerCompat {
     private static double lastCompanionMouseX;
     private static double lastCompanionMouseY;
     private static long companionActiveUntilNanos;
+    private static Object lastCursorScreen;
+    private static CursorMode cursorMode = CursorMode.SNAP;
+    private static boolean snapStickLatched;
+    private static SnapTarget snapTarget;
 
     private static final long COMPANION_IDLE_NANOS = 500_000_000L;
     private static final double COMPANION_MOVE_EPSILON = 0.5;
+
+    private enum CursorMode {
+        SNAP,
+        FREE
+    }
 
     private BanditControllerCompat() {
     }
@@ -228,7 +241,16 @@ public final class BanditControllerCompat {
 
     private static void tickScreen(class_310 client, class_437 screen) {
         BanditControllerSettings settings = BanditControllerSettings.get();
-        if (cursorX < 0.0 || cursorY < 0.0) {
+        if (screen != lastCursorScreen) {
+            lastCursorScreen = screen;
+            cursorX = Math.max(1, screen.field_22789 / 2);
+            cursorY = Math.max(1, screen.field_22790 / 2);
+            snapStickLatched = false;
+            snapTarget = null;
+            if (cursorMode == CursorMode.SNAP) {
+                applySnapTarget(screen, nearestSnapTarget(screen, cursorX, cursorY));
+            }
+        } else if (cursorX < 0.0 || cursorY < 0.0) {
             cursorX = Math.max(1, screen.field_22789 / 2);
             cursorY = Math.max(1, screen.field_22790 / 2);
         }
@@ -236,24 +258,44 @@ public final class BanditControllerCompat {
         float lx = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
         float ly = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
+        GridNavigation.Direction snapDirection = snapDirection(lx, ly);
 
-        if (updateCompanion(client, screen)) {
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
+            takeControllerCursor();
+            cursorMode = cursorMode == CursorMode.SNAP ? CursorMode.FREE : CursorMode.SNAP;
+            snapStickLatched = false;
+            snapTarget = null;
+            if (cursorMode == CursorMode.SNAP) {
+                applySnapTarget(screen, nearestSnapTarget(screen, cursorX, cursorY));
+            }
+            FabricControllerLog.log("Menu cursor mode changed to " + cursorMode + " screen=" + screen.getClass().getName());
+            return;
+        }
+
+        boolean controllerAction = snapDirection != null ||
+            pressed(GLFW.GLFW_GAMEPAD_BUTTON_A) ||
+            pressed(GLFW.GLFW_GAMEPAD_BUTTON_B) ||
+            pressed(GLFW.GLFW_GAMEPAD_BUTTON_X) ||
+            pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y);
+        if (controllerAction) {
+            takeControllerCursor();
+        }
+
+        if (!controllerAction && updateCompanion(client, screen)) {
             followCompanionCursor(client, screen);
+        } else if (cursorMode == CursorMode.SNAP) {
+            if (snapTarget == null) {
+                applySnapTarget(screen, nearestSnapTarget(screen, cursorX, cursorY));
+            }
+            if (snapDirection != null) {
+                applySnapTarget(screen, moveSnapTarget(screen, snapDirection));
+            }
         } else {
             double dx = shapedCursorAxis(lx, settings.cursorDeadzone);
             double dy = shapedCursorAxis(ly, settings.cursorDeadzone);
             cursorX = clamp(cursorX + dx * settings.cursorSpeed, 0.0, Math.max(1, screen.field_22789 - 1));
             cursorY = clamp(cursorY + dy * settings.cursorSpeed, 0.0, Math.max(1, screen.field_22790 - 1));
             screen.method_16014(cursorX, cursorY);
-        }
-
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
-            if (screen instanceof BanditControllerSettingsScreen) {
-                ((BanditControllerSettingsScreen)screen).close();
-            } else {
-                client.method_1507(new BanditControllerSettingsScreen(screen));
-            }
-            return;
         }
 
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
@@ -274,7 +316,7 @@ public final class BanditControllerCompat {
             }
         }
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y)) {
-            quickMoveFocusedSlot(screen);
+            quickMoveFocusedSlot(screen, cursorMode == CursorMode.SNAP && snapTarget != null ? snapTarget.slot : null);
         }
 
         if (scrollCooldown > 0) {
@@ -282,9 +324,9 @@ public final class BanditControllerCompat {
         }
         if (scrollCooldown == 0) {
             double scroll = 0.0;
-            if (ry < -0.35f || button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP)) {
+            if (ry < -0.35f || (cursorMode == CursorMode.FREE && button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP))) {
                 scroll = settings.scrollAmount;
-            } else if (ry > 0.35f || button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) {
+            } else if (ry > 0.35f || (cursorMode == CursorMode.FREE && button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN))) {
                 scroll = -settings.scrollAmount;
             }
             if (scroll != 0.0) {
@@ -331,6 +373,122 @@ public final class BanditControllerCompat {
         cursorX = clamp(scaledX, 0.0, Math.max(1, screen.field_22789 - 1));
         cursorY = clamp(scaledY, 0.0, Math.max(1, screen.field_22790 - 1));
         screen.method_16014(cursorX, cursorY);
+    }
+
+    private static void takeControllerCursor() {
+        followingCompanion = false;
+        companionActiveUntilNanos = 0L;
+        lastCompanionScreen = null;
+    }
+
+    private static GridNavigation.Direction snapDirection(float x, float y) {
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP)) return GridNavigation.Direction.UP;
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) return GridNavigation.Direction.DOWN;
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_LEFT)) return GridNavigation.Direction.LEFT;
+        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)) return GridNavigation.Direction.RIGHT;
+
+        if (Math.max(Math.abs(x), Math.abs(y)) < 0.35f) {
+            snapStickLatched = false;
+            return null;
+        }
+        if (snapStickLatched || Math.max(Math.abs(x), Math.abs(y)) < 0.65f) {
+            return null;
+        }
+        snapStickLatched = true;
+        if (Math.abs(x) > Math.abs(y)) {
+            return x < 0.0f ? GridNavigation.Direction.LEFT : GridNavigation.Direction.RIGHT;
+        }
+        return y < 0.0f ? GridNavigation.Direction.UP : GridNavigation.Direction.DOWN;
+    }
+
+    private static SnapTarget moveSnapTarget(class_437 screen, GridNavigation.Direction direction) {
+        List<SnapTarget> targets = snapTargets(screen);
+        int current = indexOf(targets, snapTarget);
+        if (current < 0) {
+            return nearestSnapTarget(screen, cursorX, cursorY);
+        }
+        List<GridNavigation.Point> points = new ArrayList<GridNavigation.Point>(targets.size());
+        for (int i = 0; i < targets.size(); i++) {
+            SnapTarget target = targets.get(i);
+            points.add(new GridNavigation.Point(i, target.x, target.y));
+        }
+        int next = GridNavigation.nextLoose(points, current, direction);
+        return next < 0 ? snapTarget : targets.get(next);
+    }
+
+    private static SnapTarget nearestSnapTarget(class_437 screen, double x, double y) {
+        List<SnapTarget> targets = snapTargets(screen);
+        SnapTarget best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (SnapTarget target : targets) {
+            double dx = target.x - x;
+            double dy = target.y - y;
+            double distance = dx * dx + dy * dy;
+            if (distance < bestDistance) {
+                best = target;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private static void applySnapTarget(class_437 screen, SnapTarget target) {
+        if (target == null) {
+            return;
+        }
+        snapTarget = target;
+        cursorX = clamp(target.x, 0.0, Math.max(1, screen.field_22789 - 1));
+        cursorY = clamp(target.y, 0.0, Math.max(1, screen.field_22790 - 1));
+        screen.method_16014(cursorX, cursorY);
+    }
+
+    private static List<SnapTarget> snapTargets(class_437 screen) {
+        List<SnapTarget> targets = new ArrayList<SnapTarget>();
+        for (Object child : screen.method_25396()) {
+            if (child instanceof class_339) {
+                class_339 widget = (class_339)child;
+                if (widget.field_22763 && widget.field_22764 && widget.method_25368() > 0 && widget.method_25364() > 0) {
+                    targets.add(new SnapTarget(widget, null,
+                        widget.field_22760 + widget.method_25368() / 2,
+                        widget.field_22761 + widget.method_25364() / 2));
+                }
+            }
+        }
+        if (screen instanceof class_465) {
+            class_465<?> container = (class_465<?>)screen;
+            int left = getScreenInt(container, "field_2776", 0);
+            int top = getScreenInt(container, "field_2800", 0);
+            for (class_1735 slot : container.method_17577().field_7761) {
+                if (slot.method_7682()) {
+                    targets.add(new SnapTarget(null, slot, left + slot.field_7873 + 8, top + slot.field_7872 + 8));
+                }
+            }
+        }
+        return targets;
+    }
+
+    private static int indexOf(List<SnapTarget> targets, SnapTarget target) {
+        if (target == null) {
+            return -1;
+        }
+        for (int i = 0; i < targets.size(); i++) {
+            SnapTarget candidate = targets.get(i);
+            if ((target.slot != null && target.slot == candidate.slot) ||
+                (target.widget != null && target.widget == candidate.widget)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int getScreenInt(Object value, String fieldName, int fallback) {
+        try {
+            java.lang.reflect.Field field = findField(value.getClass(), fieldName);
+            field.setAccessible(true);
+            return field.getInt(value);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
     }
 
     private static void applyLook(class_746 player, float rx, float ry, float seconds, BanditControllerSettings settings) {
@@ -425,15 +583,18 @@ public final class BanditControllerCompat {
         }
     }
 
-    private static void quickMoveFocusedSlot(class_437 screen) {
+    private static void quickMoveFocusedSlot(class_437 screen, class_1735 selectedSlot) {
         if (!(screen instanceof class_465)) {
             return;
         }
 
         try {
-            java.lang.reflect.Field focusedSlotField = findField(screen.getClass(), "field_2787");
-            focusedSlotField.setAccessible(true);
-            class_1735 slot = (class_1735)focusedSlotField.get(screen);
+            class_1735 slot = selectedSlot;
+            if (slot == null) {
+                java.lang.reflect.Field focusedSlotField = findField(screen.getClass(), "field_2787");
+                focusedSlotField.setAccessible(true);
+                slot = (class_1735)focusedSlotField.get(screen);
+            }
             if (slot == null || !slot.method_7681()) {
                 return;
             }
@@ -577,6 +738,20 @@ public final class BanditControllerCompat {
 
     private static void finishFrame() {
         CONTROLLER_STATE.finishFrame(BanditControllerSettings.get().triggerDeadzone);
+    }
+
+    private static final class SnapTarget {
+        final class_339 widget;
+        final class_1735 slot;
+        final int x;
+        final int y;
+
+        SnapTarget(class_339 widget, class_1735 slot, int x, int y) {
+            this.widget = widget;
+            this.slot = slot;
+            this.x = x;
+            this.y = y;
+        }
     }
 
     private static ControllerAxis axisFor(int index) {

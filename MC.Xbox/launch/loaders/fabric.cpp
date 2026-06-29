@@ -35,8 +35,12 @@ void FabricCollectExtraClasspathJars(const LoaderPreLaunchContext& ctx, std::vec
 
 void FabricAddJvmOptions(const LoaderJvmContext& ctx, std::vector<std::string>& vmOptions) {
     vmOptions.push_back("-Dfabric.log.file=" + w2a(fwd(ctx.fabricLogPath)));
-    vmOptions.push_back("-Dfabric.log.level=debug");
-    vmOptions.push_back("-Dfabric.debug.throwDirectly=true");
+    if (VerboseLoggingEnabled()) {
+        vmOptions.push_back("-Dfabric.log.level=debug");
+        vmOptions.push_back("-Dfabric.debug.throwDirectly=true");
+    } else {
+        vmOptions.push_back("-Dfabric.log.level=info");
+    }
     vmOptions.push_back("-Dfabric.gameJarPath=" + w2a(fwd(ctx.clientJar)));
     vmOptions.push_back("-Dfabric.modsFolder=" + w2a(fwd(ctx.userModsDir)));
 

@@ -473,3 +473,15 @@ std::wstring StripNewlines(std::wstring value) {
     }
     return value;
 }
+
+bool VerboseLoggingEnabled() {
+    // read once, drop a verbose_logging file in localstate or set MC_VERBOSE_LOGGING=1 to re-enable loader debug logging
+    static const bool enabled = [] {
+        if (GetEnvVarString(L"MC_VERBOSE_LOGGING") == L"1") return true;
+        const std::wstring localDir = GetLocalStateDir();
+        if (localDir.empty()) return false;
+        const std::wstring marker = localDir + L"\\verbose_logging";
+        return GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES;
+    }();
+    return enabled;
+}

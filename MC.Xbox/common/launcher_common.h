@@ -14,6 +14,7 @@ std::wstring GetLocalStateDir();
 std::wstring GetEnvVarString(const wchar_t* name);
 void WriteLog(const wchar_t* msg);
 void WriteLogF(const wchar_t* fmt, ...);
+bool VerboseLoggingEnabled();
 
 std::string w2a(const std::wstring& w);
 std::wstring a2w(const char* utf8);

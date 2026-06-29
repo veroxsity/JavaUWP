@@ -583,10 +583,15 @@ void NeoForgeAddJvmOptions(const LoaderJvmContext& ctx, std::vector<std::string>
         WriteLogF(L"NeoForge Minecraft SRG fallback jar: %s", ctx.neoForgeMinecraftSrgJar.c_str());
     }
     vmOptions.push_back("-Dbanditvault.launcherOverrideDir=" + w2a(fwd(ctx.launcherOverrideDir)));
-    vmOptions.push_back("-Dforge.logging.console.level=debug");
-    vmOptions.push_back("-Dforge.logging.markers=REGISTRIES");
-    vmOptions.push_back("-Dneoforge.logging.console.level=debug");
-    vmOptions.push_back("-Dbanditvault.securejarhandler.debug=true");
+    if (VerboseLoggingEnabled()) {
+        vmOptions.push_back("-Dforge.logging.console.level=debug");
+        vmOptions.push_back("-Dforge.logging.markers=REGISTRIES");
+        vmOptions.push_back("-Dneoforge.logging.console.level=debug");
+        vmOptions.push_back("-Dbanditvault.securejarhandler.debug=true");
+    } else {
+        vmOptions.push_back("-Dforge.logging.console.level=info");
+        vmOptions.push_back("-Dneoforge.logging.console.level=info");
+    }
     WriteLog(L"NeoForge using installer-provided ignoreList without launcher override");
 }
 

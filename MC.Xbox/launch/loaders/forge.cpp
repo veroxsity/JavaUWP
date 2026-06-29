@@ -566,8 +566,12 @@ void ForgeAddJvmOptions(const LoaderJvmContext& ctx, std::vector<std::string>& v
         WriteLogF(L"Forge Minecraft SRG fallback jar: %s", ctx.neoForgeMinecraftSrgJar.c_str());
     }
     vmOptions.push_back("-Dbanditvault.launcherOverrideDir=" + w2a(fwd(ctx.launcherOverrideDir)));
-    vmOptions.push_back("-Dforge.logging.console.level=debug");
-    vmOptions.push_back("-Dforge.logging.markers=REGISTRIES");
+    if (VerboseLoggingEnabled()) {
+        vmOptions.push_back("-Dforge.logging.console.level=debug");
+        vmOptions.push_back("-Dforge.logging.markers=REGISTRIES");
+    } else {
+        vmOptions.push_back("-Dforge.logging.console.level=info");
+    }
 }
 
 bool ForgePrepareArtifactsAfterJvm(

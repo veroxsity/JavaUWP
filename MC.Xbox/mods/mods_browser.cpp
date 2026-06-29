@@ -5,6 +5,7 @@
 #include "runtime_manager.h"
 #include "http_client.h"
 #include "launcher_common.h"
+#include "launcher_mouse.h"
 #include "launcher_ui.h"
 #include "mod_types.h"
 #include "mods_ui_globals.h"
@@ -1859,6 +1860,8 @@ void ShowModsPage(
     bool xWasDown = false;
     bool yWasDown = false;
     bool wasOskVisible = false;
+    float lastMouseX = -100000.0f;
+    float lastMouseY = -100000.0f;
 
     auto enterSearch = [&]() {
         {
@@ -1933,6 +1936,7 @@ void ShowModsPage(
     };
 
     WriteLog(L"Mods page opened");
+    int lastEnsuredSel = -1;
     while (true) {
         g_modsSearchCapturing.store(state.modsSearchEditing || state.modsRenaming);
         if (state.modsSearchEditing) {
@@ -2042,7 +2046,7 @@ void ShowModsPage(
             upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
             rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
             backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
 
@@ -2053,7 +2057,7 @@ void ShowModsPage(
             upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
             rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
             backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
         if (g_installResultReady.exchange(false)) {
@@ -2064,6 +2068,96 @@ void ShowModsPage(
             if (ok && state.selectedModsTab == 0) {
                 LoadModsTab(state, runtimeRoot, userModsDir);
                 loadedQuery = state.modsSearchQuery;
+            }
+        }
+
+        bool clickActivate = false;
+        float wheelDelta = 0.0f;
+        state.modsHoverTab = -1;
+        {
+            LauncherMouse& launcherMouse = LauncherMouseInstance();
+            if (launcherMouse.Visible()) {
+                const float mx = launcherMouse.X();
+                const float my = launcherMouse.Y();
+                const int hid = renderer->HitTest(mx, my);
+                const bool firstObservation = lastMouseX < -90000.0f;
+                const bool moved = !firstObservation &&
+                    (mx - lastMouseX > 0.5f || lastMouseX - mx > 0.5f ||
+                     my - lastMouseY > 0.5f || lastMouseY - my > 0.5f);
+                const bool clicked = launcherMouse.TakeClick();
+                wheelDelta = launcherMouse.TakeWheel();
+                lastMouseX = mx;
+                lastMouseY = my;
+                const bool apply = moved || clicked;
+
+                if (state.modsProfileOpen) {
+                    int profileFocus = -1;
+                    if (hid == launchhit::kProfilePlay) profileFocus = 0;
+                    else if (hid == launchhit::kProfileDelete) profileFocus = 1;
+                    else if (hid == launchhit::kProfileBackup) profileFocus = 3;
+                    else if (hid == launchhit::kProfileExport) profileFocus = 4;
+                    if (profileFocus >= 0) {
+                        if (apply) state.modsProfileFocus = profileFocus;
+                        if (clicked) clickActivate = true;
+                    } else if (hid >= launchhit::kProfileGridBase) {
+                        const int gridIndex = hid - launchhit::kProfileGridBase;
+                        if (apply && gridIndex >= 0 && gridIndex < static_cast<int>(state.modsProfileMods.size())) {
+                            state.modsProfileFocus = 2;
+                            state.modsProfileSel = gridIndex;
+                        }
+                    } else if (hid == launchhit::kBack && clicked) {
+                        state.modsProfileOpen = false;
+                        state.status.clear();
+                    }
+                } else if (state.modsDetailOpen) {
+                    if (hid == launchhit::kDetailInstall && clicked) {
+                        clickActivate = true;
+                    } else if (hid == launchhit::kBack && clicked) {
+                        state.modsDetailOpen = false;
+                        state.status.clear();
+                    }
+                } else if (state.modsTargetOpen) {
+                    if (hid >= launchhit::kTargetItemBase && hid < launchhit::kProfileGridBase) {
+                        const int targetIndex = hid - launchhit::kTargetItemBase;
+                        if (apply && targetIndex >= 0 && targetIndex < static_cast<int>(state.modsTargets.size())) {
+                            state.modsTargetSel = targetIndex;
+                        }
+                        if (clicked) clickActivate = true;
+                    } else if (hid == launchhit::kTarget && clicked) {
+                        state.modsTargetOpen = false;
+                    }
+                } else {
+                    if (hid >= launchhit::kTabBase && hid < launchhit::kTabBase + 5) {
+                        const int tabIndex = hid - launchhit::kTabBase;
+                        state.modsHoverTab = tabIndex;
+                        if (apply) state.modsFocus = 0;
+                        if (clicked) {
+                            if (tabIndex != state.selectedModsTab) {
+                                state.selectedModsTab = tabIndex;
+                                state.modsTargetOpen = false;
+                                LoadModsTab(state, runtimeRoot, userModsDir);
+                                loadedQuery = state.modsSearchQuery;
+                                state.selectedModIndex = 0;
+                                state.modsScrollRow = 0;
+                            }
+                            state.modsFocus = 0;
+                        }
+                    } else if (hid == launchhit::kTarget) {
+                        if (apply) state.modsFocus = 3;
+                        if (clicked) clickActivate = true;
+                    } else if (hid == launchhit::kSearch) {
+                        if (apply) state.modsFocus = 1;
+                        if (clicked) clickActivate = true;
+                    } else if (hid >= launchhit::kCardBase && hid < launchhit::kTargetItemBase) {
+                        const int cardIndex = hid - launchhit::kCardBase;
+                        if (apply && cardIndex >= 0 && cardIndex < count) {
+                            state.modsFocus = 2;
+                            state.selectedModIndex = cardIndex;
+                            ensureSelectionVisible();
+                        }
+                        if (clicked) clickActivate = true;
+                    }
+                }
             }
         }
 
@@ -2144,7 +2238,7 @@ void ShowModsPage(
                     LoadModsTab(state, runtimeRoot, userModsDir);
                     state.status = L"Deleted " + gone + L". Use Undo deleted profile to restore it.";
                 }
-            } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+            } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                 if (state.modsProfileFocus == 1 && !state.modsProfileBuiltin) {
                     const std::wstring gone = state.modsProfileName;
                     DeleteProfile(runtimeRoot, state.modsProfileId);
@@ -2179,10 +2273,21 @@ void ShowModsPage(
                     state.status = L"Play will use " + state.modsProfileName;
                 }
             }
+            if (wheelDelta != 0.0f && pmTotal > 0) {
+                const int wheelNotches = static_cast<int>(wheelDelta > 0.0f ? (wheelDelta + 0.5f) : (wheelDelta - 0.5f));
+                if (wheelNotches != 0) {
+                    const int profileTotalRows = (pmTotal + 1) / 2;
+                    const int maxProfileScroll = (std::max)(0, profileTotalRows - pmRows);
+                    int nextScroll = state.modsProfileScroll - wheelNotches;
+                    if (nextScroll < 0) nextScroll = 0;
+                    if (nextScroll > maxProfileScroll) nextScroll = maxProfileScroll;
+                    state.modsProfileScroll = nextScroll;
+                }
+            }
             upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
             rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
             backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
 
@@ -2200,7 +2305,7 @@ void ShowModsPage(
             if (backDown && !backWasDown) {
                 state.modsDetailOpen = false;
                 state.status.clear();
-            } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+            } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                 StartInstallJob(state.modsDetailCard, runtimeRoot, CurrentModsTarget(state));
             } else if (upDown && !upWasDown) {
                 state.modsDetailScroll = (std::max)(0, state.modsDetailScroll - 2);
@@ -2211,11 +2316,37 @@ void ShowModsPage(
             } else if (pageUpDown && !pageUpWasDown) {
                 state.modsDetailScroll = (std::max)(0, state.modsDetailScroll - 8);
             }
+            if (wheelDelta != 0.0f) {
+                const int wheelNotches = static_cast<int>(wheelDelta > 0.0f ? (wheelDelta + 0.5f) : (wheelDelta - 0.5f));
+                if (wheelNotches > 0) {
+                    state.modsDetailScroll = (std::max)(0, state.modsDetailScroll - wheelNotches * 2);
+                } else if (wheelNotches < 0) {
+                    state.modsDetailScroll = (std::min)(g_detailMaxScroll.load(), state.modsDetailScroll + (-wheelNotches) * 2);
+                }
+            }
             upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
             rightWasDown = rightDown; selectWasDown = selectDown; enterWasDown = enterDown;
             backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
+        }
+
+        if (wheelDelta != 0.0f && count > 0) {
+            const int wheelNotches = static_cast<int>(wheelDelta > 0.0f ? (wheelDelta + 0.5f) : (wheelDelta - 0.5f));
+            if (wheelNotches != 0) {
+                const int rowsVisible = (std::max)(1, g_modsRowsVisible.load());
+                const int totalRows = (count + 1) / 2;
+                const int maxScrollRow = (std::max)(0, totalRows - rowsVisible);
+                int nextScroll = state.modsScrollRow - wheelNotches;
+                if (nextScroll < 0) nextScroll = 0;
+                if (nextScroll > maxScrollRow) nextScroll = maxScrollRow;
+                state.modsScrollRow = nextScroll;
+                if (wheelNotches < 0 && state.modsScrollRow >= maxScrollRow &&
+                    !state.modsExhausted &&
+                    (state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4)) {
+                    loadMore();
+                }
+            }
         }
 
         if (state.modsFocus == 0) {
@@ -2241,12 +2372,12 @@ void ShowModsPage(
                     if (total > 0) state.modsTargetSel = (state.modsTargetSel + 1) % total;
                 } else if (backDown && !backWasDown) {
                     state.modsTargetOpen = false;
-                } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+                } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                     applyTargetIndex(state.modsTargetSel);
                     state.modsTargetOpen = false;
                 }
             } else {
-                if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+                if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                     EnsureModsTargetState(state, runtimeRoot);
                     state.modsTargetSel = (std::max)(0, ModsTargetIndex(state));
                     state.modsTargetOpen = true;
@@ -2258,7 +2389,7 @@ void ShowModsPage(
             }
         } else if (state.modsFocus == 1) {
             if (!state.modsSearchEditing) {
-                if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown)) {
+                if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                     state.modsSearchEditing = true;
                     ModsSearchBeginInput();
                 } else if ((upDown && !upWasDown) || (leftDown && !leftWasDown)) {
@@ -2334,9 +2465,10 @@ void ShowModsPage(
                 }
             }
 
-            if (state.modsFocus == 2) {
+            if (state.modsFocus == 2 && state.selectedModIndex != lastEnsuredSel) {
                 ensureSelectionVisible();
             }
+            lastEnsuredSel = state.selectedModIndex;
 
             if (state.selectedModsTab == 0 && xDown && !xWasDown &&
                 state.selectedModIndex >= 0 && state.selectedModIndex < count) {
@@ -2353,7 +2485,7 @@ void ShowModsPage(
                 }
             }
 
-            if (selectDown && !selectWasDown && state.selectedModIndex >= 0 && state.selectedModIndex < count) {
+            if (((selectDown && !selectWasDown) || clickActivate) && state.selectedModIndex >= 0 && state.selectedModIndex < count) {
                 ModCard selected = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
                 if (state.selectedModsTab == 0) {
                     if (selected.projectId == L"__restore_deleted__") {
@@ -2425,7 +2557,7 @@ void ShowModsPage(
         pageUpWasDown = pageUpDown;
         pageDownWasDown = pageDownDown;
         xWasDown = xDown; yWasDown = yDown;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
 

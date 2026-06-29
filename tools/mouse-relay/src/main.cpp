@@ -3,15 +3,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <fstream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -25,7 +30,6 @@ static constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 using SocketHandle = int;
@@ -41,8 +45,9 @@ constexpr float kTargetHeight = 1080.0f;
 constexpr double kSendIntervalSeconds = 1.0 / 240.0;
 constexpr double kHeldButtonRefreshSeconds = 1.0 / 20.0;
 constexpr double kConnectProbeSeconds = 0.25;
-constexpr double kConnectTimeoutSeconds = 10.0;
-constexpr double kRenderIntervalSeconds = 1.0 / 60.0;
+constexpr double kConnectTimeoutSeconds = 3.0;
+constexpr double kRenderIntervalSeconds = 1.0 / 30.0;
+constexpr double kButtonHoldSeconds = 2.5;
 constexpr double kTouchScrollRepeatSeconds = 1.0 / 12.0;
 constexpr float kMenuCoordinateScale = 0.5f;
 constexpr float kDebugGlyphWidth = 8.0f;
@@ -104,6 +109,144 @@ static void SleepUntil(double deadline) {
     }
 }
 
+class PacketLog {
+public:
+    void Toggle() {
+        if (enabled_) {
+            Disable();
+        } else {
+            Enable();
+        }
+    }
+
+    bool Enabled() const { return enabled_; }
+    const std::string& Path() const { return path_; }
+
+    void Enable() {
+        if (enabled_) {
+            return;
+        }
+        std::string dir;
+        char* base = SDL_GetPrefPath("BanditVault", "BanditMouseRelay");
+        if (base) {
+            dir = base;
+            SDL_free(base);
+        }
+        char stamp[32];
+        std::time_t tt = std::time(nullptr);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        path_ = dir + "relay-packets-" + stamp + ".log";
+        out_.open(path_, std::ios::out | std::ios::trunc);
+        if (!out_.is_open()) {
+            path_.clear();
+            return;
+        }
+        seqTx_ = 0;
+        seqRx_ = 0;
+        lastTx_ = -1.0;
+        lastRx_ = -1.0;
+        lastFlush_ = NowSeconds();
+        enabled_ = true;
+        out_ << "# Bandit Mouse Relay packet log\n";
+        out_ << "# format: wall_clock mono_seconds dir seq dt_ms payload\n";
+        out_ << "# dir TX = sent to Xbox, RX = status from Xbox, EV = event marker\n";
+        out_.flush();
+    }
+
+    void Disable() {
+        if (!enabled_) {
+            return;
+        }
+        enabled_ = false;
+        out_.flush();
+        out_.close();
+    }
+
+    void Mark(const std::string& note) {
+        if (!enabled_) {
+            return;
+        }
+        char head[112];
+        FormatHead(head, sizeof(head), "EV", 0, -1.0);
+        out_ << head << note << '\n';
+    }
+
+    void LogTx(const std::string& packet, bool ok) {
+        if (!enabled_) {
+            return;
+        }
+        const double now = NowSeconds();
+        const double dt = lastTx_ >= 0.0 ? (now - lastTx_) * 1000.0 : -1.0;
+        lastTx_ = now;
+        char head[112];
+        FormatHead(head, sizeof(head), "TX", ++seqTx_, dt);
+        out_ << head << (ok ? "" : "SENDFAIL ") << packet << '\n';
+    }
+
+    void LogRx(const std::string& packet) {
+        if (!enabled_) {
+            return;
+        }
+        const double now = NowSeconds();
+        const double dt = lastRx_ >= 0.0 ? (now - lastRx_) * 1000.0 : -1.0;
+        lastRx_ = now;
+        char head[112];
+        FormatHead(head, sizeof(head), "RX", ++seqRx_, dt);
+        out_ << head << packet << '\n';
+    }
+
+    void MaybeFlush() {
+        if (!enabled_) {
+            return;
+        }
+        const double now = NowSeconds();
+        if (now - lastFlush_ >= 0.25) {
+            out_.flush();
+            lastFlush_ = now;
+        }
+    }
+
+private:
+    void FormatHead(char* buffer, size_t size, const char* dir, long long seq, double dtMs) {
+        const auto sysNow = std::chrono::system_clock::now();
+        const std::time_t tt = std::chrono::system_clock::to_time_t(sysNow);
+        const int millis = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(sysNow.time_since_epoch()).count() % 1000);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        char wall[16];
+        std::strftime(wall, sizeof(wall), "%H:%M:%S", &tmv);
+        if (dtMs >= 0.0) {
+            std::snprintf(buffer, size, "%s.%03d %.6f %s seq=%lld dt=%.2fms ",
+                wall, millis, NowSeconds(), dir, seq, dtMs);
+        } else {
+            std::snprintf(buffer, size, "%s.%03d %.6f %s seq=%lld ",
+                wall, millis, NowSeconds(), dir, seq);
+        }
+    }
+
+    bool enabled_ = false;
+    std::ofstream out_;
+    std::string path_;
+    long long seqTx_ = 0;
+    long long seqRx_ = 0;
+    double lastTx_ = -1.0;
+    double lastRx_ = -1.0;
+    double lastFlush_ = 0.0;
+};
+
+PacketLog g_packetLog;
+
 static std::string ModeName(RelayMode mode) {
     return mode == RelayMode::Gameplay ? "GAMEPLAY" : "MENU";
 }
@@ -138,6 +281,47 @@ static bool IsValidIpv4(const std::string& text) {
     }
 
     return octets == 4;
+}
+
+static std::string PrefIpPath() {
+    char* base = SDL_GetPrefPath("BanditVault", "BanditMouseRelay");
+    if (!base) {
+        return std::string();
+    }
+    std::string path = std::string(base) + "last_ip.txt";
+    SDL_free(base);
+    return path;
+}
+
+static std::string LoadSavedIp() {
+    const std::string path = PrefIpPath();
+    if (path.empty()) {
+        return std::string();
+    }
+    std::ifstream in(path);
+    if (!in) {
+        return std::string();
+    }
+    std::string ip;
+    std::getline(in, ip);
+    while (!ip.empty() && (ip.back() == '\r' || ip.back() == '\n' || ip.back() == ' ')) {
+        ip.pop_back();
+    }
+    return IsValidIpv4(ip) ? ip : std::string();
+}
+
+static void SaveIp(const std::string& ip) {
+    if (!IsValidIpv4(ip)) {
+        return;
+    }
+    const std::string path = PrefIpPath();
+    if (path.empty()) {
+        return;
+    }
+    std::ofstream out(path, std::ios::trunc);
+    if (out) {
+        out << ip << "\n";
+    }
 }
 
 static int ButtonIndex(uint8_t button) {
@@ -342,12 +526,6 @@ public:
         inputSock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (inputSock_ == kInvalidSocket) {
             error = "Could not create input UDP socket";
-            Close();
-            return false;
-        }
-        if (!SetNonblocking(inputSock_)) {
-            error = "Could not make input socket nonblocking";
-            Close();
             return false;
         }
 
@@ -391,40 +569,17 @@ public:
     }
 
     void Close() {
-        CloseSocket(tcpSock_);
         CloseSocket(inputSock_);
         CloseSocket(statusSock_);
-        tcpSock_ = kInvalidSocket;
         inputSock_ = kInvalidSocket;
         statusSock_ = kInvalidSocket;
-        tcpBuffer_.clear();
     }
 
     bool IsOpen() const {
         return inputSock_ != kInvalidSocket && statusSock_ != kInvalidSocket;
     }
 
-    bool HasTcpFallback() const {
-        return tcpSock_ != kInvalidSocket;
-    }
-
-    void TryTcpFallback() {
-        if (tcpSock_ == kInvalidSocket) {
-            TryOpenTcp();
-        }
-    }
-
     bool Send(const std::string& packet) {
-        if (tcpSock_ != kInvalidSocket) {
-            const std::string line = packet + "\n";
-            const int sent = send(tcpSock_, line.data(), static_cast<int>(line.size()), 0);
-            if (sent == static_cast<int>(line.size())) {
-                return true;
-            }
-            CloseSocket(tcpSock_);
-            tcpSock_ = kInvalidSocket;
-        }
-
         if (inputSock_ == kInvalidSocket) {
             return false;
         }
@@ -436,83 +591,15 @@ public:
             0,
             reinterpret_cast<const sockaddr*>(&destination_),
             sizeof(destination_));
-        return sent == static_cast<int>(packet.size());
+        const bool ok = sent == static_cast<int>(packet.size());
+        g_packetLog.LogTx(packet, ok);
+        return ok;
     }
 
     std::vector<std::string> ReceiveStatus() {
         std::vector<std::string> messages;
         if (statusSock_ == kInvalidSocket) {
             return messages;
-        }
-
-        ReceiveFromSocket(inputSock_, messages);
-        ReceiveFromSocket(statusSock_, messages);
-        ReceiveFromTcp(messages);
-        return messages;
-    }
-
-private:
-    void TryOpenTcp() {
-        tcpSock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (tcpSock_ == kInvalidSocket) {
-            return;
-        }
-
-        if (!SetNonblocking(tcpSock_)) {
-            CloseSocket(tcpSock_);
-            tcpSock_ = kInvalidSocket;
-            return;
-        }
-
-        const int result = connect(tcpSock_, reinterpret_cast<const sockaddr*>(&destination_), sizeof(destination_));
-        if (result != 0) {
-#ifdef _WIN32
-            const int err = WSAGetLastError();
-            if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS) {
-                CloseSocket(tcpSock_);
-                tcpSock_ = kInvalidSocket;
-                return;
-            }
-#else
-            if (errno != EINPROGRESS) {
-                CloseSocket(tcpSock_);
-                tcpSock_ = kInvalidSocket;
-                return;
-            }
-#endif
-
-            fd_set writeSet;
-            FD_ZERO(&writeSet);
-            FD_SET(tcpSock_, &writeSet);
-            timeval tv{};
-            tv.tv_sec = 0;
-            tv.tv_usec = 500000;
-            if (select(static_cast<int>(tcpSock_ + 1), nullptr, &writeSet, nullptr, &tv) <= 0) {
-                CloseSocket(tcpSock_);
-                tcpSock_ = kInvalidSocket;
-                return;
-            }
-
-            int socketError = 0;
-#ifdef _WIN32
-            int socketErrorSize = sizeof(socketError);
-#else
-            socklen_t socketErrorSize = sizeof(socketError);
-#endif
-            if (getsockopt(tcpSock_, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&socketError), &socketErrorSize) != 0 || socketError != 0) {
-                CloseSocket(tcpSock_);
-                tcpSock_ = kInvalidSocket;
-                return;
-            }
-        }
-
-        int noDelay = 1;
-        setsockopt(tcpSock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&noDelay), sizeof(noDelay));
-    }
-
-    void ReceiveFromSocket(SocketHandle sock, std::vector<std::string>& messages) {
-        if (sock == kInvalidSocket) {
-            return;
         }
 
         for (;;) {
@@ -524,7 +611,7 @@ private:
             socklen_t fromLen = sizeof(from);
 #endif
             const int received = recvfrom(
-                sock,
+                statusSock_,
                 buffer,
                 static_cast<int>(sizeof(buffer) - 1),
                 0,
@@ -541,61 +628,18 @@ private:
             if (from.sin_addr.s_addr == destination_.sin_addr.s_addr) {
                 buffer[received] = '\0';
                 messages.emplace_back(buffer);
+                g_packetLog.LogRx(buffer);
             }
         }
+
+        return messages;
     }
 
-    void ReceiveFromTcp(std::vector<std::string>& messages) {
-        if (tcpSock_ == kInvalidSocket) {
-            return;
-        }
-
-        for (;;) {
-            char buffer[256]{};
-            const int received = recv(tcpSock_, buffer, static_cast<int>(sizeof(buffer) - 1), 0);
-            if (received == 0) {
-                CloseSocket(tcpSock_);
-                tcpSock_ = kInvalidSocket;
-                return;
-            }
-            if (received < 0) {
-                if (!SocketWouldBlock()) {
-                    messages.emplace_back("STATUS_SOCKET_ERROR");
-                    CloseSocket(tcpSock_);
-                    tcpSock_ = kInvalidSocket;
-                }
-                return;
-            }
-
-            buffer[received] = '\0';
-            tcpBuffer_.append(buffer, received);
-            for (;;) {
-                const size_t newline = tcpBuffer_.find('\n');
-                if (newline == std::string::npos) {
-                    if (tcpBuffer_.size() > 512) {
-                        tcpBuffer_.clear();
-                    }
-                    break;
-                }
-
-                std::string line = tcpBuffer_.substr(0, newline);
-                tcpBuffer_.erase(0, newline + 1);
-                while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
-                    line.pop_back();
-                }
-                if (!line.empty()) {
-                    messages.push_back(line);
-                }
-            }
-        }
-    }
-
-    SocketHandle tcpSock_ = kInvalidSocket;
+private:
     SocketHandle inputSock_ = kInvalidSocket;
     SocketHandle statusSock_ = kInvalidSocket;
     sockaddr_in destination_{};
     std::string host_;
-    std::string tcpBuffer_;
 };
 
 class RelayApp {
@@ -603,13 +647,20 @@ public:
     RelayApp(SDL_Window* window, SDL_Renderer* renderer)
         : window_(window), renderer_(renderer) {
         RefreshWindowSize();
+        ipBuffer_ = LoadSavedIp();
         SDL_StartTextInput(window_);
+        netRunning_ = true;
+        netThread_ = std::thread(&RelayApp::NetLoop, this);
     }
 
     ~RelayApp() {
+        netRunning_ = false;
+        if (netThread_.joinable()) {
+            netThread_.join();
+        }
         ReleaseAllButtons();
         SDL_StopTextInput(window_);
-        SDL_SetWindowRelativeMouseMode(window_, false);
+        SetMouseCapture(false);
     }
 
     bool Running() const {
@@ -625,6 +676,20 @@ public:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             RefreshWindowSize();
             return;
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            if (hostSet_ && !enteringIp_) {
+                SetMouseCapture(true);
+            }
+            return;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            SetMouseCapture(false);
+            CancelHold();
+            ReleaseAllButtons();
+            return;
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+            CancelHold();
+            ReleaseAllButtons();
+            return;
         case SDL_EVENT_TEXT_INPUT:
             if (enteringIp_) {
                 AppendIpText(event.text.text ? event.text.text : "");
@@ -636,6 +701,9 @@ public:
         case SDL_EVENT_MOUSE_MOTION:
             if (!enteringIp_ && !menuOpen_) {
                 AddMotion(event.motion.xrel, event.motion.yrel);
+            }
+            if (holdAction_ != UiAction::None && !PointerOverHoldButton(event.motion.x, event.motion.y)) {
+                CancelHold();
             }
             return;
         case SDL_EVENT_MOUSE_WHEEL:
@@ -666,7 +734,8 @@ public:
         PollStatus();
         SendConnectionProbe();
         RepeatHeldTouchScroll();
-        SendPendingPackets();
+        UpdateHold();
+        g_packetLog.MaybeFlush();
     }
 
     void Render() {
@@ -687,7 +756,38 @@ public:
         SDL_RenderPresent(renderer_);
     }
 
+    void PumpAndTick() {
+        SDL_Event event{};
+        while (SDL_PollEvent(&event)) {
+            std::lock_guard<std::mutex> lock(sendMutex_);
+            HandleEvent(event);
+        }
+        {
+            std::lock_guard<std::mutex> lock(sendMutex_);
+            Tick();
+        }
+    }
+
 private:
+    void NetLoop() {
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+#endif
+        double nextTick = NowSeconds();
+        while (netRunning_.load(std::memory_order_relaxed)) {
+            {
+                std::lock_guard<std::mutex> lock(sendMutex_);
+                SendPendingPackets();
+            }
+            nextTick += kSendIntervalSeconds;
+            const double now = NowSeconds();
+            if (nextTick < now) {
+                nextTick = now;
+            }
+            SleepUntil(nextTick);
+        }
+    }
+
     float UiScale() const {
         return Clamp(static_cast<float>(windowHeight_) / 720.0f, 1.0f, 3.0f);
     }
@@ -752,7 +852,6 @@ private:
             if (menuOpen_) {
                 return BuildMenuButtons(uiWidth, uiHeight);
             }
-
             const float margin = 16.0f;
             const float utilityWidth = 118.0f;
             const float utilityHeight = 44.0f;
@@ -788,7 +887,6 @@ private:
         if (!menuOpen_) {
             return buttons;
         }
-
         return BuildMenuButtons(uiWidth, uiHeight);
     }
 
@@ -873,7 +971,7 @@ private:
                 enteringIp_ = false;
                 ipError_.clear();
                 SDL_StopTextInput(window_);
-                SDL_SetWindowRelativeMouseMode(window_, true);
+                SetMouseCapture(true);
             } else {
                 running_ = false;
             }
@@ -884,7 +982,7 @@ private:
             enteringIp_ = true;
             ipBuffer_ = host_;
             ipError_.clear();
-            SDL_SetWindowRelativeMouseMode(window_, false);
+            SetMouseCapture(false);
             SDL_StartTextInput(window_);
             break;
         case UiAction::ToggleMode:
@@ -928,7 +1026,92 @@ private:
         return false;
     }
 
+    bool ActionNeedsHold(UiAction action) const {
+        if (enteringIp_) {
+            return false;
+        }
+        return action != UiAction::None
+            && action != UiAction::ToggleMode
+            && action != UiAction::Connect
+            && action != UiAction::Resume;
+    }
+
+    void BeginHold(UiAction action) {
+        holdAction_ = action;
+        holdStart_ = NowSeconds();
+    }
+
+    void CancelHold() {
+        holdAction_ = UiAction::None;
+    }
+
+    void UpdateHold() {
+        if (holdAction_ == UiAction::None) {
+            return;
+        }
+        if (NowSeconds() - holdStart_ >= kButtonHoldSeconds) {
+            const UiAction action = holdAction_;
+            holdAction_ = UiAction::None;
+            ExecuteAction(action);
+        }
+    }
+
+    float HoldProgress(const Button& button) const {
+        if (holdAction_ == UiAction::None || button.action != holdAction_) {
+            return 0.0f;
+        }
+        const float elapsed = static_cast<float>(NowSeconds() - holdStart_);
+        return Clamp(elapsed / static_cast<float>(kButtonHoldSeconds), 0.0f, 1.0f);
+    }
+
+    bool PointerOverHoldButton(float windowX, float windowY) const {
+        if (holdAction_ == UiAction::None) {
+            return false;
+        }
+        const std::optional<Button> hit = HitButton(windowX, windowY);
+        if (hit && hit->action == holdAction_) {
+            return true;
+        }
+        const std::optional<Button> relayButton = HitButtonAtRelayCursor();
+        if (relayButton && relayButton->action == holdAction_) {
+            return true;
+        }
+        return false;
+    }
+
+    void OnButtonPressed(const Button& button) {
+        if (button.backspace || !button.inputText.empty()) {
+            ExecuteButtonRelease(button);
+            return;
+        }
+        if (button.action == UiAction::None) {
+            return;
+        }
+        if (!ActionNeedsHold(button.action)) {
+            ExecuteAction(button.action);
+            return;
+        }
+        BeginHold(button.action);
+    }
+
+    std::optional<Button> HitButtonAtRelayCursor() const {
+        if (enteringIp_ || mode_ != RelayMode::Menu) {
+            return std::nullopt;
+        }
+        const float scale = UiScale();
+        const float uiWidth = static_cast<float>(windowWidth_) / scale;
+        const float uiHeight = static_cast<float>(windowHeight_) / scale;
+        const float uiX = Clamp((virtualX_ / MenuTargetWidth()) * uiWidth, 0.0f, uiWidth - 1.0f);
+        const float uiY = Clamp((virtualY_ / MenuTargetHeight()) * uiHeight, 0.0f, uiHeight - 1.0f);
+        return HitButtonAtUi(uiX, uiY);
+    }
+
     void HandleKey(SDL_Keycode key) {
+        if (key == SDLK_F11) {
+            const bool isFullscreen = (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN) != 0;
+            SDL_SetWindowFullscreen(window_, !isFullscreen);
+            return;
+        }
         if (enteringIp_) {
             if (connecting_) {
                 if (key == SDLK_ESCAPE) {
@@ -959,33 +1142,50 @@ private:
             ExecuteAction(UiAction::Quit);
         } else if (key == SDLK_F9) {
             ExecuteAction(UiAction::ToggleMode);
+        } else if (key == SDLK_F10) {
+            g_packetLog.Toggle();
+            if (g_packetLog.Enabled()) {
+                g_packetLog.Mark("logging started host=" + host_ + " mode=" + ModeName(mode_));
+            }
         }
     }
 
     void HandleMouseButton(const SDL_Event& event) {
         std::optional<Button> hit;
-        UiAction relayCursorAction = UiAction::None;
-        if (enteringIp_ || menuOpen_ || (kTouchLayout && mode_ == RelayMode::Menu)) {
+        std::optional<Button> relayCursorButton;
+        if (enteringIp_ || menuOpen_ || mode_ == RelayMode::Menu) {
             hit = HitButton(event.button.x, event.button.y);
             if (!hit && !menuOpen_) {
-                relayCursorAction = HitActionAtRelayCursor();
+                relayCursorButton = HitButtonAtRelayCursor();
             }
         }
 
-        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && hit && ExecuteButtonRelease(*hit)) {
-            return;
-        }
-        if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && relayCursorAction != UiAction::None) {
-            ExecuteAction(relayCursorAction);
-            return;
-        }
-        if (hit || relayCursorAction != UiAction::None || enteringIp_) {
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            if (hit) {
+                OnButtonPressed(*hit);
+                return;
+            }
+            if (relayCursorButton) {
+                OnButtonPressed(*relayCursorButton);
+                return;
+            }
+            if (enteringIp_ || menuOpen_) {
+                return;
+            }
+            const int index = ButtonIndex(event.button.button);
+            if (index >= 0) {
+                buttonState_[static_cast<size_t>(index)] = 1;
+            }
             return;
         }
 
+        CancelHold();
+        if (menuOpen_) {
+            return;
+        }
         const int index = ButtonIndex(event.button.button);
         if (index >= 0) {
-            buttonState_[static_cast<size_t>(index)] = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? 1 : 0;
+            buttonState_[static_cast<size_t>(index)] = 0;
         }
     }
 
@@ -1021,8 +1221,13 @@ private:
             }
 
             if (hit->action != UiAction::None) {
-                touchActionFinger_ = finger;
-                touchAction_ = hit->action;
+                if (ActionNeedsHold(hit->action)) {
+                    touchActionFinger_ = finger;
+                    touchAction_ = hit->action;
+                    BeginHold(hit->action);
+                } else {
+                    ExecuteAction(hit->action);
+                }
             }
             return;
         }
@@ -1043,12 +1248,9 @@ private:
             }
 
             if (touchActionFinger_ && *touchActionFinger_ == finger) {
-                const UiAction action = touchAction_;
                 touchActionFinger_.reset();
                 touchAction_ = UiAction::None;
-                if (hit && hit->action == action && action != UiAction::None) {
-                    ExecuteAction(action);
-                }
+                CancelHold();
             }
         }
     }
@@ -1129,6 +1331,30 @@ private:
         windowWidth_ = width;
         windowHeight_ = height;
         RefreshMotionScale();
+    }
+
+    void SetMouseCapture(bool on) {
+        SDL_SetWindowRelativeMouseMode(window_, on);
+        SDL_SetWindowMouseGrab(window_, on);
+    }
+
+    void OpenRelayMenu() {
+        ReleaseAllButtons();
+        CancelHold();
+        pendingScroll_ = 0.0f;
+        accumDx_ = 0.0f;
+        accumDy_ = 0.0f;
+        motionPending_ = false;
+        menuOpen_ = true;
+        SetMouseCapture(false);
+    }
+
+    void ResumeRelay() {
+        if (enteringIp_) {
+            return;
+        }
+        menuOpen_ = false;
+        SetMouseCapture(true);
     }
 
     void AddMotion(float rawDx, float rawDy) {
@@ -1228,12 +1454,13 @@ private:
         host_ = pendingHost_;
         pendingHost_.clear();
         hostSet_ = true;
+        SaveIp(host_);
         connecting_ = false;
         enteringIp_ = false;
         menuOpen_ = false;
         ipError_.clear();
         SDL_StopTextInput(window_);
-        SDL_SetWindowRelativeMouseMode(window_, true);
+        SetMouseCapture(true);
     }
 
     void SetTargetSize(float width, float height) {
@@ -1324,10 +1551,6 @@ private:
             ipError_ = "No Bandit launcher response from " + failedHost;
             SDL_StartTextInput(window_);
             return;
-        }
-
-        if (!transport_.HasTcpFallback() && now - connectStart_ >= 2.0) {
-            transport_.TryTcpFallback();
         }
 
         if (lastConnectProbe_ == 0.0 || now - lastConnectProbe_ >= kConnectProbeSeconds) {
@@ -1423,6 +1646,12 @@ private:
             accumDy_ = 0.0f;
             motionPending_ = false;
             lastMotionSend_ = now;
+            if (lastSendStamp_ > 0.0) {
+                const double dtMs = (now - lastSendStamp_) * 1000.0;
+                sendDtMinMs_ = std::min(sendDtMinMs_, dtMs);
+                sendDtMaxMs_ = std::max(sendDtMaxMs_, dtMs);
+            }
+            lastSendStamp_ = now;
             if (heldRefreshDue) {
                 lastHeldButtonRefresh_ = now;
             }
@@ -1486,24 +1715,6 @@ private:
         }
     }
 
-    void OpenRelayMenu() {
-        ReleaseAllButtons();
-        pendingScroll_ = 0.0f;
-        accumDx_ = 0.0f;
-        accumDy_ = 0.0f;
-        motionPending_ = false;
-        menuOpen_ = true;
-        SDL_SetWindowRelativeMouseMode(window_, false);
-    }
-
-    void ResumeRelay() {
-        if (enteringIp_) {
-            return;
-        }
-        menuOpen_ = false;
-        SDL_SetWindowRelativeMouseMode(window_, true);
-    }
-
     void DrawText(float x, float y, const std::string& text, SDL_Color color) {
         SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
         SDL_RenderDebugText(renderer_, x, y, text.c_str());
@@ -1530,6 +1741,15 @@ private:
             SDL_SetRenderDrawColor(renderer_, 32, 43, 58, 255);
         }
         SDL_RenderFillRect(renderer_, &button.rect);
+
+        const float holdProgress = HoldProgress(button);
+        if (holdProgress > 0.0f) {
+            SDL_FRect fill = button.rect;
+            fill.w = button.rect.w * holdProgress;
+            SDL_SetRenderDrawColor(renderer_, 80, 140, 165, 255);
+            SDL_RenderFillRect(renderer_, &fill);
+        }
+
         SDL_SetRenderDrawColor(renderer_, active ? 147 : 105, active ? 221 : 183, active ? 232 : 204, 255);
         SDL_RenderRect(renderer_, &button.rect);
 
@@ -1581,10 +1801,37 @@ private:
         DrawText(18.0f, 18.0f, "Bandit Mouse Relay", SDL_Color{ 246, 249, 252, 255 });
         DrawText(18.0f, 42.0f, "Xbox: " + host_, SDL_Color{ 218, 229, 241, 255 });
         DrawText(18.0f, 62.0f, "Mouse: " + ModeName(mode_) + "  App: " + appMode + "  UDP: " + network, SDL_Color{ 218, 229, 241, 255 });
-        DrawText(18.0f, 82.0f, "Packets: sent=" + std::to_string(sentPackets_) + " status=" + std::to_string(statusPackets_), SDL_Color{ 174, 187, 202, 255 });
+        DrawText(18.0f, 82.0f, "Packets: sent=" + std::to_string(sentPackets_.load()) + " status=" + std::to_string(statusPackets_), SDL_Color{ 174, 187, 202, 255 });
         DrawText(18.0f, 102.0f, "Window: " + std::to_string(windowWidth_) + "x" + std::to_string(windowHeight_) + " -> menu " + std::to_string((int)MenuTargetWidth()) + "x" + std::to_string((int)MenuTargetHeight()) + " raw " + std::to_string((int)targetWidth_) + "x" + std::to_string((int)targetHeight_), SDL_Color{ 174, 187, 202, 255 });
-        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: Esc menu/release mouse, F9 toggle local mode", SDL_Color{ 145, 158, 174, 255 });
+        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: Esc menu, F3 change IP, F8 quit, F9 toggle local mode, F10 packet log", SDL_Color{ 145, 158, 174, 255 });
         DrawText(18.0f, 142.0f, "Last: " + lastStatus_, SDL_Color{ 145, 158, 174, 255 });
+
+        int diagPixelW = 0;
+        int diagPixelH = 0;
+        SDL_GetWindowSizeInPixels(window_, &diagPixelW, &diagPixelH);
+        const bool diagRelative = SDL_GetWindowRelativeMouseMode(window_);
+        const bool diagGrab = SDL_GetWindowMouseGrab(window_);
+        const bool diagFocus = (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS) != 0;
+        char diagLine[176];
+        std::snprintf(diagLine, sizeof(diagLine),
+            "Capture: rel=%s grab=%s focus=%s  pixels=%dx%d  scale=%.2f",
+            diagRelative ? "on" : "off", diagGrab ? "on" : "off", diagFocus ? "yes" : "no",
+            diagPixelW, diagPixelH, SDL_GetWindowDisplayScale(window_));
+        DrawText(18.0f, 162.0f, diagLine, SDL_Color{ 150, 205, 165, 255 });
+
+        char sendLine[120];
+        std::snprintf(sendLine, sizeof(sendLine), "Send dt(ms): min=%.1f max=%.1f (even ~4.2 = no render starvation)", sendDtMinMs_, sendDtMaxMs_);
+        DrawText(18.0f, 182.0f, sendLine, SDL_Color{ 205, 195, 150, 255 });
+        sendDtMinMs_ = 1000.0;
+        sendDtMaxMs_ = 0.0;
+
+        char logLine[256];
+        if (g_packetLog.Enabled()) {
+            std::snprintf(logLine, sizeof(logLine), "Packet log: ON -> %s", g_packetLog.Path().c_str());
+        } else {
+            std::snprintf(logLine, sizeof(logLine), "Packet log: off (press F10 to record sent/received packets)");
+        }
+        DrawText(18.0f, 202.0f, logLine, g_packetLog.Enabled() ? SDL_Color{ 235, 180, 90, 255 } : SDL_Color{ 145, 158, 174, 255 });
 
         if (menuOpen_) {
             const float panelHeight = kTouchLayout ? 360.0f : 300.0f;
@@ -1646,6 +1893,8 @@ private:
     std::optional<SDL_FingerID> touchActionFinger_;
     std::optional<SDL_FingerID> touchScrollFinger_;
     UiAction touchAction_ = UiAction::None;
+    UiAction holdAction_ = UiAction::None;
+    double holdStart_ = 0.0;
 
     float virtualX_ = kTargetWidth * kMenuCoordinateScale * 0.5f;
     float virtualY_ = kTargetHeight * kMenuCoordinateScale * 0.5f;
@@ -1660,11 +1909,30 @@ private:
     double lastHeldButtonRefresh_ = 0.0;
     double lastTouchScrollRepeat_ = 0.0;
     double lastPing_ = 0.0;
-    uint64_t sentPackets_ = 0;
+    double lastSendStamp_ = 0.0;
+    double sendDtMinMs_ = 1000.0;
+    double sendDtMaxMs_ = 0.0;
+    std::atomic<uint64_t> sentPackets_{ 0 };
     uint64_t statusPackets_ = 0;
+
+    std::mutex sendMutex_;
+    std::thread netThread_;
+    std::atomic<bool> netRunning_{ false };
 };
 
 } // namespace
+
+#ifdef _WIN32
+static void RaiseRelaySchedulingPriority() {
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    PROCESS_POWER_THROTTLING_STATE throttling{};
+    throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    throttling.StateMask = 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
+}
+#endif
 
 int main(int, char**) {
     WinsockRuntime winsock;
@@ -1698,17 +1966,16 @@ int main(int, char**) {
 
     SDL_SetRenderVSync(renderer, 0);
 
+#ifdef _WIN32
+    RaiseRelaySchedulingPriority();
+#endif
+
     {
         RelayApp app(window, renderer);
         double lastRender = -kRenderIntervalSeconds;
         double nextTick = NowSeconds();
         while (app.Running()) {
-            SDL_Event event{};
-            while (SDL_PollEvent(&event)) {
-                app.HandleEvent(event);
-            }
-
-            app.Tick();
+            app.PumpAndTick();
             const double now = NowSeconds();
             if (now - lastRender >= kRenderIntervalSeconds) {
                 app.Render();

@@ -23,6 +23,7 @@
 #include <windows.devices.input.h>
 #include <windows.ui.input.h>
 #include <windows.applicationmodel.datatransfer.h>
+#include "mouse_support_api.h"
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace Microsoft::WRL;
@@ -442,27 +443,21 @@ static bool g_controller_rb_down = false;
 static bool g_cursorDisabled = true;
 static int g_cursorMode = GLFW_CURSOR_DISABLED;
 static bool g_cursor_inside = false;
-static SOCKET g_cursor_overlay_socket = INVALID_SOCKET;
 static double g_cursor_x = 960.0;
 static double g_cursor_y = 540.0;
 static int g_gameinput_log_count = 0;
 static bool g_haveGameInputMouseState = false;
-static bool g_have_mouse_relay_status_addr = false;
 static int g_height = 1080;
 static GameInputMouseState g_lastGameInputMouseState = {};
 static double g_menu_abs_x = 960.0;
 static double g_menu_abs_y = 540.0;
-static ULONGLONG g_modeChangeTime = 0;
 static ComPtr<ABI::Windows::Devices::Input::IMouseDevice> g_mouseDevice;
 static bool g_mouseDeviceHooksInstalled = false;
 static ComPtr<MouseDeviceMovedHandler> g_mouseMovedHandler;
 static EventRegistrationToken g_mouseMovedToken = {};
 static int g_mouse_log_count = 0;
-static sockaddr_in g_mouse_relay_status_addr = {};
-static SRWLOCK g_mouse_relay_status_lock = SRWLOCK_INIT;
-static SOCKET g_mouse_relay_status_socket = INVALID_SOCKET;
+static int g_menu_abs_log_count = 0;
 static unsigned char g_mouse_state[8] = {};
-static int g_pendingMode = -1;
 static ComPtr<CoreWindowPointerHandler> g_pointerCaptureLostHandler;
 static EventRegistrationToken g_pointerCaptureLostToken = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerEnteredHandler;
@@ -479,29 +474,8 @@ static EventRegistrationToken g_pointerReleasedToken = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerWheelHandler;
 static EventRegistrationToken g_pointerWheelToken = {};
 static bool g_raw_mouse_motion = false;
-static bool g_remote_mouse_abs_pending = false;
-static bool g_remote_mouse_abs_window = false;
-static double g_remote_mouse_abs_x = 960.0;
-static double g_remote_mouse_abs_y = 540.0;
-static int g_remote_mouse_buttons = 0;
-struct RemoteMouseButtonEvent {
-    int button;
-    int action;
-};
-static std::vector<RemoteMouseButtonEvent> g_remote_mouse_button_events;
-static double g_remote_mouse_dx = 0.0;
-static double g_remote_mouse_dy = 0.0;
-static SRWLOCK g_remote_mouse_lock = SRWLOCK_INIT;
-static int g_remote_mouse_log_count = 0;
-static volatile LONG g_remote_mouse_handshake_logged = 0;
-static volatile LONG g_remote_mouse_packet_count = 0;
-static volatile LONG g_remote_mouse_seen = 0;
-static volatile LONG g_remote_mouse_server_started = 0;
-static double g_remote_mouse_wheel_y = 0.0;
-static volatile LONG g_last_companion_tick = 0;     
 static bool g_mouse_active_latched = false;         
 static const DWORD kMouseCompanionTimeoutMs = 3000; 
-static int g_reportedMode = GLFW_CURSOR_DISABLED;
 static int g_width = 1920;
 static volatile LONG g_processing_events = 0;
 static int g_process_events_error_log_count = 0;
@@ -529,8 +503,6 @@ static double ProtocolToWindowY(double y);
 static double WindowToProtocolX(double x);
 static double WindowToProtocolY(double y);
 static void SendCursorOverlayState();
-static void RememberMouseRelayStatusAddress(const sockaddr_in& remote);
-static void SendMouseRelayStatusText(const char* text);
 static void SendMouseRelayCursorSync(double x, double y);
 static void DispatchMouseDelta(double dx, double dy);
 static void DispatchMouseAbsolute(double x, double y);
@@ -539,10 +511,8 @@ static void FireRemoteMouseButtonCallback(int button, int action);
 static void SetRemoteMouseButtonState(int button, int action);
 static void SetMouseButtonState(int button, int action, bool fireCallback);
 static bool AnyMouseButtonDown();
-static void QueueRemoteMouseButton(int buttonBit, int value, int& buttons);
 static void DrainRemoteMouseInput();
-static void StartRemoteMouseServer();
-static void MarkMouseCompanionSeen();
+static void PushMouseHostState();
 static bool MouseCompanionActive();
 static void FlushMouseButtonsForDeactivate();
 static int SyntheticScancodeForKey(int key);
@@ -1334,7 +1304,10 @@ static bool AcquireCoreWindow() {
     InstallKeyboardHooks();
     InstallPointerHooks();
     InstallMouseDeviceHooks();
-    StartRemoteMouseServer();
+    if (!MouseSupport_IsRunning()) {
+        MouseSupport_Init();
+    }
+    PushMouseHostState();
     return true;
 }
 
@@ -1432,6 +1405,8 @@ static void RefreshWindowMetrics(bool fireCallbacks) {
 
     g_window_width = newWindowWidth;
     g_window_height = newWindowHeight;
+    g_menu_window_width = g_window_width;
+    g_menu_window_height = g_window_height;
     g_framebuffer_width = newFramebufferWidth;
     g_framebuffer_height = newFramebufferHeight;
     g_content_scale_x = newContentScaleX;
@@ -1779,153 +1754,15 @@ static double WindowToProtocolY(double y) {
     return g_window_height > 0 ? y * (kProtocolHeight / (double)g_window_height) : y;
 }
 static void SendCursorOverlayState() {
-    WSADATA wsa{};
-    WSAStartup(MAKEWORD(2, 2), &wsa);
-
-    if (g_cursor_overlay_socket == INVALID_SOCKET) {
-        g_cursor_overlay_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (g_cursor_overlay_socket == INVALID_SOCKET) return;
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(7333);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    char packet[64] = {};
     const int visible = (g_cursorMode == GLFW_CURSOR_NORMAL &&
         CurrentCursorInputOwner() == CursorInputOwnerRelay) ? 1 : 0;
-    
-    sprintf_s(packet, "CURSOR:%.0f,%.0f,%d",
-        WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y), visible);
-    sendto(g_cursor_overlay_socket, packet, (int)strlen(packet), 0,
-        reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
-}
-static void RememberMouseRelayStatusAddress(const sockaddr_in& remote) {
-    sockaddr_in statusTo = remote;
-    statusTo.sin_port = htons(7332);
-    AcquireSRWLockExclusive(&g_mouse_relay_status_lock);
-    g_mouse_relay_status_addr = statusTo;
-    g_have_mouse_relay_status_addr = true;
-    ReleaseSRWLockExclusive(&g_mouse_relay_status_lock);
-}
-static void SendMouseRelayStatusText(const char* text) {
-    WSADATA wsa{};
-    WSAStartup(MAKEWORD(2, 2), &wsa);
-
-    if (g_mouse_relay_status_socket == INVALID_SOCKET) {
-        g_mouse_relay_status_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (g_mouse_relay_status_socket == INVALID_SOCKET) return;
-    }
-
-    sockaddr_in statusTo{};
-    bool haveAddress = false;
-    AcquireSRWLockShared(&g_mouse_relay_status_lock);
-    if (g_have_mouse_relay_status_addr) {
-        statusTo = g_mouse_relay_status_addr;
-        haveAddress = true;
-    }
-    ReleaseSRWLockShared(&g_mouse_relay_status_lock);
-
-    if (!haveAddress) return;
-    sendto(g_mouse_relay_status_socket, text, (int)strlen(text), 0,
-        reinterpret_cast<const sockaddr*>(&statusTo), sizeof(statusTo));
+    MouseSupport_UpdateOverlay(g_menu_abs_x, g_menu_abs_y, visible);
 }
 static void SendMouseRelayCursorSync(double x, double y) {
-    char packet[64] = {};
-    sprintf_s(packet, "SYNC:%.0f,%.0f", x, y);
-    SendMouseRelayStatusText(packet);
+    MouseSupport_SendCursorSync(x, y);
 }
 static void SendMouseRelayWindowCursorSync(double x, double y) {
-    char packet[64] = {};
-    sprintf_s(packet, "SYNCW:%.0f,%.0f", x, y);
-    SendMouseRelayStatusText(packet);
-}
-static int StableMouseRelayStatusMode() {
-    const int pendingMode = g_pendingMode;
-    if (pendingMode >= 0) {
-        const ULONGLONG elapsed = GetTickCount64() - g_modeChangeTime;
-        if (elapsed < 150) {
-            return g_reportedMode;
-        }
-        g_reportedMode = pendingMode;
-        g_pendingMode = -1;
-    }
-    return g_reportedMode;
-}
-static void FormatMouseRelayReady(char* out, size_t outSize, const char* prefix) {
-    const int statusMode = StableMouseRelayStatusMode();
-    sprintf_s(out, outSize, "%s mode=%d cursor=%.0f,%.0f cursorw=%.0f,%.0f size=%dx%d menu=%dx%d",
-        prefix,
-        statusMode,
-        WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y),
-        g_menu_abs_x, g_menu_abs_y,
-        g_window_width, g_window_height,
-        g_menu_window_width, g_menu_window_height);
-}
-static bool HandleRemoteMousePacketText(const char* text, char* reply, size_t replySize, bool* shouldReply) {
-    *shouldReply = false;
-    if (strcmp(text, "hello") == 0 || strcmp(text, "ping") == 0) {
-        FormatMouseRelayReady(reply, replySize, "javauwp_glfw_mouse:ready");
-        *shouldReply = true;
-        if (InterlockedCompareExchange(&g_remote_mouse_handshake_logged, 1, 0) == 0) {
-            ShimLog("RemoteMouse: handshake replied");
-        }
-        return true;
-    }
-
-    float dx = 0.0f, dy = 0.0f, wheelY = 0.0f;
-    int lb = -1, rb = -1, mb = -1, x1 = -1, x2 = -1;
-    bool absolutePacket = false;
-    bool absoluteWindowPacket = false;
-    int fields = 0;
-    if (strncmp(text, "ABSW:", 5) == 0) {
-        absolutePacket = true;
-        absoluteWindowPacket = true;
-        fields = sscanf_s(text + 5, "%f,%f,%d,%d,%d,%f,%d,%d",
-            &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
-    } else if (strncmp(text, "ABS:", 4) == 0) {
-        absolutePacket = true;
-        fields = sscanf_s(text + 4, "%f,%f,%d,%d,%d,%f,%d,%d",
-            &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
-    } else {
-        fields = sscanf_s(text, "%f,%f,%d,%d,%d,%f,%d,%d",
-            &dx, &dy, &lb, &rb, &mb, &wheelY, &x1, &x2);
-    }
-    if (fields != 8) {
-        strcpy_s(reply, replySize, "javauwp_glfw_mouse:bad_packet");
-        *shouldReply = true;
-        return true;
-    }
-
-    AcquireSRWLockExclusive(&g_remote_mouse_lock);
-    if (absolutePacket) {
-        g_remote_mouse_abs_x = (double)dx;
-        g_remote_mouse_abs_y = (double)dy;
-        g_remote_mouse_abs_window = absoluteWindowPacket;
-        g_remote_mouse_abs_pending = true;
-    } else {
-        g_remote_mouse_dx += (double)dx;
-        g_remote_mouse_dy += (double)dy;
-    }
-    g_remote_mouse_wheel_y += (double)wheelY;
-    QueueRemoteMouseButton(1, lb, g_remote_mouse_buttons);
-    QueueRemoteMouseButton(2, rb, g_remote_mouse_buttons);
-    QueueRemoteMouseButton(4, mb, g_remote_mouse_buttons);
-    QueueRemoteMouseButton(8, x1, g_remote_mouse_buttons);
-    QueueRemoteMouseButton(16, x2, g_remote_mouse_buttons);
-    ReleaseSRWLockExclusive(&g_remote_mouse_lock);
-    InterlockedExchange(&g_remote_mouse_seen, 1);
-    SetCursorInputOwner(CursorInputOwnerRelay);
-
-    const LONG packetCount = InterlockedIncrement(&g_remote_mouse_packet_count);
-    if (packetCount == 1) {
-        ShimLog("RemoteMouse: packets=%ld last dx=%.3f dy=%.3f wheel=%.3f buttons=%d,%d,%d,%d,%d",
-            packetCount, dx, dy, wheelY, lb, rb, mb, x1, x2);
-        FormatMouseRelayReady(reply, replySize, "javauwp_glfw_mouse:receiving");
-        *shouldReply = true;
-    }
-    return true;
+    MouseSupport_SendWindowCursorSync(x, y);
 }
 static void DispatchMouseDelta(double dx, double dy) {
     if (dx == 0.0 && dy == 0.0) return;
@@ -1951,8 +1788,8 @@ static void DispatchMouseAbsolute(double x, double y) {
     const double inputY = WindowToMenuInputY(g_menu_abs_y);
     DispatchCursorPosInternal(inputX, inputY, false);
     SendCursorOverlayState();
-    if (g_remote_mouse_log_count < 12) {
-        ++g_remote_mouse_log_count;
+    if (g_menu_abs_log_count < 12) {
+        ++g_menu_abs_log_count;
         ShimLog("RemoteMouse ABS protocol=%.1f,%.1f -> window=%.1f,%.1f input=%.1f,%.1f (win %dx%d menu %dx%d)",
             x, y, g_menu_abs_x, g_menu_abs_y,
             inputX, inputY,
@@ -1966,8 +1803,8 @@ static void DispatchMouseWindowAbsolute(double x, double y) {
     const double inputY = WindowToMenuInputY(g_menu_abs_y);
     DispatchCursorPosInternal(inputX, inputY, false);
     SendCursorOverlayState();
-    if (g_remote_mouse_log_count < 12) {
-        ++g_remote_mouse_log_count;
+    if (g_menu_abs_log_count < 12) {
+        ++g_menu_abs_log_count;
         ShimLog("RemoteMouse ABSW window=%.1f,%.1f -> input=%.1f,%.1f (win %dx%d menu %dx%d)",
             g_menu_abs_x, g_menu_abs_y,
             inputX, inputY,
@@ -2004,11 +1841,8 @@ static bool AnyMouseButtonDown() {
     }
     return false;
 }
-static void MarkMouseCompanionSeen() {
-    InterlockedExchange(&g_last_companion_tick, (LONG)GetTickCount());
-}
 static bool MouseCompanionActive() {
-    const LONG last = InterlockedCompareExchange(&g_last_companion_tick, 0, 0);
+    const unsigned int last = MouseSupport_LastActivityTickMs();
     if (last == 0) return false;
     return (DWORD)(GetTickCount() - (DWORD)last) <= kMouseCompanionTimeoutMs;
 }
@@ -2022,297 +1856,46 @@ static void FlushMouseButtonsForDeactivate() {
         }
     }
 }
-static void QueueRemoteMouseButton(int buttonBit, int value, int& buttons) {
-    if (value < 0) return;
-    const bool wasDown = (buttons & buttonBit) != 0;
-    const bool isDown = value != 0;
-    if (wasDown == isDown) return;
-
-    if (isDown) buttons |= buttonBit;
-    else buttons &= ~buttonBit;
-
-    int button = GLFW_MOUSE_BUTTON_LEFT;
-    switch (buttonBit) {
-    case 1: button = GLFW_MOUSE_BUTTON_LEFT; break;
-    case 2: button = GLFW_MOUSE_BUTTON_RIGHT; break;
-    case 4: button = GLFW_MOUSE_BUTTON_MIDDLE; break;
-    case 8: button = GLFW_MOUSE_BUTTON_4; break;
-    case 16: button = GLFW_MOUSE_BUTTON_5; break;
-    default: return;
-    }
-    g_remote_mouse_button_events.push_back({
-        button,
-        isDown ? GLFW_PRESS : GLFW_RELEASE,
-    });
+static void PushMouseHostState() {
+    MouseSupportHostState state;
+    state.windowWidth = g_window_width;
+    state.windowHeight = g_window_height;
+    state.menuWidth = g_menu_window_width;
+    state.menuHeight = g_menu_window_height;
+    state.cursorMode = g_cursorMode;
+    state.menuCursorX = g_menu_abs_x;
+    state.menuCursorY = g_menu_abs_y;
+    MouseSupport_SetHostState(&state);
 }
 static void DrainRemoteMouseInput() {
-    double dx = 0.0;
-    double dy = 0.0;
-    bool absPending = false;
-    double absX = 0.0;
-    double absY = 0.0;
-    double wheelY = 0.0;
-    std::vector<RemoteMouseButtonEvent> buttonEvents;
+    MouseSupportFrame frame;
+    if (!MouseSupport_PollFrame(&frame)) return;
 
-    AcquireSRWLockExclusive(&g_remote_mouse_lock);
-    dx = g_remote_mouse_dx;
-    dy = g_remote_mouse_dy;
-    absPending = g_remote_mouse_abs_pending;
-    absX = g_remote_mouse_abs_x;
-    absY = g_remote_mouse_abs_y;
-    const bool absWindow = g_remote_mouse_abs_window;
-    wheelY = g_remote_mouse_wheel_y;
-    buttonEvents.swap(g_remote_mouse_button_events);
-    g_remote_mouse_dx = 0.0;
-    g_remote_mouse_dy = 0.0;
-    g_remote_mouse_abs_pending = false;
-    g_remote_mouse_abs_window = false;
-    g_remote_mouse_wheel_y = 0.0;
-    ReleaseSRWLockExclusive(&g_remote_mouse_lock);
-
-    if (absPending) {
-        if (absWindow) {
-            DispatchMouseWindowAbsolute(absX, absY);
+    bool activity = false;
+    if (frame.hasAbsolute) {
+        if (frame.absoluteWindow) {
+            DispatchMouseWindowAbsolute(frame.absX, frame.absY);
         } else {
-            DispatchMouseAbsolute(absX, absY);
+            DispatchMouseAbsolute(frame.absX, frame.absY);
         }
-    } else if (dx != 0.0 || dy != 0.0) {
-        DispatchMouseDelta(dx, dy);
-    }
-    if (wheelY != 0.0 && g_scroll_cb && MouseCompanionActive()) {
-        g_scroll_cb((GLFWwindow*)&g_fake_window, 0.0, wheelY);
-    }
-
-    for (const RemoteMouseButtonEvent& event : buttonEvents) {
-        ShimLog("RemoteMouse button=%d action=%s callback=%s",
-            event.button,
-            event.action == GLFW_PRESS ? "PRESS" : "RELEASE",
-            g_mousebutton_cb ? "set" : "missing");
-        SetRemoteMouseButtonState(event.button, event.action);
-    }
-}
-static void StartRemoteMouseServer() {
-    if (InterlockedExchange(&g_remote_mouse_server_started, 1) != 0) {
-        return;
+        activity = true;
+    } else if (frame.dx != 0.0 || frame.dy != 0.0) {
+        DispatchMouseDelta(frame.dx, frame.dy);
+        activity = true;
     }
 
-    HANDLE thread = CreateThread(
-        nullptr,
-        0,
-        [](LPVOID) -> DWORD {
-            constexpr unsigned short kRemoteMousePort = 7331;
-            ShimLog("RemoteMouse: UDP thread starting on port %u", kRemoteMousePort);
-
-            WSADATA wsa{};
-            const int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsa);
-            if (wsaResult != 0) {
-                ShimLog("RemoteMouse: WSAStartup failed err=%d", wsaResult);
-                return 0;
-            }
-
-            SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            if (sock == INVALID_SOCKET) {
-                ShimLog("RemoteMouse: socket failed err=%d", WSAGetLastError());
-                WSACleanup();
-                return 0;
-            }
-
-            sockaddr_in addr{};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(kRemoteMousePort);
-            addr.sin_addr.s_addr = INADDR_ANY;
-            if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-                ShimLog("RemoteMouse: bind UDP %u failed err=%d", kRemoteMousePort, WSAGetLastError());
-                closesocket(sock);
-                WSACleanup();
-                return 0;
-            }
-
-            
-            
-            
-            int rcvBuf = 256 * 1024;
-            setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
-                reinterpret_cast<const char*>(&rcvBuf), sizeof(rcvBuf));
-            DWORD rcvTimeoutMs = 50;
-            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-                reinterpret_cast<const char*>(&rcvTimeoutMs), sizeof(rcvTimeoutMs));
-
-            ShimLog("RemoteMouse: listening on UDP port %u", kRemoteMousePort);
-            char buf[64];
-            int lastSentStatusMode = -1;
-            auto sendModeStatus = [&](bool force) {
-                const int statusMode = StableMouseRelayStatusMode();
-                if (!force && statusMode == lastSentStatusMode) return;
-                lastSentStatusMode = statusMode;
-                const char* status = (statusMode == GLFW_CURSOR_DISABLED) ? "MODE:GAMEPLAY" : "MODE:MENU";
-                char packet[160] = {};
-                sprintf_s(packet, "%s cursorw=%.0f,%.0f size=%dx%d menu=%dx%d",
-                    status,
-                    g_menu_abs_x, g_menu_abs_y,
-                    g_window_width, g_window_height,
-                    g_menu_window_width, g_menu_window_height);
-                SendMouseRelayStatusText(packet);
-            };
-
-            while (true) {
-                sockaddr_in from{};
-                int fromLen = sizeof(from);
-                const int len = recvfrom(sock, buf, sizeof(buf) - 1, 0,
-                    reinterpret_cast<sockaddr*>(&from), &fromLen);
-                if (len <= 0) {
-                    
-                    
-                    sendModeStatus(false);
-                    continue;
-                }
-                buf[len] = 0;
-                RememberMouseRelayStatusAddress(from);
-                MarkMouseCompanionSeen();
-
-                char ack[160] = {};
-                bool shouldReply = false;
-                if (HandleRemoteMousePacketText(buf, ack, sizeof(ack), &shouldReply)) {
-                    if (shouldReply) {
-                        sendto(sock, ack, (int)strlen(ack), 0,
-                            reinterpret_cast<sockaddr*>(&from), fromLen);
-                        sendModeStatus(true);
-                    }
-                    continue;
-                }
-            }
-        },
-        nullptr,
-        0,
-        nullptr);
-
-    if (thread) {
-        CloseHandle(thread);
-    } else {
-        ShimLog("RemoteMouse: CreateThread failed err=%u", GetLastError());
-        InterlockedExchange(&g_remote_mouse_server_started, 0);
+    if (frame.wheel != 0.0 && g_scroll_cb && MouseCompanionActive()) {
+        g_scroll_cb((GLFWwindow*)&g_fake_window, 0.0, frame.wheel);
+        activity = true;
     }
 
-    HANDLE tcpThread = CreateThread(
-        nullptr,
-        0,
-        [](LPVOID) -> DWORD {
-            constexpr unsigned short kRemoteMousePort = 7331;
-            ShimLog("RemoteMouse: TCP thread starting on port %u", kRemoteMousePort);
+    for (int i = 0; i < frame.buttonCount; ++i) {
+        SetRemoteMouseButtonState(frame.buttons[i].button, frame.buttons[i].action);
+        activity = true;
+    }
 
-            WSADATA wsa{};
-            const int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsa);
-            if (wsaResult != 0) {
-                ShimLog("RemoteMouse: TCP WSAStartup failed err=%d", wsaResult);
-                return 0;
-            }
-
-            SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            if (server == INVALID_SOCKET) {
-                ShimLog("RemoteMouse: TCP socket failed err=%d", WSAGetLastError());
-                WSACleanup();
-                return 0;
-            }
-
-            BOOL reuse = TRUE;
-            setsockopt(server, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
-
-            sockaddr_in addr{};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(kRemoteMousePort);
-            addr.sin_addr.s_addr = INADDR_ANY;
-            if (bind(server, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
-                listen(server, 2) == SOCKET_ERROR) {
-                ShimLog("RemoteMouse: TCP bind/listen %u failed err=%d", kRemoteMousePort, WSAGetLastError());
-                closesocket(server);
-                WSACleanup();
-                return 0;
-            }
-
-            ShimLog("RemoteMouse: listening on TCP port %u", kRemoteMousePort);
-
-            while (true) {
-                fd_set readSet;
-                FD_ZERO(&readSet);
-                FD_SET(server, &readSet);
-                timeval tv{};
-                tv.tv_sec = 0;
-                tv.tv_usec = 250000;
-                if (select(0, &readSet, nullptr, nullptr, &tv) <= 0) {
-                    continue;
-                }
-
-                sockaddr_in from{};
-                int fromLen = sizeof(from);
-                SOCKET client = accept(server, reinterpret_cast<sockaddr*>(&from), &fromLen);
-                if (client == INVALID_SOCKET) {
-                    continue;
-                }
-
-                BOOL noDelay = TRUE;
-                setsockopt(client, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&noDelay), sizeof(noDelay));
-                DWORD timeoutMs = 50;
-                setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
-                RememberMouseRelayStatusAddress(from);
-                ShimLog("RemoteMouse: TCP client connected");
-
-                std::string pending;
-                char buf[256]{};
-                while (true) {
-                    const int len = recv(client, buf, sizeof(buf) - 1, 0);
-                    if (len == 0) {
-                        break;
-                    }
-                    if (len < 0) {
-                        const int err = WSAGetLastError();
-                        if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) {
-                            continue;
-                        }
-                        break;
-                    }
-
-                    buf[len] = 0;
-                    pending.append(buf, len);
-                    for (;;) {
-                        const size_t newline = pending.find('\n');
-                        if (newline == std::string::npos) {
-                            if (pending.size() > 512) {
-                                pending.clear();
-                            }
-                            break;
-                        }
-
-                        std::string packet = pending.substr(0, newline);
-                        pending.erase(0, newline + 1);
-                        while (!packet.empty() && (packet.back() == '\r' || packet.back() == '\n')) {
-                            packet.pop_back();
-                        }
-                        if (packet.empty()) {
-                            continue;
-                        }
-
-                        MarkMouseCompanionSeen();
-                        char reply[160]{};
-                        bool shouldReply = false;
-                        if (HandleRemoteMousePacketText(packet.c_str(), reply, sizeof(reply), &shouldReply) && shouldReply) {
-                            strcat_s(reply, "\n");
-                            send(client, reply, (int)strlen(reply), 0);
-                        }
-                    }
-                }
-
-                closesocket(client);
-                ShimLog("RemoteMouse: TCP client disconnected");
-            }
-        },
-        nullptr,
-        0,
-        nullptr);
-
-    if (tcpThread) {
-        CloseHandle(tcpThread);
-    } else {
-        ShimLog("RemoteMouse: TCP CreateThread failed err=%u", GetLastError());
+    if (activity) {
+        SetCursorInputOwner(CursorInputOwnerRelay);
     }
 }
 static int SyntheticScancodeForKey(int key) {
@@ -2525,7 +2108,7 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 }
 static void PollCoreWindowPointerPosition() {
     if (!g_coreWindow || g_cursorDisabled ||
-        InterlockedCompareExchange(&g_remote_mouse_seen, 0, 0)) {
+        MouseSupport_LastActivityTickMs() != 0) {
         return;
     }
 
@@ -3081,6 +2664,7 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
             ShimLog("Skipping ProcessEvents off dispatcher thread hr=0x%08X access=%d", accessHr, hasDispatcherAccess ? 1 : 0);
         }
     }
+    PushMouseHostState();
     const bool mouseCompanionActive = MouseCompanionActive();
     if (!mouseCompanionActive && g_mouse_active_latched) {
       
@@ -3137,12 +2721,9 @@ extern "C" __declspec(dllexport) void glfwSetInputMode(GLFWwindow*, int mode, in
         return;
     }
 
-    if (g_cursorMode != value) {
-        g_pendingMode = value;
-        g_modeChangeTime = GetTickCount64();
-    }
     g_cursorMode = value;
     g_cursorDisabled = (value == GLFW_CURSOR_DISABLED);
+    PushMouseHostState();
     if (!g_cursorDisabled) {
         g_menu_abs_x = ClampDouble(g_cursor_x, 0.0, CursorMaxX());
         g_menu_abs_y = ClampDouble(g_cursor_y, 0.0, CursorMaxY());

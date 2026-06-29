@@ -27,6 +27,7 @@ struct AuthUiState {
     int selectedModIndex = 0;
     int modsFocus = 0;
     int modsScrollRow = 0;
+    int modsHoverTab = -1;
     int modsTotalHits = 0;
     bool modsExhausted = false;
     bool modsSearchEditing = false;

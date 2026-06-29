@@ -2,6 +2,7 @@
 
 #include "auth_ui_state.h"
 #include "launcher_common.h"
+#include "launcher_mouse.h"
 #include "mods_ui_globals.h"
 #include "profiles.h"
 
@@ -178,6 +179,8 @@ public:
         if (!d2dContext_ || !swapChain_) return;
         if (!EnsureRenderTargetSize()) return;
 
+        mainMenuRectCount_ = 0;
+        hitRegions_.clear();
         ComPtr<ID2D1SolidColorBrush> white;
         ComPtr<ID2D1SolidColorBrush> muted;
         ComPtr<ID2D1SolidColorBrush> panel;
@@ -214,6 +217,18 @@ public:
         }
 
         auto finishDraw = [&]() {
+            if (cursorVisible_) {
+                const float cx = cursorX_;
+                const float cy = cursorY_;
+                const float arm = 14.0f;
+                const float thick = 2.0f;
+                const float box = 5.0f;
+                black->SetOpacity(0.4f);
+                d2dContext_->FillRectangle(D2D1::RectF(cx - box, cy - box, cx + box, cy + box), black.Get());
+                black->SetOpacity(1.0f);
+                d2dContext_->FillRectangle(D2D1::RectF(cx - arm, cy - thick, cx + arm, cy + thick), white.Get());
+                d2dContext_->FillRectangle(D2D1::RectF(cx - thick, cy - arm, cx + thick, cy + arm), white.Get());
+            }
             HRESULT hr = d2dContext_->EndDraw();
             if (FAILED(hr)) {
                 WriteLogF(L"Auth screen EndDraw failed hr=0x%08X", hr);
@@ -266,6 +281,7 @@ public:
                 const float btnH = 54.0f;
                 const bool installing = g_installRunning.load();
                 const D2D1_RECT_F installBtn = D2D1::RectF(right - btnW, iconRect.bottom + 16.0f, right, iconRect.bottom + 16.0f + btnH);
+                RegisterHit(launchhit::kDetailInstall, installBtn);
                 if (!installing) GlowSelect(installBtn, 12.0f);
                 FillRound(installBtn, installing ? panel.Get() : accent.Get(), 12.0f);
                 StrokeRound(installBtn, accent.Get(), 12.0f, 2.0f);
@@ -273,6 +289,7 @@ public:
                 DrawText(installing ? L"Installing..." : (card.isModpack ? L"Install pack" : L"Install"),
                     bodyMid_.Get(), D2D1::RectF(installBtn.left + 52.0f, installBtn.top, installBtn.right - 8.0f, installBtn.bottom), installing ? muted.Get() : black.Get());
 
+                RegisterHit(launchhit::kBack, D2D1::RectF(left, iconRect.bottom + 22.0f, left + 220.0f, iconRect.bottom + 62.0f));
                 DrawIcon(L"\uE72B", D2D1::RectF(left, iconRect.bottom + 26.0f, left + 26.0f, iconRect.bottom + 26.0f + 30.0f), muted.Get());
                 DrawText(L"Back", smallFormat_.Get(),
                     D2D1::RectF(left + 30.0f, iconRect.bottom + 30.0f, left + 220.0f, iconRect.bottom + 30.0f + 28.0f), muted.Get());
@@ -346,6 +363,7 @@ public:
                     D2D1::RectF(left, top + 50.0f, right - actionBarW - 28.0f, top + 74.0f), muted.Get());
 
                 const D2D1_RECT_F playBtn = D2D1::RectF(right - btnW, top, right, top + btnH);
+                RegisterHit(launchhit::kProfilePlay, playBtn);
                 const bool playFocus = state.modsProfileFocus == 0;
                 if (playFocus) GlowSelect(playBtn, 12.0f);
                 FillRound(playBtn, isActive ? panel.Get() : accent.Get(), 12.0f);
@@ -356,6 +374,7 @@ public:
 
                 if (!state.modsProfileBuiltin) {
                     const D2D1_RECT_F exportBtn = D2D1::RectF(right - btnW * 2.0f - btnGap, top, right - btnW - btnGap, top + btnH);
+                    RegisterHit(launchhit::kProfileExport, exportBtn);
                     const bool exportFocus = state.modsProfileFocus == 4;
                     if (exportFocus) GlowSelect(exportBtn, 12.0f);
                     FillRound(exportBtn, surfaceFill.Get(), 12.0f);
@@ -365,6 +384,7 @@ public:
                         D2D1::RectF(exportBtn.left + 44.0f, exportBtn.top, exportBtn.right - 8.0f, exportBtn.bottom), accent.Get());
 
                     const D2D1_RECT_F backupBtn = D2D1::RectF(right - btnW * 3.0f - btnGap * 2.0f, top, right - btnW * 2.0f - btnGap * 2.0f, top + btnH);
+                    RegisterHit(launchhit::kProfileBackup, backupBtn);
                     const bool backupFocus = state.modsProfileFocus == 3;
                     if (backupFocus) GlowSelect(backupBtn, 12.0f);
                     FillRound(backupBtn, surfaceFill.Get(), 12.0f);
@@ -374,6 +394,7 @@ public:
                         D2D1::RectF(backupBtn.left + 44.0f, backupBtn.top, backupBtn.right - 8.0f, backupBtn.bottom), accent.Get());
 
                     const D2D1_RECT_F delBtn = D2D1::RectF(right - btnW * 4.0f - btnGap * 3.0f, top, right - btnW * 3.0f - btnGap * 3.0f, top + btnH);
+                    RegisterHit(launchhit::kProfileDelete, delBtn);
                     const bool delFocus = state.modsProfileFocus == 1;
                     if (delFocus) GlowSelect(delBtn, 12.0f);
                     FillRound(delBtn, surfaceFill.Get(), 12.0f);
@@ -438,6 +459,7 @@ public:
                             const float x = bodyInner.left + col * (cardW + colGap);
                             const float y = bodyInner.top + (row - scroll) * (cardH + cardGap);
                             const D2D1_RECT_F card = D2D1::RectF(x, y, x + cardW, y + cardH);
+                            RegisterHit(launchhit::kProfileGridBase + i, card);
                             const bool sel = gridFocus && i == state.modsProfileSel;
                             if (sel) GlowSelect(card, 12.0f);
                             FillRound(card, panel.Get(), 12.0f);
@@ -476,15 +498,18 @@ public:
             for (int i = 0; i < 5; ++i) {
                 const float y = top + 76.0f + i * (buttonH + buttonGap);
                 const D2D1_RECT_F tab = D2D1::RectF(left, y, tabsRight, y + buttonH);
+                RegisterHit(launchhit::kTabBase + i, tab);
                 const bool selected = i == state.selectedModsTab && state.modsFocus == 0;
                 const bool active = i == state.selectedModsTab;
-                if (selected) GlowSelect(tab, 14.0f);
+                const bool hovered = i == state.modsHoverTab;
+                const bool emphasized = selected || hovered;
+                if (emphasized) GlowSelect(tab, 14.0f);
                 FillRound(tab, active ? accentSoft.Get() : surfaceFill.Get(), 14.0f);
-                StrokeRound(tab, (selected || active) ? accent.Get() : softEdge.Get(), 14.0f, selected ? 3.0f : (active ? 2.0f : 1.0f));
-                DrawIcon(tabIcons[i], D2D1::RectF(tab.left + 8.0f, tab.top, tab.left + 46.0f, tab.bottom), active ? accent.Get() : muted.Get());
+                StrokeRound(tab, (emphasized || active) ? accent.Get() : softEdge.Get(), 14.0f, emphasized ? 3.0f : (active ? 2.0f : 1.0f));
+                DrawIcon(tabIcons[i], D2D1::RectF(tab.left + 8.0f, tab.top, tab.left + 46.0f, tab.bottom), (active || emphasized) ? accent.Get() : muted.Get());
                 DrawText(tabs[i], bodyMid_.Get(),
                     D2D1::RectF(tab.left + 52.0f, tab.top, tab.right - 10.0f, tab.bottom),
-                    active ? accent.Get() : white.Get());
+                    (active || emphasized) ? accent.Get() : white.Get());
             }
 
             {
@@ -515,6 +540,7 @@ public:
 
             const float searchH = 46.0f;
             const D2D1_RECT_F targetBox = D2D1::RectF(inner.left, inner.top, inner.right, inner.top + searchH);
+            RegisterHit(launchhit::kTarget, targetBox);
             const bool targetFocused = state.modsFocus == 3;
             if (targetFocused) GlowSelect(targetBox, 12.0f);
             FillRound(targetBox, targetFocused ? accentSoft.Get() : panel.Get(), 12.0f);
@@ -531,6 +557,7 @@ public:
             }
 
             const D2D1_RECT_F search = D2D1::RectF(inner.left, targetBox.bottom + 10.0f, inner.right, targetBox.bottom + 10.0f + searchH);
+            RegisterHit(launchhit::kSearch, search);
             const bool searchFocused = state.modsFocus == 1;
             if (searchFocused) GlowSelect(search, 12.0f);
             FillRound(search, searchFocused ? accentSoft.Get() : panel.Get(), 12.0f);
@@ -571,6 +598,7 @@ public:
                     const float x = inner.left + col * (cardW + colGap);
                     const float y = gridTop + (row - scroll) * (cardH + cardGap);
                     const D2D1_RECT_F card = D2D1::RectF(x, y, x + cardW, y + cardH);
+                    RegisterHit(launchhit::kCardBase + i, card);
                     const bool selected = state.modsFocus == 2 && i == state.selectedModIndex;
 
                     if (selected) GlowSelect(card, 14.0f);
@@ -639,6 +667,7 @@ public:
                 for (int i = 0; i < n; ++i) {
                     const float ry = dropTop + 6.0f + i * rowH;
                     const D2D1_RECT_F row = D2D1::RectF(drop.left + 6.0f, ry, drop.right - 6.0f, ry + rowH - 4.0f);
+                    RegisterHit(launchhit::kTargetItemBase + i, row);
                     const bool rowSel = i == state.modsTargetSel;
                     const bool rowActive = state.modsTargets[static_cast<size_t>(i)].targetId == state.modsBrowseTargetId;
                     if (rowSel) FillRound(row, accentSoft.Get(), 8.0f);
@@ -673,6 +702,7 @@ public:
             for (int i = 0; i < 5; ++i) {
                 const float y = top + 76.0f + i * (buttonH + buttonGap);
                 const D2D1_RECT_F button = D2D1::RectF(left, y, menuRight, y + buttonH);
+                if (i < 5) mainMenuRects_[i] = button;
                 const bool sel = i == state.selectedMenuIndex;
                 if (sel) GlowSelect(button, 14.0f);
                 FillRound(button, sel ? accentSoft.Get() : surfaceFill.Get(), 14.0f);
@@ -681,6 +711,7 @@ public:
                 const D2D1_RECT_F textRect = D2D1::RectF(button.left + 56.0f, button.top, button.right - 12.0f, button.bottom);
                 DrawText(labels[i], bodyMid_.Get(), textRect, sel ? accent.Get() : white.Get());
             }
+            mainMenuRectCount_ = 5;
 
             if (!state.status.empty()) {
                 const D2D1_RECT_F statusRect = D2D1::RectF(left, frame.bottom - 88.0f, menuRight, frame.bottom - 28.0f);
@@ -842,6 +873,33 @@ private:
     ComPtr<ID3D11DeviceContext> d3dContext_;
     ComPtr<IDXGISwapChain1> swapChain_;
     ComPtr<ID2D1Factory1> d2dFactory_;
+public:
+    float Width() const { return width_; }
+    float Height() const { return height_; }
+    void SetCursor(float x, float y, bool visible) { cursorX_ = x; cursorY_ = y; cursorVisible_ = visible; }
+    int MainMenuItemCount() const { return mainMenuRectCount_; }
+    bool MainMenuItemRect(int index, D2D1_RECT_F& out) const {
+        if (index < 0 || index >= mainMenuRectCount_) return false;
+        out = mainMenuRects_[index];
+        return true;
+    }
+    int HitTest(float x, float y) const {
+        for (auto it = hitRegions_.rbegin(); it != hitRegions_.rend(); ++it) {
+            if (x >= it->rect.left && x <= it->rect.right && y >= it->rect.top && y <= it->rect.bottom) {
+                return it->id;
+            }
+        }
+        return launchhit::kNone;
+    }
+private:
+    void RegisterHit(int id, const D2D1_RECT_F& r) { hitRegions_.push_back(HitRegion{ r, id }); }
+    struct HitRegion { D2D1_RECT_F rect; int id; };
+    std::vector<HitRegion> hitRegions_;
+    float cursorX_ = 0.0f;
+    float cursorY_ = 0.0f;
+    bool cursorVisible_ = false;
+    D2D1_RECT_F mainMenuRects_[5] = {};
+    int mainMenuRectCount_ = 0;
     ComPtr<ID2D1Device> d2dDevice_;
     ComPtr<ID2D1DeviceContext> d2dContext_;
     ComPtr<ID2D1Bitmap1> targetBitmap_;

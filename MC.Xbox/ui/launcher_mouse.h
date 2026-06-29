@@ -12,6 +12,7 @@ public:
 
     void Update(float renderWidth, float renderHeight);
     bool TakeClick();
+    float TakeWheel();
 
 private:
     void* module_ = nullptr;
@@ -22,6 +23,7 @@ private:
     float y_ = 0.0f;
     bool prevLeftDown_ = false;
     bool clickLatched_ = false;
+    float wheel_ = 0.0f;
 };
 
 LauncherMouse& LauncherMouseInstance();

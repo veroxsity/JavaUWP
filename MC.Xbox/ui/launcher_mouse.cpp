@@ -45,6 +45,8 @@ void LauncherMouse::Update(float renderWidth, float renderHeight) {
     if (x_ > renderWidth) x_ = renderWidth;
     if (y_ > renderHeight) y_ = renderHeight;
 
+    wheel_ += static_cast<float>(frame.wheel);
+
     for (int i = 0; i < frame.buttonCount; ++i) {
         if (frame.buttons[i].button != 0) {
             continue;
@@ -66,4 +68,10 @@ bool LauncherMouse::TakeClick() {
         return true;
     }
     return false;
+}
+
+float LauncherMouse::TakeWheel() {
+    float value = wheel_;
+    wheel_ = 0.0f;
+    return value;
 }

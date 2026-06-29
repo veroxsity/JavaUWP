@@ -2,6 +2,7 @@
 
 #include "mods_browser.h"
 #include "auth_screen.h"
+#include "launcher_mouse.h"
 #include "launcher_common.h"
 #include "minecraft_auth.h"
 #include "minecraft_launch.h"
@@ -69,9 +70,19 @@ void ProcessAuthUiEvents() {
     }
 }
 
+LauncherMouse& LauncherMouseInstance() {
+    static LauncherMouse instance;
+    return instance;
+}
+
 void RenderAuth(AuthScreenRenderer* renderer, const AuthUiState& state) {
     ProcessAuthUiEvents();
     if (renderer) {
+        LauncherMouse& mouse = LauncherMouseInstance();
+        mouse.Update(renderer->Width(), renderer->Height());
+        if (mouse.Visible()) {
+            renderer->SetCursor(mouse.X(), mouse.Y(), true);
+        }
         renderer->Render(state);
     }
 }
@@ -175,7 +186,7 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
         }
 
         backWasDown = backDown;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
 
@@ -209,6 +220,21 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
 
     WriteLog(L"Main menu opened");
     while (true) {
+        LauncherMouse& mouse = LauncherMouseInstance();
+        int hovered = -1;
+        if (mouse.Visible()) {
+            for (int i = 0; i < renderer->MainMenuItemCount(); ++i) {
+                D2D1_RECT_F r;
+                if (renderer->MainMenuItemRect(i, r) &&
+                    mouse.X() >= r.left && mouse.X() <= r.right &&
+                    mouse.Y() >= r.top && mouse.Y() <= r.bottom) {
+                    hovered = i;
+                }
+            }
+            if (hovered >= 0) {
+                selected = hovered;
+            }
+        }
         state.selectedMenuIndex = selected;
         state.animation = static_cast<float>((GetTickCount64() % 100000) / 1000.0);
         RenderAuth(renderer, state);
@@ -237,7 +263,8 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
             selected = (selected + 1) % 5;
             state.detail = L"";
         }
-        if (selectDown && !selectWasDown) {
+        const bool mouseClicked = mouse.TakeClick();
+        if ((selectDown && !selectWasDown) || (mouseClicked && hovered >= 0)) {
             if (selected == 0) {
                 WriteLog(L"Main menu: Play selected");
                 StopRemoteFileServer();
@@ -272,7 +299,7 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
         upWasDown = upDown;
         downWasDown = downDown;
         selectWasDown = selectDown;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
 

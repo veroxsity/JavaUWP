@@ -334,6 +334,15 @@ public:
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
         const std::wstring graphicsRuntime = DetectGraphicsRuntimeName();
         SetEnvironmentVariableW(L"MC_GRAPHICS_RUNTIME", graphicsRuntime.c_str());
+        SetEnvironmentVariableW(L"mesa_glthread", L"true");
+        const std::wstring mesaCacheDir = exeDir + L"\\mesa_cache";
+        if (EnsureDirectoryTree(mesaCacheDir)) {
+            // UWP has no XDG_CACHE_HOME or HOME so mesa disables its shader disk cache unless the dir is set explicitly
+            SetEnvironmentVariableW(L"MESA_SHADER_CACHE_DIR", mesaCacheDir.c_str());
+            SetEnvironmentVariableW(L"MESA_SHADER_CACHE_MAX_SIZE", L"1G");
+            WriteLogF(L"mesa shader cache dir=%s", mesaCacheDir.c_str());
+        }
+        WriteLog(L"mesa_glthread enabled");
 
         wchar_t lp[MAX_PATH];
         swprintf_s(lp, L"%s\\mc_launch.log", g_logDir.c_str());

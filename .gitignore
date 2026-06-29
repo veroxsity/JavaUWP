@@ -1,5 +1,6 @@
 # Build outputs
-/build/forge-installer.jar
+/build/*
+!/build/forge-install-profile.json
 /runtime/
 /META-INF/
 /banditvault/

@@ -3,15 +3,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <fstream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -107,6 +112,144 @@ static void SleepUntil(double deadline) {
 static std::string ModeName(RelayMode mode) {
     return mode == RelayMode::Gameplay ? "GAMEPLAY" : "MENU";
 }
+
+class PacketLog {
+public:
+    void Toggle() {
+        if (enabled_) {
+            Disable();
+        } else {
+            Enable();
+        }
+    }
+
+    bool Enabled() const { return enabled_; }
+    const std::string& Path() const { return path_; }
+
+    void Enable() {
+        if (enabled_) {
+            return;
+        }
+        std::string dir;
+        char* base = SDL_GetPrefPath("BanditVault", "BanditMouseRelay");
+        if (base) {
+            dir = base;
+            SDL_free(base);
+        }
+        char stamp[32];
+        std::time_t tt = std::time(nullptr);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        path_ = dir + "relay-packets-" + stamp + ".log";
+        out_.open(path_, std::ios::out | std::ios::trunc);
+        if (!out_.is_open()) {
+            path_.clear();
+            return;
+        }
+        seqTx_ = 0;
+        seqRx_ = 0;
+        lastTx_ = -1.0;
+        lastRx_ = -1.0;
+        lastFlush_ = NowSeconds();
+        enabled_ = true;
+        out_ << "# Bandit Mouse Relay packet log\n";
+        out_ << "# format: wall_clock mono_seconds dir seq dt_ms payload\n";
+        out_ << "# dir TX = sent to Xbox, RX = status from Xbox, EV = event marker\n";
+        out_.flush();
+    }
+
+    void Disable() {
+        if (!enabled_) {
+            return;
+        }
+        enabled_ = false;
+        out_.flush();
+        out_.close();
+    }
+
+    void Mark(const std::string& note) {
+        if (!enabled_) {
+            return;
+        }
+        char head[112];
+        FormatHead(head, sizeof(head), "EV", 0, -1.0);
+        out_ << head << note << '\n';
+    }
+
+    void LogTx(const std::string& packet, bool ok) {
+        if (!enabled_) {
+            return;
+        }
+        const double now = NowSeconds();
+        const double dt = lastTx_ >= 0.0 ? (now - lastTx_) * 1000.0 : -1.0;
+        lastTx_ = now;
+        char head[112];
+        FormatHead(head, sizeof(head), "TX", ++seqTx_, dt);
+        out_ << head << (ok ? "" : "SENDFAIL ") << packet << '\n';
+    }
+
+    void LogRx(const std::string& packet) {
+        if (!enabled_) {
+            return;
+        }
+        const double now = NowSeconds();
+        const double dt = lastRx_ >= 0.0 ? (now - lastRx_) * 1000.0 : -1.0;
+        lastRx_ = now;
+        char head[112];
+        FormatHead(head, sizeof(head), "RX", ++seqRx_, dt);
+        out_ << head << packet << '\n';
+    }
+
+    void MaybeFlush() {
+        if (!enabled_) {
+            return;
+        }
+        const double now = NowSeconds();
+        if (now - lastFlush_ >= 0.25) {
+            out_.flush();
+            lastFlush_ = now;
+        }
+    }
+
+private:
+    void FormatHead(char* buffer, size_t size, const char* dir, long long seq, double dtMs) {
+        const auto sysNow = std::chrono::system_clock::now();
+        const std::time_t tt = std::chrono::system_clock::to_time_t(sysNow);
+        const int millis = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(sysNow.time_since_epoch()).count() % 1000);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        char wall[16];
+        std::strftime(wall, sizeof(wall), "%H:%M:%S", &tmv);
+        if (dtMs >= 0.0) {
+            std::snprintf(buffer, size, "%s.%03d %.6f %s seq=%lld dt=%.2fms ",
+                wall, millis, NowSeconds(), dir, seq, dtMs);
+        } else {
+            std::snprintf(buffer, size, "%s.%03d %.6f %s seq=%lld ",
+                wall, millis, NowSeconds(), dir, seq);
+        }
+    }
+
+    bool enabled_ = false;
+    std::ofstream out_;
+    std::string path_;
+    long long seqTx_ = 0;
+    long long seqRx_ = 0;
+    double lastTx_ = -1.0;
+    double lastRx_ = -1.0;
+    double lastFlush_ = 0.0;
+};
+
+PacketLog g_packetLog;
 
 static bool IsValidIpv4(const std::string& text) {
     int octets = 0;
@@ -327,6 +470,25 @@ static bool SetNonblocking(SocketHandle sock) {
     return fcntl(sock, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 #endif
+
+static void RaiseProcessSchedulingPriority() {
+#ifdef _WIN32
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+#if defined(PROCESS_POWER_THROTTLING_CURRENT_VERSION)
+    PROCESS_POWER_THROTTLING_STATE throttling = {};
+    throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    throttling.StateMask = 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
+#endif
+#endif
+}
+
+static void RaiseThreadSchedulingPriority() {
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+#endif
+}
 
 class UdpTransport {
 public:
@@ -604,9 +766,15 @@ public:
         : window_(window), renderer_(renderer) {
         RefreshWindowSize();
         SDL_StartTextInput(window_);
+        netRunning_ = true;
+        netThread_ = std::thread(&RelayApp::NetLoop, this);
     }
 
     ~RelayApp() {
+        netRunning_ = false;
+        if (netThread_.joinable()) {
+            netThread_.join();
+        }
         ReleaseAllButtons();
         SDL_StopTextInput(window_);
         SDL_SetWindowRelativeMouseMode(window_, false);
@@ -666,7 +834,7 @@ public:
         PollStatus();
         SendConnectionProbe();
         RepeatHeldTouchScroll();
-        SendPendingPackets();
+        g_packetLog.MaybeFlush();
     }
 
     void Render() {
@@ -687,7 +855,36 @@ public:
         SDL_RenderPresent(renderer_);
     }
 
+    void PumpAndTick() {
+        SDL_Event event{};
+        while (SDL_PollEvent(&event)) {
+            std::lock_guard<std::mutex> lock(sendMutex_);
+            HandleEvent(event);
+        }
+        {
+            std::lock_guard<std::mutex> lock(sendMutex_);
+            Tick();
+        }
+    }
+
 private:
+    void NetLoop() {
+        RaiseThreadSchedulingPriority();
+        double nextTick = NowSeconds();
+        while (netRunning_.load(std::memory_order_relaxed)) {
+            {
+                std::lock_guard<std::mutex> lock(sendMutex_);
+                SendPendingPackets();
+            }
+            nextTick += kSendIntervalSeconds;
+            const double now = NowSeconds();
+            if (nextTick < now) {
+                nextTick = now;
+            }
+            SleepUntil(nextTick);
+        }
+    }
+
     float UiScale() const {
         return Clamp(static_cast<float>(windowHeight_) / 720.0f, 1.0f, 3.0f);
     }
@@ -959,6 +1156,11 @@ private:
             ExecuteAction(UiAction::Quit);
         } else if (key == SDLK_F9) {
             ExecuteAction(UiAction::ToggleMode);
+        } else if (key == SDLK_F10) {
+            g_packetLog.Toggle();
+            if (g_packetLog.Enabled()) {
+                g_packetLog.Mark("logging started host=" + host_ + " mode=" + ModeName(mode_));
+            }
         }
     }
 
@@ -1153,6 +1355,7 @@ private:
         }
 
         for (const std::string& status : transport_.ReceiveStatus()) {
+            g_packetLog.LogRx(status);
             ProcessStatus(status);
         }
     }
@@ -1415,9 +1618,11 @@ private:
                 ? FormatAbsPacket(virtualX_, virtualY_, packetButtons, scroll)
                 : FormatPacket(accumDx_, accumDy_, packetButtons, scroll);
 
-            if (transport_.Send(packet)) {
+            const bool ok = transport_.Send(packet);
+            if (ok) {
                 ++sentPackets_;
             }
+            g_packetLog.LogTx(packet, ok);
 
             accumDx_ = 0.0f;
             accumDy_ = 0.0f;
@@ -1435,9 +1640,11 @@ private:
         }
 
         if (now - lastPing_ >= 1.0) {
-            if (transport_.Send("ping")) {
+            const bool pingOk = transport_.Send("ping");
+            if (pingOk) {
                 ++sentPackets_;
             }
+            g_packetLog.LogTx("ping", pingOk);
             lastPing_ = now;
         }
     }
@@ -1581,10 +1788,15 @@ private:
         DrawText(18.0f, 18.0f, "Bandit Mouse Relay", SDL_Color{ 246, 249, 252, 255 });
         DrawText(18.0f, 42.0f, "Xbox: " + host_, SDL_Color{ 218, 229, 241, 255 });
         DrawText(18.0f, 62.0f, "Mouse: " + ModeName(mode_) + "  App: " + appMode + "  UDP: " + network, SDL_Color{ 218, 229, 241, 255 });
-        DrawText(18.0f, 82.0f, "Packets: sent=" + std::to_string(sentPackets_) + " status=" + std::to_string(statusPackets_), SDL_Color{ 174, 187, 202, 255 });
+        DrawText(18.0f, 82.0f, "Packets: sent=" + std::to_string(sentPackets_.load()) + " status=" + std::to_string(statusPackets_), SDL_Color{ 174, 187, 202, 255 });
         DrawText(18.0f, 102.0f, "Window: " + std::to_string(windowWidth_) + "x" + std::to_string(windowHeight_) + " -> menu " + std::to_string((int)MenuTargetWidth()) + "x" + std::to_string((int)MenuTargetHeight()) + " raw " + std::to_string((int)targetWidth_) + "x" + std::to_string((int)targetHeight_), SDL_Color{ 174, 187, 202, 255 });
-        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: Esc menu/release mouse, F9 toggle local mode", SDL_Color{ 145, 158, 174, 255 });
+        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: Esc menu/release mouse, F9 toggle local mode, F10 packet log", SDL_Color{ 145, 158, 174, 255 });
         DrawText(18.0f, 142.0f, "Last: " + lastStatus_, SDL_Color{ 145, 158, 174, 255 });
+        if (g_packetLog.Enabled()) {
+            DrawText(18.0f, 162.0f, "Packet log: ON -> " + g_packetLog.Path(), SDL_Color{ 235, 180, 90, 255 });
+        } else {
+            DrawText(18.0f, 162.0f, "Packet log: off (press F10 to record sent/received packets)", SDL_Color{ 145, 158, 174, 255 });
+        }
 
         if (menuOpen_) {
             const float panelHeight = kTouchLayout ? 360.0f : 300.0f;
@@ -1660,8 +1872,12 @@ private:
     double lastHeldButtonRefresh_ = 0.0;
     double lastTouchScrollRepeat_ = 0.0;
     double lastPing_ = 0.0;
-    uint64_t sentPackets_ = 0;
+    std::atomic<uint64_t> sentPackets_{ 0 };
     uint64_t statusPackets_ = 0;
+
+    std::mutex sendMutex_;
+    std::thread netThread_;
+    std::atomic<bool> netRunning_{ false };
 };
 
 } // namespace
@@ -1674,6 +1890,7 @@ int main(int, char**) {
     }
 
     TimerResolution timerResolution;
+    RaiseProcessSchedulingPriority();
 
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
@@ -1703,12 +1920,7 @@ int main(int, char**) {
         double lastRender = -kRenderIntervalSeconds;
         double nextTick = NowSeconds();
         while (app.Running()) {
-            SDL_Event event{};
-            while (SDL_PollEvent(&event)) {
-                app.HandleEvent(event);
-            }
-
-            app.Tick();
+            app.PumpAndTick();
             const double now = NowSeconds();
             if (now - lastRender >= kRenderIntervalSeconds) {
                 app.Render();

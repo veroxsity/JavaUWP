@@ -1936,6 +1936,7 @@ void ShowModsPage(
     };
 
     WriteLog(L"Mods page opened");
+    int lastEnsuredSel = -1;
     while (true) {
         g_modsSearchCapturing.store(state.modsSearchEditing || state.modsRenaming);
         if (state.modsSearchEditing) {
@@ -2275,12 +2276,12 @@ void ShowModsPage(
             if (wheelDelta != 0.0f && pmTotal > 0) {
                 const int wheelNotches = static_cast<int>(wheelDelta > 0.0f ? (wheelDelta + 0.5f) : (wheelDelta - 0.5f));
                 if (wheelNotches != 0) {
-                    state.modsProfileFocus = 2;
-                    int target = state.modsProfileSel - wheelNotches * 2;
-                    if (target < 0) target = 0;
-                    if (target > pmTotal - 1) target = pmTotal - 1;
-                    state.modsProfileSel = target;
-                    pmEnsureVisible();
+                    const int profileTotalRows = (pmTotal + 1) / 2;
+                    const int maxProfileScroll = (std::max)(0, profileTotalRows - pmRows);
+                    int nextScroll = state.modsProfileScroll - wheelNotches;
+                    if (nextScroll < 0) nextScroll = 0;
+                    if (nextScroll > maxProfileScroll) nextScroll = maxProfileScroll;
+                    state.modsProfileScroll = nextScroll;
                 }
             }
             upWasDown = upDown; downWasDown = downDown; leftWasDown = leftDown;
@@ -2333,16 +2334,17 @@ void ShowModsPage(
         if (wheelDelta != 0.0f && count > 0) {
             const int wheelNotches = static_cast<int>(wheelDelta > 0.0f ? (wheelDelta + 0.5f) : (wheelDelta - 0.5f));
             if (wheelNotches != 0) {
-                state.modsFocus = 2;
-                int target = state.selectedModIndex - wheelNotches * 2;
-                if (target < 0) target = 0;
-                if (target > count - 1) target = count - 1;
-                state.selectedModIndex = target;
-                ensureSelectionVisible();
-                if (wheelNotches < 0 && !state.modsExhausted &&
+                const int rowsVisible = (std::max)(1, g_modsRowsVisible.load());
+                const int totalRows = (count + 1) / 2;
+                const int maxScrollRow = (std::max)(0, totalRows - rowsVisible);
+                int nextScroll = state.modsScrollRow - wheelNotches;
+                if (nextScroll < 0) nextScroll = 0;
+                if (nextScroll > maxScrollRow) nextScroll = maxScrollRow;
+                state.modsScrollRow = nextScroll;
+                if (wheelNotches < 0 && state.modsScrollRow >= maxScrollRow &&
+                    !state.modsExhausted &&
                     (state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4)) {
-                    const int lastRow = (count - 1) / 2;
-                    if (state.selectedModIndex / 2 >= lastRow) loadMore();
+                    loadMore();
                 }
             }
         }
@@ -2463,9 +2465,10 @@ void ShowModsPage(
                 }
             }
 
-            if (state.modsFocus == 2) {
+            if (state.modsFocus == 2 && state.selectedModIndex != lastEnsuredSel) {
                 ensureSelectionVisible();
             }
+            lastEnsuredSel = state.selectedModIndex;
 
             if (state.selectedModsTab == 0 && xDown && !xWasDown &&
                 state.selectedModIndex >= 0 && state.selectedModIndex < count) {

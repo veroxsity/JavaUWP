@@ -6,6 +6,8 @@
 
 namespace {
 typedef int (*PollFrameFn)(MouseSupportFrame*);
+typedef unsigned int (*LastActivityFn)(void);
+constexpr unsigned int kLauncherMouseTimeoutMs = 3000;
 }
 
 LauncherMouse::LauncherMouse() {
@@ -13,6 +15,7 @@ LauncherMouse::LauncherMouse() {
     if (handle) {
         module_ = handle;
         pollProc_ = reinterpret_cast<void*>(GetProcAddress(handle, "MouseSupport_PollFrame"));
+        activityProc_ = reinterpret_cast<void*>(GetProcAddress(handle, "MouseSupport_LastActivityTickMs"));
         available_ = pollProc_ != nullptr;
     }
 }
@@ -24,6 +27,24 @@ void LauncherMouse::Update(float renderWidth, float renderHeight) {
     if (!available_ || renderWidth <= 1.0f || renderHeight <= 1.0f) {
         return;
     }
+
+    connected_ = false;
+    if (activityProc_) {
+        LastActivityFn activity = reinterpret_cast<LastActivityFn>(activityProc_);
+        const unsigned int last = activity();
+        if (last != 0 && (DWORD)(GetTickCount() - (DWORD)last) <= kLauncherMouseTimeoutMs) {
+            connected_ = true;
+        }
+    }
+
+    if (!connected_) {
+        seeded_ = false;
+        clickLatched_ = false;
+        prevLeftDown_ = false;
+        wheel_ = 0.0f;
+        return;
+    }
+
     if (!seeded_) {
         x_ = renderWidth * 0.5f;
         y_ = renderHeight * 0.5f;

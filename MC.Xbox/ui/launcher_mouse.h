@@ -6,7 +6,7 @@ public:
     ~LauncherMouse();
 
     bool Available() const { return available_; }
-    bool Visible() const { return available_ && seeded_; }
+    bool Visible() const { return available_ && connected_ && seeded_; }
     float X() const { return x_; }
     float Y() const { return y_; }
 
@@ -17,7 +17,9 @@ public:
 private:
     void* module_ = nullptr;
     void* pollProc_ = nullptr;
+    void* activityProc_ = nullptr;
     bool available_ = false;
+    bool connected_ = false;
     bool seeded_ = false;
     float x_ = 0.0f;
     float y_ = 0.0f;

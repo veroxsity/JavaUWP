@@ -1405,6 +1405,8 @@ static void RefreshWindowMetrics(bool fireCallbacks) {
 
     g_window_width = newWindowWidth;
     g_window_height = newWindowHeight;
+    g_menu_window_width = g_window_width;
+    g_menu_window_height = g_window_height;
     g_framebuffer_width = newFramebufferWidth;
     g_framebuffer_height = newFramebufferHeight;
     g_content_scale_x = newContentScaleX;
@@ -2662,6 +2664,7 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
             ShimLog("Skipping ProcessEvents off dispatcher thread hr=0x%08X access=%d", accessHr, hasDispatcherAccess ? 1 : 0);
         }
     }
+    PushMouseHostState();
     const bool mouseCompanionActive = MouseCompanionActive();
     if (!mouseCompanionActive && g_mouse_active_latched) {
       

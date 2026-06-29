@@ -29,6 +29,7 @@
 #include "profiles.h"
 #include "auth_screen.h"
 #include "launcher_ui.h"
+#include "web_relay_server.h"
 #include "app_globals.h"
 #include "loader.h"
 #include "runtime_manager.h"
@@ -722,12 +723,35 @@ public:
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
     RoInitialize(RO_INIT_MULTITHREADED);
+
+    typedef void (*MouseSupportVoidProc)();
+    MouseSupportVoidProc mouseSupportShutdown = nullptr;
+    HMODULE mouseSupportModule = LoadPackagedLibrary(L"mouse_support.dll", 0);
+    if (mouseSupportModule) {
+        MouseSupportVoidProc mouseSupportInit =
+            reinterpret_cast<MouseSupportVoidProc>(GetProcAddress(mouseSupportModule, "MouseSupport_Init"));
+        mouseSupportShutdown =
+            reinterpret_cast<MouseSupportVoidProc>(GetProcAddress(mouseSupportModule, "MouseSupport_Shutdown"));
+        if (mouseSupportInit) {
+            mouseSupportInit();
+            WriteLog(L"mouse_support.dll initialized at launcher startup");
+        }
+    } else {
+        WriteLogF(L"mouse_support.dll not loaded err=%lu", GetLastError());
+    }
+
+    StartWebRelayServer();
+
     ComPtr<ICoreApplication> coreApp;
     GetActivationFactory(
         HStringReference(RuntimeClass_Windows_ApplicationModel_Core_CoreApplication).Get(),
         &coreApp);
     RegisterLifecycleHandlers(coreApp.Get());
     coreApp->Run(Make<AppSource>().Get());
+    if (mouseSupportShutdown) {
+        mouseSupportShutdown();
+    }
+    StopWebRelayServer();
     RoUninitialize();
     return 0;
 }

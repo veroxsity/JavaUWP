@@ -72,6 +72,7 @@ enum class UiAction {
     ChangeIp,
     ToggleMode,
     ReleaseButtons,
+    Resume,
     Quit,
 };
 
@@ -698,7 +699,7 @@ public:
             HandleKey(event.key.key);
             return;
         case SDL_EVENT_MOUSE_MOTION:
-            if (!enteringIp_) {
+            if (!enteringIp_ && !menuOpen_) {
                 AddMotion(event.motion.xrel, event.motion.yrel);
             }
             if (holdAction_ != UiAction::None && !PointerOverHoldButton(event.motion.x, event.motion.y)) {
@@ -706,7 +707,7 @@ public:
             }
             return;
         case SDL_EVENT_MOUSE_WHEEL:
-            if (!enteringIp_) {
+            if (!enteringIp_ && !menuOpen_) {
                 const float scroll = event.wheel.integer_y != 0 ? static_cast<float>(event.wheel.integer_y) : event.wheel.y;
                 pendingScroll_ += scroll;
             }
@@ -720,7 +721,7 @@ public:
             HandleFingerButton(event);
             return;
         case SDL_EVENT_FINGER_MOTION:
-            if (!enteringIp_ && !IsTouchControlFinger(event.tfinger.fingerID)) {
+            if (!enteringIp_ && !menuOpen_ && !IsTouchControlFinger(event.tfinger.fingerID)) {
                 AddMotion(event.tfinger.dx * static_cast<float>(windowWidth_), event.tfinger.dy * static_cast<float>(windowHeight_));
             }
             return;
@@ -848,6 +849,9 @@ private:
         }
 
         if (kTouchLayout) {
+            if (menuOpen_) {
+                return BuildMenuButtons(uiWidth, uiHeight);
+            }
             const float margin = 16.0f;
             const float utilityWidth = 118.0f;
             const float utilityHeight = 44.0f;
@@ -880,19 +884,29 @@ private:
             return buttons;
         }
 
-        const float buttonWidth = 132.0f;
-        const float buttonHeight = 30.0f;
-        const float gap = 10.0f;
-        const float total = (buttonWidth * 4.0f) + (gap * 3.0f);
-        float x = (uiWidth - total) * 0.5f;
-        const float y = uiHeight - buttonHeight - 18.0f;
+        if (!menuOpen_) {
+            return buttons;
+        }
+        return BuildMenuButtons(uiWidth, uiHeight);
+    }
 
+    std::vector<Button> BuildMenuButtons(float uiWidth, float uiHeight) const {
+        std::vector<Button> buttons;
+        const float buttonWidth = 132.0f;
+        const float buttonHeight = kTouchLayout ? 44.0f : 34.0f;
+        const float gap = kTouchLayout ? 12.0f : 10.0f;
+        const float panelHeight = kTouchLayout ? 360.0f : 300.0f;
+        const float x = (uiWidth - buttonWidth) * 0.5f;
+        float y = ((uiHeight - panelHeight) * 0.5f) + 58.0f;
+
+        buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Resume", UiAction::Resume });
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Change IP", UiAction::ChangeIp });
-        x += buttonWidth + gap;
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Toggle", UiAction::ToggleMode });
-        x += buttonWidth + gap;
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Release", UiAction::ReleaseButtons });
-        x += buttonWidth + gap;
+        y += buttonHeight + gap;
         buttons.push_back({ SDL_FRect{ x, y, buttonWidth, buttonHeight }, "Quit", UiAction::Quit });
         return buttons;
     }
@@ -964,6 +978,7 @@ private:
             break;
         case UiAction::ChangeIp:
             ReleaseAllButtons();
+            menuOpen_ = false;
             enteringIp_ = true;
             ipBuffer_ = host_;
             ipError_.clear();
@@ -978,6 +993,9 @@ private:
             break;
         case UiAction::ReleaseButtons:
             ReleaseAllButtons();
+            break;
+        case UiAction::Resume:
+            ResumeRelay();
             break;
         case UiAction::Quit:
             running_ = false;
@@ -1014,7 +1032,8 @@ private:
         }
         return action != UiAction::None
             && action != UiAction::ToggleMode
-            && action != UiAction::Connect;
+            && action != UiAction::Connect
+            && action != UiAction::Resume;
     }
 
     void BeginHold(UiAction action) {
@@ -1111,9 +1130,15 @@ private:
             return;
         }
 
-        if (key == SDLK_F3) {
+        if (key == SDLK_ESCAPE) {
+            if (menuOpen_) {
+                ResumeRelay();
+            } else {
+                OpenRelayMenu();
+            }
+        } else if (key == SDLK_F3) {
             ExecuteAction(UiAction::ChangeIp);
-        } else if (key == SDLK_F8 || key == SDLK_ESCAPE) {
+        } else if (key == SDLK_F8) {
             ExecuteAction(UiAction::Quit);
         } else if (key == SDLK_F9) {
             ExecuteAction(UiAction::ToggleMode);
@@ -1128,9 +1153,9 @@ private:
     void HandleMouseButton(const SDL_Event& event) {
         std::optional<Button> hit;
         std::optional<Button> relayCursorButton;
-        if (enteringIp_ || mode_ == RelayMode::Menu) {
+        if (enteringIp_ || menuOpen_ || mode_ == RelayMode::Menu) {
             hit = HitButton(event.button.x, event.button.y);
-            if (!hit) {
+            if (!hit && !menuOpen_) {
                 relayCursorButton = HitButtonAtRelayCursor();
             }
         }
@@ -1144,7 +1169,7 @@ private:
                 OnButtonPressed(*relayCursorButton);
                 return;
             }
-            if (enteringIp_) {
+            if (enteringIp_ || menuOpen_) {
                 return;
             }
             const int index = ButtonIndex(event.button.button);
@@ -1155,6 +1180,9 @@ private:
         }
 
         CancelHold();
+        if (menuOpen_) {
+            return;
+        }
         const int index = ButtonIndex(event.button.button);
         if (index >= 0) {
             buttonState_[static_cast<size_t>(index)] = 0;
@@ -1310,6 +1338,25 @@ private:
         SDL_SetWindowMouseGrab(window_, on);
     }
 
+    void OpenRelayMenu() {
+        ReleaseAllButtons();
+        CancelHold();
+        pendingScroll_ = 0.0f;
+        accumDx_ = 0.0f;
+        accumDy_ = 0.0f;
+        motionPending_ = false;
+        menuOpen_ = true;
+        SetMouseCapture(false);
+    }
+
+    void ResumeRelay() {
+        if (enteringIp_) {
+            return;
+        }
+        menuOpen_ = false;
+        SetMouseCapture(true);
+    }
+
     void AddMotion(float rawDx, float rawDy) {
         if (mode_ == RelayMode::Menu) {
             const float dx = rawDx * MenuScaleX();
@@ -1410,6 +1457,7 @@ private:
         SaveIp(host_);
         connecting_ = false;
         enteringIp_ = false;
+        menuOpen_ = false;
         ipError_.clear();
         SDL_StopTextInput(window_);
         SetMouseCapture(true);
@@ -1755,7 +1803,7 @@ private:
         DrawText(18.0f, 62.0f, "Mouse: " + ModeName(mode_) + "  App: " + appMode + "  UDP: " + network, SDL_Color{ 218, 229, 241, 255 });
         DrawText(18.0f, 82.0f, "Packets: sent=" + std::to_string(sentPackets_.load()) + " status=" + std::to_string(statusPackets_), SDL_Color{ 174, 187, 202, 255 });
         DrawText(18.0f, 102.0f, "Window: " + std::to_string(windowWidth_) + "x" + std::to_string(windowHeight_) + " -> menu " + std::to_string((int)MenuTargetWidth()) + "x" + std::to_string((int)MenuTargetHeight()) + " raw " + std::to_string((int)targetWidth_) + "x" + std::to_string((int)targetHeight_), SDL_Color{ 174, 187, 202, 255 });
-        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: F3 change IP, F8 quit, F9 toggle local mode, F10 packet log", SDL_Color{ 145, 158, 174, 255 });
+        DrawText(18.0f, 122.0f, kTouchLayout ? "Touch: drag empty space, hold L/R with another finger, wheel pads scroll" : "Keys: Esc menu, F3 change IP, F8 quit, F9 toggle local mode, F10 packet log", SDL_Color{ 145, 158, 174, 255 });
         DrawText(18.0f, 142.0f, "Last: " + lastStatus_, SDL_Color{ 145, 158, 174, 255 });
 
         int diagPixelW = 0;
@@ -1785,6 +1833,16 @@ private:
         }
         DrawText(18.0f, 202.0f, logLine, g_packetLog.Enabled() ? SDL_Color{ 235, 180, 90, 255 } : SDL_Color{ 145, 158, 174, 255 });
 
+        if (menuOpen_) {
+            const float panelHeight = kTouchLayout ? 360.0f : 300.0f;
+            const SDL_FRect panel{ (uiWidth - 220.0f) * 0.5f, (uiHeight - panelHeight) * 0.5f, 220.0f, panelHeight };
+            SDL_SetRenderDrawColor(renderer_, 13, 18, 26, 235);
+            SDL_RenderFillRect(renderer_, &panel);
+            SDL_SetRenderDrawColor(renderer_, 105, 183, 204, 255);
+            SDL_RenderRect(renderer_, &panel);
+            DrawTextCentered(uiWidth * 0.5f, panel.y + 24.0f, "Relay Menu", SDL_Color{ 246, 249, 252, 255 });
+        }
+
         for (const Button& button : BuildButtons(uiWidth, uiHeight)) {
             DrawButton(button);
         }
@@ -1806,6 +1864,7 @@ private:
 
     bool running_ = true;
     bool enteringIp_ = true;
+    bool menuOpen_ = false;
     bool connecting_ = false;
     bool hostSet_ = false;
     bool connected_ = false;

@@ -187,10 +187,21 @@ static std::string NormalizeZipEntryName(const std::string& name) {
     return out;
 }
 
+static int ZipSlashDepth(const std::string& prefix) {
+    int depth = 0;
+    for (char c : prefix) if (c == '/') ++depth;
+    return depth;
+}
+
+// real worlds ship both level.dat and level.dat_old and may sit at any depth in the zip,
+// so take the shallowest directory holding a level file as the world root; deeper level
+// files (backups inside the world) are ignored, two worlds at the same depth are ambiguous
 static bool DetectWorldZipPrefix(mz_zip_archive& zip, std::string& stripPrefix) {
     stripPrefix.clear();
-    std::string singlePrefix;
-    int levelDatCount = 0;
+    std::string best;
+    bool have = false;
+    bool tie = false;
+    int bestDepth = 0;
     const mz_uint count = mz_zip_reader_get_num_files(&zip);
     for (mz_uint i = 0; i < count; ++i) {
         if (mz_zip_reader_is_file_a_directory(&zip, i)) continue;
@@ -198,22 +209,22 @@ static bool DetectWorldZipPrefix(mz_zip_archive& zip, std::string& stripPrefix) 
         if (!mz_zip_reader_file_stat(&zip, i, &st)) continue;
         const std::string name = NormalizeZipEntryName(st.m_filename);
         if (name.empty()) continue;
-        if (name == "level.dat" || name == "level.dat_old") {
-            stripPrefix.clear();
-            ++levelDatCount;
-            continue;
+        const size_t slash = name.find_last_of('/');
+        const std::string base = slash == std::string::npos ? name : name.substr(slash + 1);
+        if (base != "level.dat" && base != "level.dat_old") continue;
+        const std::string prefix = slash == std::string::npos ? std::string() : name.substr(0, slash + 1);
+        const int depth = ZipSlashDepth(prefix);
+        if (!have || depth < bestDepth) {
+            best = prefix;
+            bestDepth = depth;
+            have = true;
+            tie = false;
+        } else if (depth == bestDepth && prefix != best) {
+            tie = true;
         }
-        const size_t slash = name.find('/');
-        if (slash == std::string::npos) continue;
-        const std::string tail = name.substr(slash + 1);
-        if (tail != "level.dat" && tail != "level.dat_old") continue;
-        const std::string prefix = name.substr(0, slash + 1);
-        if (singlePrefix.empty()) singlePrefix = prefix;
-        else if (singlePrefix != prefix) return false;
-        ++levelDatCount;
     }
-    if (levelDatCount != 1) return false;
-    stripPrefix = singlePrefix;
+    if (!have || tie) return false;
+    stripPrefix = best;
     return true;
 }
 

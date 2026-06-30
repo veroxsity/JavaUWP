@@ -29,6 +29,21 @@ using namespace ABI::Windows::UI::Core;
 
 void ProcessAuthUiEvents();
 
+namespace theme {
+constexpr UINT32 kBg        = 0x0B0C0E;
+constexpr UINT32 kPanel     = 0x111316;
+constexpr UINT32 kSurface   = 0x17191D;
+constexpr UINT32 kCard      = 0x1A1C20;
+constexpr UINT32 kText      = 0xF2F4F5;
+constexpr UINT32 kTextMuted = 0x9BA1A6;
+constexpr UINT32 kAccent    = 0x70C486;
+constexpr UINT32 kDanger    = 0xE36A5C;
+constexpr UINT32 kHairline  = 0xFFFFFF;
+constexpr float  kHairlineA = 0.08f;
+constexpr float  kSurfaceA  = 0.80f;
+constexpr float  kPanelA    = 0.96f;
+}
+
 class AuthScreenRenderer {
 public:
     bool Initialize(ICoreWindow* window) {
@@ -191,19 +206,18 @@ public:
         ComPtr<ID2D1SolidColorBrush> surfaceFill;
         ComPtr<ID2D1SolidColorBrush> accentSoft;
 
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xF5F7F8), white.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xA9B0B4), muted.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x151718), panel.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486), accent.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xE36A5C), danger.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kText), white.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kTextMuted), muted.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kCard), panel.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kAccent), accent.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kDanger), danger.GetAddressOf());
         d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x000000), black.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF, 0.12f), softEdge.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x161B1F, 0.75f), surfaceFill.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486, 0.14f), accentSoft.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kHairline, theme::kHairlineA), softEdge.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kSurface, theme::kSurfaceA), surfaceFill.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kAccent, 0.14f), accentSoft.GetAddressOf());
 
         d2dContext_->BeginDraw();
-        d2dContext_->Clear(D2D1::ColorF(0x05080B));
-        FillVerticalGradient(D2D1::RectF(0.0f, 0.0f, width_, height_), 0x0E1726, 0x05080B);
+        d2dContext_->Clear(D2D1::ColorF(theme::kBg));
 
         // keep inside tv title-safe area, otherwise overscan clips the panel edges
         const float marginX = width_ * 0.045f;
@@ -211,8 +225,8 @@ public:
         const D2D1_RECT_F frame = D2D1::RectF(marginX, marginY, width_ - marginX, height_ - marginY);
         {
             ComPtr<ID2D1SolidColorBrush> surface, surfaceEdge;
-            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x0C0F12, 0.92f), surface.GetAddressOf());
-            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF, 0.10f), surfaceEdge.GetAddressOf());
+            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kPanel, theme::kPanelA), surface.GetAddressOf());
+            d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kHairline, theme::kHairlineA), surfaceEdge.GetAddressOf());
             FillRound(frame, surface.Get(), 22.0f);
             StrokeRound(frame, surfaceEdge.Get(), 22.0f, 1.5f);
         }
@@ -1136,8 +1150,8 @@ private:
 
     void GlowSelect(D2D1_RECT_F r, float radius) {
         ComPtr<ID2D1SolidColorBrush> g1, g2;
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486, 0.10f), g1.GetAddressOf());
-        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0x70C486, 0.20f), g2.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kAccent, 0.10f), g1.GetAddressOf());
+        d2dContext_->CreateSolidColorBrush(D2D1::ColorF(theme::kAccent, 0.20f), g2.GetAddressOf());
         if (g1) d2dContext_->FillRoundedRectangle(
             D2D1::RoundedRect(D2D1::RectF(r.left - 10.0f, r.top - 10.0f, r.right + 10.0f, r.bottom + 10.0f), radius + 9.0f, radius + 9.0f), g1.Get());
         if (g2) d2dContext_->FillRoundedRectangle(

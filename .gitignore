@@ -22,6 +22,7 @@
 /glfw_shim/*.exp
 /glfw_shim/*.dll
 /compat_mod/build/
+*_CL_*
 
 # Local IDE / workspace state
 /.vs/

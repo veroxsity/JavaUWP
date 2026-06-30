@@ -1405,8 +1405,8 @@ static void RefreshWindowMetrics(bool fireCallbacks) {
 
     g_window_width = newWindowWidth;
     g_window_height = newWindowHeight;
-    g_menu_window_width = g_window_width;
-    g_menu_window_height = g_window_height;
+    g_menu_window_width = g_framebuffer_width;
+    g_menu_window_height = g_framebuffer_height;
     g_framebuffer_width = newFramebufferWidth;
     g_framebuffer_height = newFramebufferHeight;
     g_content_scale_x = newContentScaleX;
@@ -1685,8 +1685,8 @@ static void DispatchCursorPosInternal(double x, double y, bool updateOverlayPosi
     if (g_cursorMode != GLFW_CURSOR_DISABLED) {
         if (x < 0.0) x = 0.0;
         if (y < 0.0) y = 0.0;
-        if (g_window_width > 0 && x > (double)g_window_width) x = (double)g_window_width;
-        if (g_window_height > 0 && y > (double)g_window_height) y = (double)g_window_height;
+        if (g_menu_window_width > 0 && x > (double)g_menu_window_width) x = (double)g_menu_window_width;
+        if (g_menu_window_height > 0 && y > (double)g_menu_window_height) y = (double)g_menu_window_height;
     }
 
     g_cursor_x = x;
@@ -1770,7 +1770,7 @@ static void DispatchMouseDelta(double dx, double dy) {
     if (!g_cursorDisabled) {
         g_menu_abs_x = ClampDouble(g_menu_abs_x + dx, 0.0, CursorMaxX());
         g_menu_abs_y = ClampDouble(g_menu_abs_y + dy, 0.0, CursorMaxY());
-        DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+        DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), true);
     } else {
         DispatchCursorPos(g_cursor_x + dx, g_cursor_y + dy);
     }
@@ -2121,7 +2121,7 @@ static void PollCoreWindowPointerPosition() {
 
     g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
     g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
-    DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+    DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), true);
     if (g_mouse_log_count < 24) {
         ++g_mouse_log_count;
         ShimLog("Pointer position poll cursor=%.1f,%.1f", g_cursor_x, g_cursor_y);
@@ -2875,9 +2875,9 @@ extern "C" __declspec(dllexport) void glfwSetCursorPos(GLFWwindow*, double x, do
         g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
         DispatchCursorPosInternal(x, y, false);
     } else {
-        g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
-        g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
-        DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+        g_menu_abs_x = ClampDouble(MenuInputToWindowX(x), 0.0, CursorMaxX());
+        g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
+        DispatchCursorPosInternal(x, y, true);
     }
     SendCursorOverlayState();
 

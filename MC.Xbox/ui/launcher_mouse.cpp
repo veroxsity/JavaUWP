@@ -7,7 +7,11 @@
 namespace {
 typedef int (*PollFrameFn)(MouseSupportFrame*);
 typedef unsigned int (*LastActivityFn)(void);
+typedef void (*SetHostStateFn)(const MouseSupportHostState*);
 constexpr unsigned int kLauncherMouseTimeoutMs = 3000;
+constexpr int kCursorModeNormal = 0x00034001;
+constexpr float kProtocolWidth = 1920.0f;
+constexpr float kProtocolHeight = 1080.0f;
 }
 
 LauncherMouse::LauncherMouse() {
@@ -16,11 +20,29 @@ LauncherMouse::LauncherMouse() {
         module_ = handle;
         pollProc_ = reinterpret_cast<void*>(GetProcAddress(handle, "MouseSupport_PollFrame"));
         activityProc_ = reinterpret_cast<void*>(GetProcAddress(handle, "MouseSupport_LastActivityTickMs"));
+        setHostProc_ = reinterpret_cast<void*>(GetProcAddress(handle, "MouseSupport_SetHostState"));
         available_ = pollProc_ != nullptr;
     }
 }
 
 LauncherMouse::~LauncherMouse() {
+}
+
+void LauncherMouse::PushHostState(float renderWidth, float renderHeight) {
+    if (!setHostProc_) {
+        return;
+    }
+    // launcher ui always wants a visible cursor, so report menu mode; the dll
+    // otherwise keeps its gameplay default and the relay never shows the cursor
+    MouseSupportHostState state;
+    state.windowWidth = static_cast<int>(renderWidth);
+    state.windowHeight = static_cast<int>(renderHeight);
+    state.menuWidth = static_cast<int>(renderWidth);
+    state.menuHeight = static_cast<int>(renderHeight);
+    state.cursorMode = kCursorModeNormal;
+    state.menuCursorX = x_;
+    state.menuCursorY = y_;
+    reinterpret_cast<SetHostStateFn>(setHostProc_)(&state);
 }
 
 void LauncherMouse::Update(float renderWidth, float renderHeight) {
@@ -53,34 +75,42 @@ void LauncherMouse::Update(float renderWidth, float renderHeight) {
 
     MouseSupportFrame frame;
     PollFrameFn poll = reinterpret_cast<PollFrameFn>(pollProc_);
-    if (!poll(&frame)) {
-        return;
-    }
-
-    const float scaleX = renderWidth / 1920.0f;
-    const float scaleY = renderHeight / 1080.0f;
-    x_ += static_cast<float>(frame.dx) * scaleX;
-    y_ += static_cast<float>(frame.dy) * scaleY;
-    if (x_ < 0.0f) x_ = 0.0f;
-    if (y_ < 0.0f) y_ = 0.0f;
-    if (x_ > renderWidth) x_ = renderWidth;
-    if (y_ > renderHeight) y_ = renderHeight;
-
-    wheel_ += static_cast<float>(frame.wheel);
-
-    for (int i = 0; i < frame.buttonCount; ++i) {
-        if (frame.buttons[i].button != 0) {
-            continue;
-        }
-        if (frame.buttons[i].action != 0) {
-            if (!prevLeftDown_) {
-                clickLatched_ = true;
+    if (poll(&frame)) {
+        if (frame.hasAbsolute) {
+            if (frame.absoluteWindow) {
+                x_ = static_cast<float>(frame.absX);
+                y_ = static_cast<float>(frame.absY);
+            } else {
+                x_ = static_cast<float>(frame.absX) * (renderWidth / kProtocolWidth);
+                y_ = static_cast<float>(frame.absY) * (renderHeight / kProtocolHeight);
             }
-            prevLeftDown_ = true;
         } else {
-            prevLeftDown_ = false;
+            x_ += static_cast<float>(frame.dx) * (renderWidth / kProtocolWidth);
+            y_ += static_cast<float>(frame.dy) * (renderHeight / kProtocolHeight);
+        }
+        if (x_ < 0.0f) x_ = 0.0f;
+        if (y_ < 0.0f) y_ = 0.0f;
+        if (x_ > renderWidth) x_ = renderWidth;
+        if (y_ > renderHeight) y_ = renderHeight;
+
+        wheel_ += static_cast<float>(frame.wheel);
+
+        for (int i = 0; i < frame.buttonCount; ++i) {
+            if (frame.buttons[i].button != 0) {
+                continue;
+            }
+            if (frame.buttons[i].action != 0) {
+                if (!prevLeftDown_) {
+                    clickLatched_ = true;
+                }
+                prevLeftDown_ = true;
+            } else {
+                prevLeftDown_ = false;
+            }
         }
     }
+
+    PushHostState(renderWidth, renderHeight);
 }
 
 bool LauncherMouse::TakeClick() {

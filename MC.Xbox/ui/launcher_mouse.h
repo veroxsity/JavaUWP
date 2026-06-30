@@ -15,9 +15,12 @@ public:
     float TakeWheel();
 
 private:
+    void PushHostState(float renderWidth, float renderHeight);
+
     void* module_ = nullptr;
     void* pollProc_ = nullptr;
     void* activityProc_ = nullptr;
+    void* setHostProc_ = nullptr;
     bool available_ = false;
     bool connected_ = false;
     bool seeded_ = false;

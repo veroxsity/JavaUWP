@@ -1340,25 +1340,22 @@ private:
             return;
         }
 
+        const int total = static_cast<int>(screenshotPaths_.size());
         const double now = nowMs / 1000.0;
         const double hold = 6.0;
-        const int total = static_cast<int>(screenshotPaths_.size());
         const double t = now / hold;
         const long long base = static_cast<long long>(floor(t));
         const int idx = static_cast<int>(((base % total) + total) % total);
         const int nextIdx = (idx + 1) % total;
         const double frac = t - static_cast<double>(base);
-        const double fade = frac > 0.8 ? (frac - 0.8) / 0.2 : 0.0;
+        const double fade = frac > 0.82 ? (frac - 0.82) / 0.18 : 0.0;
         const float easedFade = static_cast<float>(fade * fade * (3.0 - 2.0 * fade));
-        const float panX = sinf(static_cast<float>(now) * 0.05f) * 0.4f;
-        const float panY = cosf(static_cast<float>(now) * 0.037f) * 0.16f;
-        const float zoom = 1.05f + 0.02f * sinf(static_cast<float>(now) * 0.08f);
 
         ComPtr<ID2D1Bitmap1> cur = GetCachedBitmap(screenshotPaths_[static_cast<size_t>(idx)]);
-        if (cur) DrawBitmapCover(cur.Get(), rect, 1.0f, zoom, panX, panY);
+        if (cur) DrawBitmapCover(cur.Get(), rect, 1.0f, 1.0f, 0.0f, 0.0f);
         if (easedFade > 0.0f && total > 1) {
             ComPtr<ID2D1Bitmap1> nxt = GetCachedBitmap(screenshotPaths_[static_cast<size_t>(nextIdx)]);
-            if (nxt) DrawBitmapCover(nxt.Get(), rect, easedFade, zoom, -panX, panY);
+            if (nxt) DrawBitmapCover(nxt.Get(), rect, easedFade, 1.0f, 0.0f, 0.0f);
         }
         popClip();
     }

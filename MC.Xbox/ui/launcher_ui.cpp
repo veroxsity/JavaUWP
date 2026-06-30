@@ -170,11 +170,15 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
         state.animation = static_cast<float>((GetTickCount64() % 100000) / 1000.0);
         RenderAuth(renderer, state);
 
+        LauncherMouse& mouse = LauncherMouseInstance();
+        const bool clickBack = mouse.Visible() && mouse.TakeClick() &&
+            renderer->HitTest(mouse.X(), mouse.Y()) == launchhit::kBack;
+
         const bool backDown = AnyVirtualKeyDown(window, {
             ABI::Windows::System::VirtualKey_Escape,
             ABI::Windows::System::VirtualKey_GamepadB
         });
-        if (backDown && !backWasDown) {
+        if ((backDown && !backWasDown) || clickBack) {
             StopRemoteFileServer();
             state.showRemoteFiles = false;
             state.showMainMenu = true;

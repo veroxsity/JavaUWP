@@ -205,8 +205,9 @@ public:
         d2dContext_->Clear(D2D1::ColorF(0x05080B));
         FillVerticalGradient(D2D1::RectF(0.0f, 0.0f, width_, height_), 0x0E1726, 0x05080B);
 
-        const float marginX = width_ * 0.075f;
-        const float marginY = height_ * 0.11f;
+        // keep inside tv title-safe area, otherwise overscan clips the panel edges
+        const float marginX = width_ * 0.045f;
+        const float marginY = height_ * 0.06f;
         const D2D1_RECT_F frame = D2D1::RectF(marginX, marginY, width_ - marginX, height_ - marginY);
         {
             ComPtr<ID2D1SolidColorBrush> surface, surfaceEdge;
@@ -353,8 +354,9 @@ public:
                 const float actionBarW = state.modsProfileBuiltin ? btnW : (btnW * 4.0f + btnGap * 3.0f);
 
                 const std::wstring nameShown = state.modsRenaming ? (state.modsRenameText + L"_") : state.modsProfileName;
+                const D2D1_RECT_F profileBack = DrawBackChip(left, top, surfaceFill.Get(), softEdge.Get(), muted.Get());
                 DrawText(nameShown.c_str(), titleFormat_.Get(),
-                    D2D1::RectF(left, top, right - actionBarW - 28.0f, top + 48.0f), state.modsRenaming ? accent.Get() : white.Get());
+                    D2D1::RectF(profileBack.right + 16.0f, top, right - actionBarW - 28.0f, top + 48.0f), state.modsRenaming ? accent.Get() : white.Get());
                 const std::wstring sub = state.modsProfileBuiltin
                     ? (state.modsProfileTargetText + L" - Pure vanilla, always available")
                     : (state.modsProfileTargetText + L" - " + std::to_wstring(state.modsProfileMods.size()) +
@@ -492,7 +494,8 @@ public:
             const float buttonGap = 22.0f;
             const wchar_t* tabs[] = { L"Profiles", L"Popular", L"Latest", L"Recommended", L"Modpacks" };
 
-            DrawText(L"Mods", titleFormat_.Get(), D2D1::RectF(left, top, tabsRight, top + 48.0f), white.Get());
+            const D2D1_RECT_F modsBack = DrawBackChip(left, top, surfaceFill.Get(), softEdge.Get(), muted.Get());
+            DrawText(L"Mods", titleFormat_.Get(), D2D1::RectF(modsBack.right + 16.0f, top, tabsRight, top + 48.0f), white.Get());
 
             const wchar_t* tabIcons[] = { L"\uE8B7", L"\uE735", L"\uE823", L"\uEB52", L"\uE7B8" };
             for (int i = 0; i < 5; ++i) {
@@ -738,7 +741,8 @@ public:
             const float left = frame.left + 54.0f;
             const float right = frame.right - 54.0f;
             const float top = frame.top + 58.0f;
-            DrawText(L"Remote Files", titleFormat_.Get(), D2D1::RectF(left, top, right, top + 58.0f), white.Get());
+            const D2D1_RECT_F rfBack = DrawBackChip(left, top + 6.0f, surfaceFill.Get(), softEdge.Get(), muted.Get());
+            DrawText(L"Remote Files", titleFormat_.Get(), D2D1::RectF(rfBack.right + 16.0f, top, right, top + 58.0f), white.Get());
             DrawText(state.status.c_str(), bodyFormat_.Get(), D2D1::RectF(left, top + 86.0f, right, top + 128.0f), accent.Get());
 
             const D2D1_RECT_F box = D2D1::RectF(left, top + 152.0f, right, top + 336.0f);
@@ -752,7 +756,7 @@ public:
                 muted.Get());
 
             const D2D1_RECT_F hint = D2D1::RectF(left, frame.bottom - 92.0f, right, frame.bottom - 36.0f);
-            DrawText(L"Press B or Escape to stop sharing and return to the launcher.", smallFormat_.Get(), hint, muted.Get());
+            DrawText(L"Select Back, or press B or Escape, to stop sharing and return to the launcher.", smallFormat_.Get(), hint, muted.Get());
             finishDraw();
             return;
         }
@@ -1119,6 +1123,15 @@ private:
 
     void DrawIcon(const wchar_t* glyph, D2D1_RECT_F rect, ID2D1Brush* brush, bool large = false) {
         DrawText(glyph, large ? iconLgFormat_.Get() : iconFormat_.Get(), rect, brush);
+    }
+
+    D2D1_RECT_F DrawBackChip(float x, float top, ID2D1Brush* fill, ID2D1Brush* edge, ID2D1Brush* glyph) {
+        const D2D1_RECT_F chip = D2D1::RectF(x, top, x + 46.0f, top + 46.0f);
+        FillRound(chip, fill, 12.0f);
+        StrokeRound(chip, edge, 12.0f, 1.0f);
+        DrawIcon(L"\uE72B", chip, glyph);
+        RegisterHit(launchhit::kBack, chip);
+        return chip;
     }
 
     void GlowSelect(D2D1_RECT_F r, float radius) {

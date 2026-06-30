@@ -2127,6 +2127,16 @@ void ShowModsPage(
                         state.modsTargetOpen = false;
                     }
                 } else {
+                    if (hid == launchhit::kBack && clicked) {
+                        WriteLog(L"Mods page closed");
+                        EndModsSearchCapture();
+                        StopIconWorker();
+                        state.showModsPage = false;
+                        state.showMainMenu = true;
+                        state.modsCards.clear();
+                        state.isError = false;
+                        return;
+                    }
                     if (hid >= launchhit::kTabBase && hid < launchhit::kTabBase + 5) {
                         const int tabIndex = hid - launchhit::kTabBase;
                         state.modsHoverTab = tabIndex;

@@ -22,7 +22,7 @@ You should be comfortable with:
 - Waiting through a first launch download of official Minecraft files.
 - Early software that may change between builds.
 
-**Xbox Series** consoles are the primary target. **Xbox One** support is still experimental.
+**Xbox Series S and Series X** are the only supported consoles. Xbox One was dropped and is planned to return later as its own separate target.
 
 ## Requirements
 
@@ -92,8 +92,8 @@ Other catalog entries (additional Forge versions, older vanilla targets, and fut
 
 - Dynamic official Minecraft, asset, library, Fabric, Forge, and NeoForge downloads into UWP `LocalState`.
 - Persistent isolated profile storage under UWP `LocalState`.
-- Packaged Java 25 runtime for the current default target.
-- Java 21 runtime support for mods and targets that require it.
+- Packaged current Java runtime (JDK 21 or newer) for the default target.
+- Bundled Java 21 and optional Java 17 runtimes for mods and targets that require them.
 
 **Mods and content**
 
@@ -109,7 +109,7 @@ Other catalog entries (additional Forge versions, older vanilla targets, and fut
 
 - Custom GLFW shim for UWP windowing, input, gamepad state, and EGL.
 - Mesa based graphics path for Xbox Series consoles.
-- Separate Xbox One graphics runtime path when packaged.
+- Optional mouse relay: use a phone or PC as a mouse over the local network, in the launcher menus and in game.
 - GameInput based controller support through the GLFW shim.
 - Bundled Bandit controller layer for every supported Fabric target from `1.16.5` through `1.21.11`, `1.20.1` Forge, and `1.21.1` NeoForge.
 - Shared controller settings at `config/bandit-controller.properties` (deadzones, look speed, toggle crouch/sprint).
@@ -147,8 +147,9 @@ Cobblemon has been verified on `1.21.1 + Fabric 0.19.2` using the Java 21 runtim
 
 The launcher includes a remote file manager for devices on the same local network. Start it from the launcher, open the shown URL and PIN in a browser, then manage files without using Xbox Device Portal.
 
-Remote Files can:
+A profile picker lets you manage any profile, not just the active one. Remote Files can:
 
+- Browse files in a full explorer: breadcrumbs, drag and drop upload, rename, delete, new folder, and an inline editor for text files like configs.
 - Export and import full world saves as `.zip` files for the active profile.
 - Upload `.jar` mods to the active profile.
 - Upload `.zip` resource packs to the active profile.
@@ -228,7 +229,6 @@ At a high level, Bandit Launcher keeps the game inside one UWP process and adapt
 
 These are the main areas still being worked on for the pre release:
 
-- Xbox One support is experimental.
 - Forge support is experimental and currently focused on `1.20.1 + Forge 47.4.20`.
 - Additional Forge versions and older vanilla targets are cataloged but not launchable yet.
 - NeoForge support is new and currently focused on `1.21.1 + NeoForge 21.1.233`.
@@ -283,12 +283,14 @@ To preview or apply cleanup:
 | --- | --- |
 | `MC.Xbox/` | UWP host app: sign in, launcher UI, downloads, profiles, mods, and JVM launch. |
 | `glfw_shim/` | Replacement `glfw.dll` for UWP windowing, input, gamepad state, and EGL. |
+| `mouse_support/` | Standalone `mouse_support.dll` that owns relay mouse input; linked into the GLFW shim and loaded by the launcher. |
 | `compat_mod/` | Fabric compatibility mod for Minecraft, mod, filesystem, and graphics fixes. |
 | `controller_mod/` | Shared controller core plus Fabric and Forge Xbox controller mods built under `runtime/version-mods/`. |
 | `patch/` | Patched Fabric Loader and securejarhandler classes used by the build. |
 | `scripts/` | Setup, cleanup, asset, patch, manifest, and build helpers. |
 | `config/` | Launch target catalog used by the launcher and build. |
 | `mesa-runtime/` | Mesa UWP runtime DLLs used by local builds. |
+| `tools/mouse-relay/` | Bandit Mouse Relay companion apps (Windows and Android) that send mouse input to the console over UDP. |
 | `build.ps1` | Main APPX build script. |
 | `docs/` | Build, architecture, patching, and legal notes. |
 

@@ -171,6 +171,7 @@ It handles:
 - Basic monitor, cursor, timing, and window API responses expected by LWJGL.
 - Xbox controller state through GameInput and the GLFW joystick and gamepad APIs.
 - Legacy controller input shaping when `MC_LEGACY_CONTROLLER_MOD=1` is set by the launcher after detecting a bundled Bandit controller jar.
+- Relay mouse input sourced from the linked `mouse_support.dll`, surfaced through the GLFW cursor and mouse button callbacks.
 
 Build it directly with:
 

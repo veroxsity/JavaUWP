@@ -130,39 +130,9 @@ $env:MESA_UWP_DIR = "C:\path\to\mesa-runtime"
 
 `RETROARCH_UWP_DIR` is still accepted as a fallback search path. RetroArch is not required.
 
-## Xbox One graphics runtime
+## Console targets
 
-Series consoles keep using the Mesa runtime above. Xbox One can use a separate
-runtime packaged under `graphics\xboxone\`. The repo level source folder is:
-
-```text
-xboxone-runtime\
-```
-
-You can use a different source folder with:
-
-```powershell
-.\build.ps1 -XboxOneGraphicsRuntimeDir "C:\path\to\xboxone-graphics-runtime"
-```
-
-Or:
-
-```powershell
-$env:XBOX_ONE_GRAPHICS_RUNTIME_DIR = "C:\path\to\xboxone-graphics-runtime"
-```
-
-That folder must contain at least:
-
-```text
-opengl32.dll
-libEGL.dll
-libGLESv2.dll
-```
-
-The RetroArch Xbox One package provides ANGLE `libEGL.dll` and `libGLESv2.dll`,
-but not `opengl32.dll`. A UWP built MobileGlues `opengl32.dll` is expected to
-fill that role. If the Xbox One runtime is incomplete, the build still succeeds
-and the app falls back to the Series/Mesa path at runtime.
+Builds target Xbox Series S and Series X only. Xbox One support was removed and is planned to return later as its own separate target, so the current build has no Xbox One graphics runtime path.
 
 ## Fresh setup
 
@@ -238,6 +208,7 @@ files:
 
 ```text
 MC.Xbox.exe
+mouse_support.dll
 jre\
 natives\
 graphics\
@@ -395,12 +366,12 @@ The build script:
 
 1. Generates `runtime_config.h` for the selected versions.
 2. Builds `MC.Xbox.exe`.
-3. Builds the UWP GLFW shim.
+3. Builds `mouse_support.dll`, then the UWP GLFW shim linked against it.
 4. Builds the compatibility mod.
 5. Patches the local Fabric Loader JAR and builds the securejarhandler UWP patch.
 6. Assembles `staging\package`.
 7. Copies the version catalog.
-8. Copies patched Fabric Loader jars, patched TinyRemapper for legacy Fabric, the securejarhandler patch, bundled mods, log config, natives, Mesa/MobileGlues graphics DLLs, and the JREs.
+8. Copies patched Fabric Loader jars, patched TinyRemapper for legacy Fabric, the securejarhandler patch, bundled mods, log config, natives, `mouse_support.dll`, Mesa/MobileGlues graphics DLLs, and the JREs.
 9. Generates `download_manifest.tsv` for the default official Minecraft/Fabric runtime downloads.
 10. Generates `runtime\manifests\<target-id>.tsv` for cataloged Fabric, Forge, and NeoForge targets.
 11. Builds per target compatibility mod jars and Fabric, Forge, and NeoForge controller mod jars under `runtime\version-mods`.

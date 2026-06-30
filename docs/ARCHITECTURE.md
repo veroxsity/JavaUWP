@@ -21,9 +21,9 @@ MC.Xbox/
   App.cpp                 UWP entry, App lifecycle, Run() orchestration
   runtime_config.h.in     Build time version template
   common/                 Shared helpers, crash reports
-  net/                    HTTP client, remote file server
+  net/                    HTTP client, remote file server, web relay server
   auth/                   Microsoft / Minecraft auth
-  ui/                     Launcher UI, auth screen, UI globals
+  ui/                     Launcher UI, auth screen, launcher mouse, UI globals
   mods/                   Modrinth browser, defaults, mod types
   profiles/               Profile storage and target selection
   launch/                 Runtime downloads, JVM launch, loader dispatch
@@ -39,7 +39,7 @@ MC.Xbox/
       forge.*             Forge launch provider (1.20.1 implemented)
 ```
 
-`build.ps1` compiles sources from these folders with include paths for `.`, `common`, `net`, `auth`, `ui`, `mods`, `profiles`, `launch`, and `launch/loaders`.
+`build.ps1` compiles sources from these folders with include paths for `.`, `common`, `net`, `auth`, `ui`, `mods`, `profiles`, `launch`, `launch/loaders`, and `mouse_support` for the relay mouse API.
 
 ## Module Responsibilities
 
@@ -51,11 +51,13 @@ MC.Xbox/
 | `auth/minecraft_auth` | Device code sign in, token exchange, ownership verification, session state. |
 | `ui/launcher_ui` | Main menu rendering and interaction. |
 | `ui/auth_screen` | Sign in screen and QR/device code presentation. |
+| `ui/launcher_mouse` | Loads `mouse_support.dll` and drives the relay cursor in launcher menus and the mod browser. |
 | `mods/mods_browser` | Modrinth search, version resolution, install into active profile. |
 | `mods/mod_defaults` | Launcher seeded mod compatibility defaults per target. |
 | `profiles/profiles` | Profile CRUD, per profile game dirs, selected launch target. |
 | `net/http_client` | Shared HTTP helpers for downloads and APIs. |
 | `net/remote_file_server` | Local network upload/download UI backend. |
+| `net/web_relay_server` | Browser mouse touchpad served on the local network, forwarded to the relay input port. |
 | `launch/runtime_manager` | Manifest verification, parallel downloads, version JSON resolution, native library prep. |
 | `launch/minecraft_launch` | Shared JVM embed path: classpath assembly, natives, game args, process local Java startup. |
 | `launch/launch_internal` | Low level Java invocation helpers used by loader specific prep. |
@@ -154,6 +156,10 @@ To add another Forge target:
 3. Ensure `build.ps1` generates the matching manifest and any per target controller mod jar.
 4. Confirm dispatch in `launch/loaders/loader.cpp` covers the new loader version.
 
+## Mouse Relay
+
+Xbox UWP does not expose a real mouse, so mouse input comes from an optional relay. `mouse_support.dll` (built from `mouse_support/`) is the single mouse source: it owns the UDP listener and exposes frames through a small C API. The GLFW shim links it for in game mouse input, and the launcher loads it through `ui/launcher_mouse` to drive the cursor in menus and the mod browser. Input can come from the native Bandit Mouse Relay app in `tools/mouse-relay/` (Windows and Android, UDP `7331`) or from `net/web_relay_server`, which serves a browser touchpad on port `6090` so any phone or PC can relay without installing an app.
+
 ## Build Time vs Runtime Configuration
 
 At build time, `build.ps1` generates `runtime_config.h` from `MC.Xbox/runtime_config.h.in` using values from `scripts/config.ps1` and CLI overrides. That header supplies default package versions to host modules.
@@ -174,6 +180,7 @@ Changing the default target requires updating `scripts/config.ps1` and usually `
 | `compat_mod/` | Fabric compatibility mod: filesystem, graphics, and sandbox fixes per target. |
 | `controller_mod/` | Shared controller core plus loader-specific controller mods built into `runtime/version-mods/<target-id>/`. |
 | `patch/` | Supplies patched Fabric Loader classes and securejarhandler UWP changes packaged into the APPX. |
+| `mouse_support/` | Standalone DLL that owns relay mouse input; linked into the GLFW shim for in game use and loaded by the launcher for menu use. |
 | `mesa-runtime/` | Series console OpenGL translation runtime packaged under `graphics/`. |
 
 ## Where To Start For Common Tasks
@@ -189,6 +196,7 @@ Changing the default target requires updating `scripts/config.ps1` and usually `
 | Change downloads or repair behavior | `launch/runtime_manager.cpp` |
 | Change Modrinth install behavior | `mods/mods_browser.cpp` |
 | Change remote uploads | `net/remote_file_server.cpp` |
+| Change relay mouse behavior | `mouse_support/`, `glfw_shim/glfw_uwp.cpp`, `ui/launcher_mouse.cpp`, `net/web_relay_server.cpp` |
 
 ## Auth Boundary
 

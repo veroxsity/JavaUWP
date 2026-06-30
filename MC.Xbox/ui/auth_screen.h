@@ -737,10 +737,8 @@ public:
 
             const D2D1_RECT_F preview = D2D1::RectF(previewLeft, top, previewRight, frame.bottom - 34.0f);
             FillRound(preview, black.Get(), 16.0f);
+            DrawScreenshots(preview, 16.0f);
             StrokeRound(preview, softEdge.Get(), 16.0f, 1.0f);
-            const float inset = 8.0f;
-            const D2D1_RECT_F pano = D2D1::RectF(preview.left + inset, preview.top + inset, preview.right - inset, preview.bottom - inset);
-            DrawScreenshots(pano);
 
             if (!state.detail.empty()) {
                 const D2D1_RECT_F detailRect = D2D1::RectF(preview.left + 26.0f, preview.bottom - 82.0f, preview.right - 26.0f, preview.bottom - 24.0f);
@@ -1303,14 +1301,33 @@ private:
         d2dContext_->DrawBitmap(bitmap, rect, opacity, D2D1_INTERPOLATION_MODE_LINEAR, source);
     }
 
-    void DrawScreenshots(D2D1_RECT_F rect) {
+    void DrawScreenshots(D2D1_RECT_F rect, float cornerRadius = 0.0f) {
         const ULONGLONG nowMs = GetTickCount64();
         if (screenshotPaths_.empty() || nowMs - screenshotsScanTick_ > 10000) {
             ScanScreenshots();
             screenshotsScanTick_ = nowMs;
         }
 
-        d2dContext_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
+        ComPtr<ID2D1Layer> clipLayer;
+        bool usedLayer = false;
+        if (cornerRadius > 0.0f) {
+            ComPtr<ID2D1RoundedRectangleGeometry> geo;
+            if (SUCCEEDED(d2dFactory_->CreateRoundedRectangleGeometry(
+                    D2D1::RoundedRect(rect, cornerRadius, cornerRadius), geo.GetAddressOf())) &&
+                SUCCEEDED(d2dContext_->CreateLayer(nullptr, clipLayer.GetAddressOf()))) {
+                D2D1_LAYER_PARAMETERS1 lp = D2D1::LayerParameters1(
+                    D2D1::InfiniteRect(), geo.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                d2dContext_->PushLayer(&lp, clipLayer.Get());
+                usedLayer = true;
+            }
+        }
+        if (!usedLayer) {
+            d2dContext_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+        auto popClip = [&]() {
+            if (usedLayer) d2dContext_->PopLayer();
+            else d2dContext_->PopAxisAlignedClip();
+        };
 
         if (screenshotPaths_.empty()) {
             ComPtr<ID2D1SolidColorBrush> dim, hint;
@@ -1319,7 +1336,7 @@ private:
             d2dContext_->FillRectangle(rect, dim.Get());
             DrawText(L"No images in Assets\\screenshots", smallMid_.Get(),
                 D2D1::RectF(rect.left + 28.0f, rect.top, rect.right - 28.0f, rect.bottom), hint.Get());
-            d2dContext_->PopAxisAlignedClip();
+            popClip();
             return;
         }
 
@@ -1343,7 +1360,7 @@ private:
             ComPtr<ID2D1Bitmap1> nxt = GetCachedBitmap(screenshotPaths_[static_cast<size_t>(nextIdx)]);
             if (nxt) DrawBitmapCover(nxt.Get(), rect, easedFade, zoom, -panX, panY);
         }
-        d2dContext_->PopAxisAlignedClip();
+        popClip();
     }
 
     void DrawQr(const QrMatrix& qr, D2D1_RECT_F rect, ID2D1Brush* white, ID2D1Brush* black, ID2D1Brush* muted) {

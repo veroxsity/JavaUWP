@@ -1,5 +1,8 @@
 package banditvault.fabriccontroller;
 
+import banditvault.controllercore.ControllerAction;
+import banditvault.controllercore.ControllerBindings;
+import banditvault.controllercore.ControllerInput;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -17,6 +20,7 @@ public final class BanditControllerSettings {
     public float lookDeadzone = 0.12f;
     public float cursorDeadzone = 0.12f;
     public float triggerDeadzone = 0.25f;
+    private final ControllerInput[] bindings = ControllerBindings.defaults();
 
     private static final BanditControllerSettings INSTANCE = new BanditControllerSettings();
     private static volatile boolean loaded;
@@ -60,6 +64,10 @@ public final class BanditControllerSettings {
         INSTANCE.lookDeadzone = (float)range(number(props, "lookDeadzone", INSTANCE.lookDeadzone), 0.0, 0.75);
         INSTANCE.cursorDeadzone = (float)range(number(props, "cursorDeadzone", INSTANCE.cursorDeadzone), 0.0, 0.75);
         INSTANCE.triggerDeadzone = (float)range(number(props, "triggerDeadzone", INSTANCE.triggerDeadzone), 0.0, 0.95);
+        for (ControllerAction action : ControllerAction.values()) {
+            ControllerInput fallback = ControllerBindings.defaultInput(action);
+            INSTANCE.bindings[action.ordinal()] = ControllerInput.byId(props.getProperty("binding." + action.id), fallback);
+        }
     }
 
     public static void save() {
@@ -80,6 +88,9 @@ public final class BanditControllerSettings {
         props.setProperty("lookDeadzone", Float.toString(INSTANCE.lookDeadzone));
         props.setProperty("cursorDeadzone", Float.toString(INSTANCE.cursorDeadzone));
         props.setProperty("triggerDeadzone", Float.toString(INSTANCE.triggerDeadzone));
+        for (ControllerAction action : ControllerAction.values()) {
+            props.setProperty("binding." + action.id, INSTANCE.binding(action).id);
+        }
 
         try (FileOutputStream out = new FileOutputStream(file)) {
             props.store(out, "Bandit controller compatibility settings");
@@ -90,6 +101,23 @@ public final class BanditControllerSettings {
 
     private static File configFile() {
         return new File(new File(System.getProperty("user.dir", "."), "config"), "bandit-controller.properties");
+    }
+
+    public ControllerInput binding(ControllerAction action) {
+        ControllerInput input = bindings[action.ordinal()];
+        return input == null ? ControllerBindings.defaultInput(action) : input;
+    }
+
+    public void setBinding(ControllerAction action, ControllerInput input) {
+        bindings[action.ordinal()] = input == null ? ControllerBindings.defaultInput(action) : input;
+    }
+
+    public ControllerAction conflictFor(ControllerAction action, ControllerInput input) {
+        return ControllerBindings.conflict(action, input, bindings);
+    }
+
+    public void resetBindings() {
+        ControllerBindings.resetDefaults(bindings);
     }
 
     private static boolean bool(Properties props, String key, boolean fallback) {

@@ -51,6 +51,11 @@ public final class ControllerState {
         return trigger(axis, deadzone) && triggerIndex >= 0 && triggerIndex < previousTriggers.length && !previousTriggers[triggerIndex];
     }
 
+    public boolean triggerReleased(ControllerAxis axis, float deadzone) {
+        int triggerIndex = axis.index - ControllerAxis.LEFT_TRIGGER.index;
+        return !trigger(axis, deadzone) && triggerIndex >= 0 && triggerIndex < previousTriggers.length && previousTriggers[triggerIndex];
+    }
+
     public static float clampAxis(float value) {
         if (value < -1.0f) {
             return -1.0f;

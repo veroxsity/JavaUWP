@@ -1,7 +1,9 @@
 package banditvault.fabriccontroller;
 
 import banditvault.controllercore.ControllerAxis;
+import banditvault.controllercore.ControllerAction;
 import banditvault.controllercore.ControllerButton;
+import banditvault.controllercore.ControllerInput;
 import banditvault.controllercore.ControllerRuntime;
 import banditvault.controllercore.ControllerState;
 import banditvault.controllercore.GridNavigation;
@@ -123,6 +125,9 @@ public final class BanditControllerCompat {
     }
 
     public static void renderCursor(class_437 screen, class_4587 matrices) {
+        if (screen instanceof BanditControllerSettingsScreen) {
+            return;
+        }
         if (!active || followingCompanion || screen == null || cursorX < 0.0 || cursorY < 0.0) {
             return;
         }
@@ -193,54 +198,63 @@ public final class BanditControllerCompat {
         setHeld(options.field_1881, ly > settings.moveDeadzone);
         setHeld(options.field_1913, lx < -settings.moveDeadzone);
         setHeld(options.field_1849, lx > settings.moveDeadzone);
-        setHeld(options.field_1903, button(GLFW.GLFW_GAMEPAD_BUTTON_A));
+        setHeld(options.field_1903, button(settings, ControllerAction.JUMP));
         if (settings.toggleCrouch) {
-            if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_B)) {
+            if (pressed(settings, ControllerAction.SNEAK)) {
                 crouchToggled = !crouchToggled;
             }
             setHeld(options.field_1832, crouchToggled);
         } else {
             crouchToggled = false;
-            setHeld(options.field_1832, button(GLFW.GLFW_GAMEPAD_BUTTON_B));
+            setHeld(options.field_1832, button(settings, ControllerAction.SNEAK));
         }
-        setHeld(options.field_1886, trigger(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER));
-        setHeld(options.field_1904, trigger(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER));
+        setHeld(options.field_1886, button(settings, ControllerAction.ATTACK));
+        setHeld(options.field_1904, button(settings, ControllerAction.USE));
         if (settings.toggleSprint) {
-            if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_THUMB)) {
+            if (pressed(settings, ControllerAction.SPRINT)) {
                 sprintToggled = !sprintToggled;
             }
             setHeld(options.field_1867, sprintToggled);
         } else {
             sprintToggled = false;
-            setHeld(options.field_1867, button(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_THUMB));
+            setHeld(options.field_1867, button(settings, ControllerAction.SPRINT));
         }
 
-        if (triggerPressed(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
+        if (pressed(settings, ControllerAction.ATTACK)) {
             pressKey(options.field_1886);
         }
-        if (triggerPressed(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER)) {
+        if (pressed(settings, ControllerAction.USE)) {
             pressKey(options.field_1904);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y)) {
+        if (pressed(settings, ControllerAction.INVENTORY)) {
             pressKey(options.field_1822);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+        if (pressed(settings, ControllerAction.DROP)) {
             pressKey(options.field_1869);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_BUMPER)) {
+        if (pressed(settings, ControllerAction.PICK_BLOCK)) {
+            pressKey(options.field_1871);
+        }
+        if (pressed(settings, ControllerAction.HOTBAR_PREVIOUS)) {
             changeHotbarSlot(client.field_1724, -1);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER)) {
+        if (pressed(settings, ControllerAction.HOTBAR_NEXT)) {
             changeHotbarSlot(client.field_1724, 1);
         }
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_START)) {
+        if (pressed(settings, ControllerAction.PAUSE)) {
             client.method_20539(false);
         }
     }
 
     private static void tickScreen(class_310 client, class_437 screen) {
         BanditControllerSettings settings = BanditControllerSettings.get();
+
+        if (screen instanceof BanditControllerSettingsScreen) {
+            ((BanditControllerSettingsScreen)screen).handleControllerInput(CONTROLLER_STATE, settings.triggerDeadzone);
+            return;
+        }
+
         if (screen != lastCursorScreen) {
             lastCursorScreen = screen;
             cursorX = Math.max(1, screen.field_22789 / 2);
@@ -260,7 +274,7 @@ public final class BanditControllerCompat {
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
         GridNavigation.Direction snapDirection = snapDirection(lx, ly);
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
+        if (pressed(settings, ControllerAction.SNAP_FREE_TOGGLE)) {
             takeControllerCursor();
             cursorMode = cursorMode == CursorMode.SNAP ? CursorMode.FREE : CursorMode.SNAP;
             snapStickLatched = false;
@@ -273,10 +287,10 @@ public final class BanditControllerCompat {
         }
 
         boolean controllerAction = snapDirection != null ||
-            pressed(GLFW.GLFW_GAMEPAD_BUTTON_A) ||
-            pressed(GLFW.GLFW_GAMEPAD_BUTTON_B) ||
-            pressed(GLFW.GLFW_GAMEPAD_BUTTON_X) ||
-            pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y);
+            pressed(settings, ControllerAction.MENU_ACCEPT) ||
+            pressed(settings, ControllerAction.MENU_CANCEL) ||
+            pressed(settings, ControllerAction.DROP) ||
+            pressed(settings, ControllerAction.QUICK_MOVE);
         if (controllerAction) {
             takeControllerCursor();
         }
@@ -298,24 +312,24 @@ public final class BanditControllerCompat {
             screen.method_16014(cursorX, cursorY);
         }
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
+        if (pressed(settings, ControllerAction.MENU_ACCEPT)) {
             screen.method_25402(cursorX, cursorY, LEFT_CLICK);
         }
-        if (released(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
+        if (released(settings, ControllerAction.MENU_ACCEPT)) {
             screen.method_25406(cursorX, cursorY, LEFT_CLICK);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+        if (pressed(settings, ControllerAction.DROP)) {
             screen.method_25402(cursorX, cursorY, RIGHT_CLICK);
         }
-        if (released(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+        if (released(settings, ControllerAction.DROP)) {
             screen.method_25406(cursorX, cursorY, RIGHT_CLICK);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_B)) {
+        if (pressed(settings, ControllerAction.MENU_CANCEL)) {
             if (!screen.method_25404(GLFW.GLFW_KEY_ESCAPE, 0, 0)) {
                 client.method_1507(null);
             }
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y)) {
+        if (pressed(settings, ControllerAction.QUICK_MOVE)) {
             quickMoveFocusedSlot(screen, cursorMode == CursorMode.SNAP && snapTarget != null ? snapTarget.slot : null);
         }
 
@@ -650,6 +664,22 @@ public final class BanditControllerCompat {
 
     private static boolean released(int index) {
         return CONTROLLER_STATE.released(buttonFor(index));
+    }
+
+    private static boolean button(BanditControllerSettings settings, ControllerAction action) {
+        return binding(settings, action).held(CONTROLLER_STATE, settings.triggerDeadzone);
+    }
+
+    private static boolean pressed(BanditControllerSettings settings, ControllerAction action) {
+        return binding(settings, action).pressed(CONTROLLER_STATE, settings.triggerDeadzone);
+    }
+
+    private static boolean released(BanditControllerSettings settings, ControllerAction action) {
+        return binding(settings, action).released(CONTROLLER_STATE, settings.triggerDeadzone);
+    }
+
+    private static ControllerInput binding(BanditControllerSettings settings, ControllerAction action) {
+        return settings.binding(action);
     }
 
     private static void copyButtons() {

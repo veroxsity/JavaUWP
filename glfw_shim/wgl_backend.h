@@ -39,6 +39,14 @@ static PFN_uwpSetPixelFormat p_setpf = nullptr;
 static PFN_wglCreateContextAttribsARB p_attribs = nullptr;
 static PFN_wglSwapIntervalEXT p_swapinterval = nullptr;
 
+static bool LegacyOpenGlContextRequested() {
+    wchar_t value[16] = {};
+    DWORD len = GetEnvironmentVariableW(L"MC_LEGACY_OPENGL_CONTEXT", value, ARRAYSIZE(value));
+    return len > 0 && len < ARRAYSIZE(value) &&
+        (value[0] == L'1' || value[0] == L'y' || value[0] == L'Y' ||
+         value[0] == L't' || value[0] == L'T');
+}
+
 static void Log(const char* fmt, ...) {
     if (!s_log) return;
     char buf[512];
@@ -101,14 +109,22 @@ static bool CreateContext(HWND coreWindow) {
     p_attribs = (PFN_wglCreateContextAttribsARB)p_getproc("wglCreateContextAttribsARB");
     s_ctx = base;
     if (p_attribs) {
-        const int attribs[] = { 0x2091, 3, 0x2092, 2, 0x9126, 0x00000001, 0 }; // MAJOR=3 MINOR=2 PROFILE=core
-        HGLRC core = p_attribs(s_dc, nullptr, attribs);
-        Log("wgl wglCreateContextAttribsARB(3.2 core) => %p err=%lu", (void*)core, core ? 0UL : GetLastError());
-        if (core) {
+        const bool legacyContext = LegacyOpenGlContextRequested();
+        const int profile = legacyContext ? 0x00000002 : 0x00000001; // compatibility/core
+        const int attribs[] = { 0x2091, 3, 0x2092, 2, 0x9126, profile, 0 };
+        HGLRC requested = p_attribs(s_dc, nullptr, attribs);
+        Log("wgl wglCreateContextAttribsARB(3.2 %s) => %p err=%lu",
+            legacyContext ? "compatibility" : "core",
+            (void*)requested,
+            requested ? 0UL : GetLastError());
+        if (requested) {
             p_makecur(nullptr, nullptr);
             if (p_delete) p_delete(base);
-            if (!p_makecur(s_dc, core)) { Log("wgl makecurrent(core) failed err=%lu", GetLastError()); return false; }
-            s_ctx = core;
+            if (!p_makecur(s_dc, requested)) {
+                Log("wgl makecurrent(attribs) failed err=%lu", GetLastError());
+                return false;
+            }
+            s_ctx = requested;
         }
     } else {
         Log("wgl wglCreateContextAttribsARB unavailable; keeping base context");

@@ -125,7 +125,7 @@ public final class BanditControllerCompat {
     }
 
     public static void renderCursor(class_437 screen, class_4587 matrices) {
-        if (screen instanceof BanditControllerSettingsScreen) {
+        if (isSettingsScreen(screen)) {
             return;
         }
         if (!active || followingCompanion || screen == null || cursorX < 0.0 || cursorY < 0.0) {
@@ -250,7 +250,7 @@ public final class BanditControllerCompat {
     private static void tickScreen(class_310 client, class_437 screen) {
         BanditControllerSettings settings = BanditControllerSettings.get();
 
-        if (screen instanceof BanditControllerSettingsScreen) {
+        if (isSettingsScreen(screen)) {
             ((BanditControllerSettingsScreen)screen).handleControllerInput(CONTROLLER_STATE, settings.triggerDeadzone);
             return;
         }
@@ -748,6 +748,10 @@ public final class BanditControllerCompat {
 
     private static double clamp(double value, double min, double max) {
         return ControllerRuntime.clamp(value, min, max);
+    }
+
+    private static boolean isSettingsScreen(class_437 screen) {
+        return screen != null && "banditvault.fabriccontroller.BanditControllerSettingsScreen".equals(screen.getClass().getName());
     }
 
     private static void captureControllerState() {

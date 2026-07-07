@@ -2096,6 +2096,7 @@ void ShowModsPage(
                     else if (hid == launchhit::kProfileDelete) profileFocus = 1;
                     else if (hid == launchhit::kProfileBackup) profileFocus = 3;
                     else if (hid == launchhit::kProfileExport) profileFocus = 4;
+                    else if (hid == launchhit::kProfileController) profileFocus = 5;
                     if (profileFocus >= 0) {
                         if (apply) state.modsProfileFocus = profileFocus;
                         if (clicked) clickActivate = true;
@@ -2194,7 +2195,8 @@ void ShowModsPage(
                 ModsSearchBeginInput();
             } else if (!gridFocus && leftDown && !leftWasDown) {
                 if (!state.modsProfileBuiltin) {
-                    if (state.modsProfileFocus == 0) state.modsProfileFocus = 4;
+                    if (state.modsProfileFocus == 0) state.modsProfileFocus = 5;
+                    else if (state.modsProfileFocus == 5) state.modsProfileFocus = 4;
                     else if (state.modsProfileFocus == 4) state.modsProfileFocus = 3;
                     else if (state.modsProfileFocus == 3) state.modsProfileFocus = 1;
                     else state.modsProfileFocus = 1;
@@ -2203,7 +2205,8 @@ void ShowModsPage(
                 if (!state.modsProfileBuiltin) {
                     if (state.modsProfileFocus == 1) state.modsProfileFocus = 3;
                     else if (state.modsProfileFocus == 3) state.modsProfileFocus = 4;
-                    else if (state.modsProfileFocus == 4) state.modsProfileFocus = 0;
+                    else if (state.modsProfileFocus == 4) state.modsProfileFocus = 5;
+                    else if (state.modsProfileFocus == 5) state.modsProfileFocus = 0;
                     else state.modsProfileFocus = 0;
                 } else {
                     state.modsProfileFocus = 0;
@@ -2216,7 +2219,7 @@ void ShowModsPage(
                 }
             } else if (gridFocus && (upDown && !upWasDown)) {
                 if (state.modsProfileSel < 2) {
-                    state.modsProfileFocus = state.modsProfileBuiltin ? 0 : 4;
+                    state.modsProfileFocus = state.modsProfileBuiltin ? 0 : 5;
                 }
                 else { state.modsProfileSel -= 2; pmEnsureVisible(); }
             } else if (gridFocus && (downDown && !downWasDown)) {
@@ -2275,6 +2278,23 @@ void ShowModsPage(
                         state.status = exportError.empty() ? L"Could not export profile pack" : exportError;
                         state.isError = true;
                     }
+                } else if (state.modsProfileFocus == 5 && !state.modsProfileBuiltin) {
+                    state.modsProfileControllerModEnabled = !state.modsProfileControllerModEnabled;
+                    SetProfileControllerModEnabled(runtimeRoot, state.modsProfileId, state.modsProfileControllerModEnabled);
+                    if (state.modsProfileControllerModEnabled) {
+                        const int removed = DeleteControlifyModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));
+                        state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
+                        state.status = removed > 0
+                            ? L"Bandit controller mod enabled and Controlify removed"
+                            : L"Bandit controller mod will be forced on launch";
+                    } else {
+                        const int removed = DeleteBanditControllerModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));
+                        state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
+                        state.status = removed > 0
+                            ? L"Bandit controller mod disabled and removed"
+                            : L"Bandit controller mod disabled";
+                    }
+                    state.isError = false;
                 } else if (state.modsProfileFocus == 0) {
                     SetActiveProfileId(runtimeRoot, state.modsProfileId);
                     state.activeProfileId = state.modsProfileId;
@@ -2535,6 +2555,7 @@ void ShowModsPage(
                         state.modsProfileName = selected.title;
                         state.modsProfileTargetText = ProfileDisplayTarget(runtimeRoot, selected.filePath);
                         state.modsProfileBuiltin = (selected.filePath == kVanillaProfileId);
+                        state.modsProfileControllerModEnabled = GetProfileById(runtimeRoot, selected.filePath).controllerModEnabled;
                         state.modsProfileMods = ListProfileMods(runtimeRoot, selected.filePath);
                         state.modsProfileScroll = 0;
                         state.modsProfileFocus = 0;
@@ -2570,4 +2591,3 @@ void ShowModsPage(
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
-

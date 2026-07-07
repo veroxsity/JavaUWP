@@ -165,6 +165,91 @@ void CopyDirectoryContentsAlways(const std::wstring& src, const std::wstring& ds
     FindClose(h);
 }
 
+static bool IsBanditControllerJarName(const std::wstring& fileName) {
+    const std::wstring lower = ToLowerW(fileName);
+    return lower.size() > 4 &&
+        lower.compare(lower.size() - 4, 4, L".jar") == 0 &&
+        (lower.rfind(L"banditvault-fabric-controller", 0) == 0 ||
+            lower.rfind(L"banditvault-forge-controller", 0) == 0 ||
+            lower.rfind(L"banditvault-neoforge-controller", 0) == 0);
+}
+
+static bool IsControlifyJarName(const std::wstring& fileName) {
+    const std::wstring lower = ToLowerW(fileName);
+    return lower.size() > 4 &&
+        lower.compare(lower.size() - 4, 4, L".jar") == 0 &&
+        lower.rfind(L"controlify", 0) == 0;
+}
+
+int DeleteBanditControllerModsFromDir(const std::wstring& modsDir) {
+    int removed = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((modsDir + L"\\*.jar").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+
+    do {
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !IsBanditControllerJarName(fd.cFileName)) continue;
+        const std::wstring path = modsDir + L"\\" + fd.cFileName;
+        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+        if (DeleteFileW(path.c_str())) ++removed;
+    } while (FindNextFileW(h, &fd));
+
+    FindClose(h);
+    return removed;
+}
+
+int DeleteControlifyModsFromDir(const std::wstring& modsDir) {
+    int removed = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((modsDir + L"\\*.jar").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+
+    do {
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !IsControlifyJarName(fd.cFileName)) continue;
+        const std::wstring path = modsDir + L"\\" + fd.cFileName;
+        SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+        if (DeleteFileW(path.c_str())) ++removed;
+    } while (FindNextFileW(h, &fd));
+
+    FindClose(h);
+    return removed;
+}
+
+static void CopyDirectoryContentsExceptController(const std::wstring& src, const std::wstring& dst) {
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((src + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+
+    EnsureDirectoryTree(dst);
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        const std::wstring srcPath = src + L"\\" + fd.cFileName;
+        const std::wstring dstPath = dst + L"\\" + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            CopyDirectoryContentsExceptController(srcPath, dstPath);
+        } else if (!IsBanditControllerJarName(fd.cFileName)) {
+            CopyFileAlways(srcPath, dstPath);
+        }
+    } while (FindNextFileW(h, &fd));
+
+    FindClose(h);
+}
+
+std::wstring PrepareEffectiveBundledModsDir(
+    const std::wstring& runtimeRoot,
+    const std::wstring& targetId,
+    const std::wstring& bundledModsDir,
+    bool controllerModEnabled) {
+    if (controllerModEnabled || bundledModsDir.empty() || !DirectoryExists(bundledModsDir)) {
+        return bundledModsDir;
+    }
+
+    const std::wstring filteredDir = runtimeRoot + L"\\runtime\\version-mods-no-controller\\" + SafeFileName(targetId);
+    DeleteDirectoryTree(filteredDir);
+    CopyDirectoryContentsExceptController(bundledModsDir, filteredDir);
+    return filteredDir;
+}
+
 bool SeedLocalRuntime(
     const std::wstring& packageDir,
     const std::wstring& localDir,
@@ -1267,5 +1352,3 @@ bool PrepareTargetNativeDir(
     }
     return ready;
 }
-
-

@@ -362,10 +362,10 @@ public:
                 const float top = frame.top + 34.0f;
                 const bool isActive = !state.modsProfileId.empty() && state.modsProfileId == state.activeProfileId;
 
-                const float btnW = 148.0f;
+                const float btnW = state.modsProfileBuiltin ? 148.0f : 160.0f;
                 const float btnH = 54.0f;
                 const float btnGap = 12.0f;
-                const float actionBarW = state.modsProfileBuiltin ? btnW : (btnW * 4.0f + btnGap * 3.0f);
+                const float actionBarW = state.modsProfileBuiltin ? btnW : (btnW * 5.0f + btnGap * 4.0f);
 
                 const std::wstring nameShown = state.modsRenaming ? (state.modsRenameText + L"_") : state.modsProfileName;
                 const D2D1_RECT_F profileBack = DrawBackChip(left, top, surfaceFill.Get(), softEdge.Get(), muted.Get());
@@ -389,7 +389,19 @@ public:
                     D2D1::RectF(playBtn.left + 44.0f, playBtn.top, playBtn.right - 8.0f, playBtn.bottom), isActive ? muted.Get() : black.Get());
 
                 if (!state.modsProfileBuiltin) {
-                    const D2D1_RECT_F exportBtn = D2D1::RectF(right - btnW * 2.0f - btnGap, top, right - btnW - btnGap, top + btnH);
+                    const D2D1_RECT_F controllerBtn = D2D1::RectF(right - btnW * 2.0f - btnGap, top, right - btnW - btnGap, top + btnH);
+                    RegisterHit(launchhit::kProfileController, controllerBtn);
+                    const bool controllerFocus = state.modsProfileFocus == 5;
+                    if (controllerFocus) GlowSelect(controllerBtn, 12.0f);
+                    FillRound(controllerBtn, surfaceFill.Get(), 12.0f);
+                    StrokeRound(controllerBtn, state.modsProfileControllerModEnabled ? accent.Get() : muted.Get(), 12.0f, controllerFocus ? 3.0f : 2.0f);
+                    DrawIcon(L"\uE7FC", D2D1::RectF(controllerBtn.left + 12.0f, controllerBtn.top, controllerBtn.left + 36.0f, controllerBtn.bottom),
+                        state.modsProfileControllerModEnabled ? accent.Get() : muted.Get());
+                    DrawText(state.modsProfileControllerModEnabled ? L"Bandit On" : L"Bandit Off", smallMid_.Get(),
+                        D2D1::RectF(controllerBtn.left + 38.0f, controllerBtn.top, controllerBtn.right - 6.0f, controllerBtn.bottom),
+                        state.modsProfileControllerModEnabled ? accent.Get() : muted.Get());
+
+                    const D2D1_RECT_F exportBtn = D2D1::RectF(right - btnW * 3.0f - btnGap * 2.0f, top, right - btnW * 2.0f - btnGap * 2.0f, top + btnH);
                     RegisterHit(launchhit::kProfileExport, exportBtn);
                     const bool exportFocus = state.modsProfileFocus == 4;
                     if (exportFocus) GlowSelect(exportBtn, 12.0f);
@@ -399,7 +411,7 @@ public:
                     DrawText(L"Export", bodyMid_.Get(),
                         D2D1::RectF(exportBtn.left + 44.0f, exportBtn.top, exportBtn.right - 8.0f, exportBtn.bottom), accent.Get());
 
-                    const D2D1_RECT_F backupBtn = D2D1::RectF(right - btnW * 3.0f - btnGap * 2.0f, top, right - btnW * 2.0f - btnGap * 2.0f, top + btnH);
+                    const D2D1_RECT_F backupBtn = D2D1::RectF(right - btnW * 4.0f - btnGap * 3.0f, top, right - btnW * 3.0f - btnGap * 3.0f, top + btnH);
                     RegisterHit(launchhit::kProfileBackup, backupBtn);
                     const bool backupFocus = state.modsProfileFocus == 3;
                     if (backupFocus) GlowSelect(backupBtn, 12.0f);
@@ -409,7 +421,7 @@ public:
                     DrawText(L"Backup", bodyMid_.Get(),
                         D2D1::RectF(backupBtn.left + 44.0f, backupBtn.top, backupBtn.right - 8.0f, backupBtn.bottom), accent.Get());
 
-                    const D2D1_RECT_F delBtn = D2D1::RectF(right - btnW * 4.0f - btnGap * 3.0f, top, right - btnW * 3.0f - btnGap * 3.0f, top + btnH);
+                    const D2D1_RECT_F delBtn = D2D1::RectF(right - btnW * 5.0f - btnGap * 4.0f, top, right - btnW * 4.0f - btnGap * 4.0f, top + btnH);
                     RegisterHit(launchhit::kProfileDelete, delBtn);
                     const bool delFocus = state.modsProfileFocus == 1;
                     if (delFocus) GlowSelect(delBtn, 12.0f);
@@ -422,14 +434,16 @@ public:
 
                 const bool gridFocus = state.modsProfileFocus == 2;
                 const float hintTop = top + btnH + 12.0f;
-                DrawText(state.modsRenaming
-                            ? L"Type a name, then close the keyboard to save"
-                            : (state.modsProfileBuiltin
-                                ? L"B  Back"
-                                : (gridFocus ? L"B  Back      X  Remove mod      Y  Rename"
-                                             : (state.modsProfileFocus == 4
-                                                 ? L"B  Back      A  Export .mrpack for PC"
-                                                 : L"B  Back      A select      X Delete      Y Rename"))),
+                std::wstring profileHint = L"B  Back";
+                if (state.modsRenaming) {
+                    profileHint = L"Type a name, then close the keyboard to save";
+                } else if (!state.modsProfileBuiltin) {
+                    if (gridFocus) profileHint = L"B  Back      X  Remove mod      Y  Rename";
+                    else if (state.modsProfileFocus == 4) profileHint = L"B  Back      A  Export .mrpack for PC";
+                    else if (state.modsProfileFocus == 5) profileHint = L"B  Back      A  Toggle Bandit controller mod      Y Rename";
+                    else profileHint = L"B  Back      A select      X Delete      Y Rename";
+                }
+                DrawText(profileHint.c_str(),
                     smallFormat_.Get(),
                     D2D1::RectF(left, hintTop, right, hintTop + 28.0f),
                     state.modsRenaming ? accent.Get() : muted.Get());

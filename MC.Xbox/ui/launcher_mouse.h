@@ -41,6 +41,7 @@ constexpr int kSearch = 3;
 constexpr int kDetailInstall = 4;
 constexpr int kProfilePlay = 10;
 constexpr int kProfileDelete = 11;
+constexpr int kProfileController = 12;
 constexpr int kProfileBackup = 13;
 constexpr int kProfileExport = 14;
 constexpr int kTabBase = 100;

@@ -24,6 +24,7 @@ struct Profile {
     std::wstring loaderVersion;
     std::wstring targetId;
     bool builtin = false;
+    bool controllerModEnabled = true;
 };
 
 std::wstring ProfilesRoot(const std::wstring& runtimeRoot);
@@ -55,6 +56,7 @@ bool RestoreProfileBackup(const std::wstring& runtimeRoot, const std::wstring& b
 void DeleteProfilePermanent(const std::wstring& runtimeRoot, const std::wstring& id);
 void DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id);
 void RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName);
+void SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled);
 
 void EnsureProfilesInitialized(const std::wstring& runtimeRoot);
 void EnsureProfileGameDataInitialized(const std::wstring& runtimeRoot, const std::wstring& profileId);

@@ -52,6 +52,7 @@ struct AuthUiState {
     std::wstring modsProfileName;
     std::wstring modsProfileTargetText;
     bool modsProfileBuiltin = false;
+    bool modsProfileControllerModEnabled = true;
     std::vector<std::wstring> modsProfileMods;
     int modsProfileScroll = 0;
     int modsProfileFocus = 0;

@@ -62,6 +62,13 @@ bool SeedLocalRuntime(
     const std::wstring& localDir,
     const RuntimeSeedProgressCallback& progress = RuntimeSeedProgressCallback());
 void CopyDirectoryContentsAlways(const std::wstring& src, const std::wstring& dst);
+int DeleteBanditControllerModsFromDir(const std::wstring& modsDir);
+int DeleteControlifyModsFromDir(const std::wstring& modsDir);
+std::wstring PrepareEffectiveBundledModsDir(
+    const std::wstring& runtimeRoot,
+    const std::wstring& targetId,
+    const std::wstring& bundledModsDir,
+    bool controllerModEnabled);
 void ArchiveCurrentLogsToPrevious(const std::wstring& runtimeRoot);
 std::wstring DetectGraphicsRuntimeName();
 bool EnsureRuntimeDownloads(

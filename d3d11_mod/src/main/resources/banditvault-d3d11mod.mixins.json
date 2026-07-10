@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "banditvault.d3d11mod.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "MinecraftServerMixin"
+  ],
+  "client": [
+    "MainTargetMixin",
+    "RenderSystemMixin",
+    "WindowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

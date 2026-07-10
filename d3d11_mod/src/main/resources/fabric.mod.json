@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "banditvault_d3d11mod",
+  "version": "${version}",
+  "name": "Bandit D3D11Mod",
+  "description": "Experimental first-pixel Direct3D 11 renderer backend for Bandit Launcher.",
+  "authors": [
+    "Bandit Launcher contributors"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "banditvault.d3d11mod.D3D11ModInitializer"
+    ]
+  },
+  "mixins": [
+    "banditvault-d3d11mod.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": "1.21.11"
+  }
+}

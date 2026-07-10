@@ -1,4 +1,4 @@
-﻿#include "minecraft_launch.h"
+#include "minecraft_launch.h"
 
 #include "app_globals.h"
 #include "crash_report.h"
@@ -1106,9 +1106,16 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     std::vector<std::string> vmOptionStorage;
     vmOptionStorage.reserve(16);
     vmOptionStorage.push_back("-Xmx3G");
-    vmOptionStorage.push_back("-Xms512M");
+    vmOptionStorage.push_back("-Xms2G");
     vmOptionStorage.push_back("-XX:MaxDirectMemorySize=512M");
-    WriteLog(L"JVM memory defaults: -Xmx3G -Xms512M -XX:MaxDirectMemorySize=512M");
+    // Chunk generation tanks fps on the shared 8-core CPU: G1's default 200ms pause target,
+    // a heap growing 6x under worldgen allocation storms, and an uncapped background worker
+    // pool starving the render thread. Short pauses, pre-sized heap, capped workers.
+    vmOptionStorage.push_back("-XX:MaxGCPauseMillis=25");
+    vmOptionStorage.push_back("-XX:+ParallelRefProcEnabled");
+    vmOptionStorage.push_back("-Dmax.bg.threads=4");
+    vmOptionStorage.push_back("-Xlog:gc:file=\"" + w2a(fwd(launcherLogDir + L"\\gc.log")) + "\"");  // embedded-JVM stdout never reaches the redirect; log collector pauses to a file
+    WriteLog(L"JVM tuning: -Xmx3G -Xms2G -XX:MaxDirectMemorySize=512M -XX:MaxGCPauseMillis=25 -XX:+ParallelRefProcEnabled -Dmax.bg.threads=4");
     vmOptionStorage.push_back("--enable-native-access=ALL-UNNAMED");
     vmOptionStorage.push_back("--add-opens=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED");
     const std::wstring selectedJavaBasePatchName =
@@ -1189,6 +1196,14 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(lwjglGlfwDll)));
     WriteLogF(L"LWJGL native directory: %s", lwjglNativeDir.c_str());
     WriteLogF(L"LWJGL GLFW library forced: %s", lwjglGlfwDll.c_str());
+    const std::wstring d3d11BackendDll = packageDir + L"\\natives\\bandit_d3d11_backend.dll";
+    if (GetFileAttributesW(d3d11BackendDll.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        const std::wstring d3d11BackendLog = launcherLogDir + L"\\d3d11_backend.log";
+        vmOptionStorage.push_back("-Dbandit.d3d11.native.path=" + w2a(fwd(d3d11BackendDll)));
+        vmOptionStorage.push_back("-Dbandit.d3d11.log.path=" + w2a(fwd(d3d11BackendLog)));
+        WriteLogF(L"D3D11 backend native path: %s", d3d11BackendDll.c_str());
+        WriteLogF(L"D3D11 backend log path: %s", d3d11BackendLog.c_str());
+    }
     std::wstring graphicsRuntime = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");
     if (graphicsRuntime.empty()) {
         graphicsRuntime = L"mesa";
@@ -1393,4 +1408,3 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     DeleteFileW(CrashLaunchMarkerPath(exeDir).c_str());
     return true;
 }
-

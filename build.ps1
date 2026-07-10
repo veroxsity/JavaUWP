@@ -10,7 +10,9 @@ param(
     [switch]$StopFileLockers,
     [switch]$SkipVersionManifests,
     [switch]$SkipVersionCompat,
-    [switch]$IncludePrebuiltNeoForgeArtifacts
+    [switch]$IncludePrebuiltNeoForgeArtifacts,
+    [switch]$IncludeD3D11Mod,
+    [switch]$UseD3D12Backend
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,8 +38,11 @@ $certDir = Get-ConfigPath "CertificateDir"
 $mcBuildDir = Join-Path $buildDir "MC.Xbox"
 $glfwBuildDir = Join-Path $buildDir "glfw_shim"
 $mouseSupportBuildDir = Join-Path $buildDir "mouse_support"
+$d3d11BackendBuildDir = Join-Path $buildDir "d3d11_backend"
+$d3d11ModOutputDir = Join-Path $buildDir "d3d11_mod\mods"
 $mouseSupportDll = Join-Path $mouseSupportBuildDir "mouse_support.dll"
 $mouseSupportLib = Join-Path $mouseSupportBuildDir "mouse_support.lib"
+$d3d11BackendDll = Join-Path $d3d11BackendBuildDir "bandit_d3d11_backend.dll"
 $mcExe = Join-Path $mcBuildDir "MC.Xbox.exe"
 $shimDll = Join-Path $glfwBuildDir "glfw.dll"
 $jreSrc = Resolve-JavaHome
@@ -49,6 +54,12 @@ $tools = Resolve-VSTools
 $sdk = Resolve-WindowsSdk
 $sdkRoot = $sdk.Root
 $sdkVer = $sdk.Version
+
+if ($IncludeD3D11Mod -and (
+        $ProjectConfig.MinecraftVersion -ne "1.21.11" -or
+        $ProjectConfig.FabricLoaderVersion -ne "0.19.2")) {
+    throw "The experimental D3D11Mod first-pixel build only supports Minecraft 1.21.11 with Fabric Loader 0.19.2."
+}
 
 function Assert-AppxVersion {
     param([Parameter(Mandatory = $true)][string]$Version)
@@ -335,6 +346,22 @@ Write-Host "=== Building GLFW CoreWindow shim ==="
 & (Join-Path $root "glfw_shim\build_glfw.ps1") -OutputDir $glfwBuildDir -MouseSupportLib $mouseSupportLib -MouseSupportInclude (Join-Path $root "mouse_support")
 if (-not (Test-Path $shimDll)) { throw "GLFW shim DLL missing after build: $shimDll" }
 
+if ($IncludeD3D11Mod) {
+    if ($UseD3D12Backend) {
+        Write-Host "=== Building experimental D3D12 backend DLL ==="
+        & (Join-Path $root "d3d11_mod\native\build_native_d3d12.ps1") -OutputDir $d3d11BackendBuildDir
+        $d3d12Dll = Join-Path $d3d11BackendBuildDir "bandit_d3d12_backend.dll"
+        if (-not (Test-Path $d3d12Dll)) { throw "D3D12 backend DLL missing after build: $d3d12Dll" }
+        # Same JNI exports; package under the D3D11 filename so the launcher and Java mod
+        # need no changes and backends stay A/B swappable per build.
+        Copy-Item $d3d12Dll $d3d11BackendDll -Force
+    } else {
+        Write-Host "=== Building experimental D3D11 backend DLL ==="
+        & (Join-Path $root "d3d11_mod\native\build_native.ps1") -OutputDir $d3d11BackendBuildDir
+    }
+    if (-not (Test-Path $d3d11BackendDll)) { throw "D3D11 backend DLL missing after build: $d3d11BackendDll" }
+}
+
 Write-Host "=== Building Xbox compatibility mod ==="
 & (Join-Path $root "compat_mod\build_compat_mod.ps1")
 
@@ -343,6 +370,11 @@ Write-Host "=== Building default Fabric controller mod ==="
     -MinecraftVersion $ProjectConfig.MinecraftVersion `
     -LoaderVersion $ProjectConfig.FabricLoaderVersion `
     -OutputDir (Join-Path $gameDir "mods")
+
+if ($IncludeD3D11Mod) {
+    Write-Host "=== Building experimental D3D11 Fabric mod ==="
+    & (Join-Path $root "d3d11_mod\build_d3d11_mod.ps1") -OutputDir $d3d11ModOutputDir
+}
 
 Write-Host "=== Patching Fabric Loader for Xbox filesystem ==="
 & (Join-Path $root "scripts\patch-fabric.ps1")
@@ -542,9 +574,17 @@ if ($fabricLoaderVersions -contains "0.14.25") {
 # Bundled mods (compat mod, optionally diagnostics) live under runtime\bundled-mods.
 # App.cpp copies them into LocalState\game\mods on launch.
 Copy-Item -Recurse (Join-Path $gameDir "mods\*") (Join-Path $pkg "runtime\bundled-mods\") -Force
+if ($IncludeD3D11Mod) {
+    Copy-Item (Join-Path $d3d11ModOutputDir "*.jar") (Join-Path $pkg "runtime\bundled-mods\") -Force
+    Write-Host "D3D11Mod: bundled experimental Fabric mod"
+}
 
 Write-Host "Copying natives..."
 Copy-Item (Join-Path $nativesSourceDir "*.dll") (Join-Path $pkg "natives\")
+if ($IncludeD3D11Mod) {
+    Copy-Item $d3d11BackendDll (Join-Path $pkg "natives\bandit_d3d11_backend.dll") -Force
+    Write-Host "D3D11Mod: copied bandit_d3d11_backend.dll"
+}
 
 Write-Host "Extracting JNA native..."
 Add-Type -AssemblyName System.IO.Compression.FileSystem

@@ -194,6 +194,7 @@ typedef struct { unsigned char buttons[15]; float axes[6]; } GLFWgamepadstate;
 #define GLFW_MOD_CAPS_LOCK       0x0010
 #define GLFW_MOD_NUM_LOCK        0x0020
 #define GLFW_CLIENT_API            0x00022001
+#define GLFW_NO_API                0
 #define GLFW_OPENGL_API            0x00030001
 #define GLFW_CONTEXT_VERSION_MAJOR 0x00022002
 #define GLFW_CONTEXT_VERSION_MINOR 0x00022003
@@ -416,6 +417,8 @@ static GLFWgamepadstate g_gamepad_state = {};
 static float g_joystick_axes[6] = {};
 static unsigned char g_joystick_buttons[15] = {};
 static void* g_joystick_user_pointer = NULL;
+static int g_hint_client_api = GLFW_OPENGL_API;
+static bool g_no_api_window = false;
 
 static ComPtr<ICoreWindow> g_coreWindow;
 static ComPtr<ICoreDispatcher> g_dispatcher;
@@ -2445,6 +2448,8 @@ extern "C" __declspec(dllexport) void glfwTerminate(void) {
     g_eglSurface = EGL_NO_SURFACE;
     g_eglDisplay = EGL_NO_DISPLAY;
     g_eglConfig = nullptr;
+    g_no_api_window = false;
+    g_hint_client_api = GLFW_OPENGL_API;
     g_nativeWindowPropertySet.Reset();
     g_initialised = FALSE;
     ShimLog("glfwTerminate complete");
@@ -2463,8 +2468,17 @@ extern "C" __declspec(dllexport) GLFWerrorfun glfwSetErrorCallback(GLFWerrorfun 
     g_error_cb = cb;
     return p;
 }
-extern "C" __declspec(dllexport) void glfwDefaultWindowHints(void) {}
-extern "C" __declspec(dllexport) void glfwWindowHint(int,int) {}
+extern "C" __declspec(dllexport) void glfwDefaultWindowHints(void) {
+    g_hint_client_api = GLFW_OPENGL_API;
+}
+extern "C" __declspec(dllexport) void glfwWindowHint(int hint, int value) {
+    if (hint == GLFW_CLIENT_API) {
+        g_hint_client_api = value;
+        ShimLog("glfwWindowHint GLFW_CLIENT_API=0x%08X%s",
+            value,
+            value == GLFW_NO_API ? " (GLFW_NO_API)" : "");
+    }
+}
 extern "C" __declspec(dllexport) void glfwWindowHintString(int,const char*) {}
 
 extern "C" __declspec(dllexport)
@@ -2487,9 +2501,18 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
             : h;
     }
     RefreshWindowMetrics(false);
-    if (!CreateEglContext()) {
-        ShimLog("CreateEglContext FAILED");
-        return NULL;
+    g_no_api_window = (g_hint_client_api == GLFW_NO_API);
+    if (g_no_api_window) {
+        if (!AcquireCoreWindow()) {
+            ShimLog("AcquireCoreWindow FAILED for GLFW_NO_API window");
+            return NULL;
+        }
+        ShimLog("GLFW_NO_API window: skipping WGL/EGL context creation");
+    } else {
+        if (!CreateEglContext()) {
+            ShimLog("CreateEglContext FAILED");
+            return NULL;
+        }
     }
 
     g_fake_window.width = g_window_width;
@@ -2550,7 +2573,7 @@ extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
     case GLFW_MAXIMIZED:
         return GLFW_FALSE;
     case GLFW_CLIENT_API:
-        return GLFW_OPENGL_API;
+        return g_no_api_window ? GLFW_NO_API : GLFW_OPENGL_API;
     case GLFW_CONTEXT_VERSION_MAJOR:
         return 3;
     case GLFW_CONTEXT_VERSION_MINOR:
@@ -3030,6 +3053,11 @@ extern "C" __declspec(dllexport) uint64_t glfwGetTimerFrequency(void) {
 extern "C" __declspec(dllexport) void glfwMakeContextCurrent(GLFWwindow* w) {
     const DWORD tid = GetCurrentThreadId();
     ShimLog("MakeContextCurrent %p tid=%lu previousTid=%lu", (void*)w, tid, g_eglContextThreadId);
+    if (g_no_api_window) {
+        g_eglContextThreadId = w ? tid : 0;
+        ShimLog("MakeContextCurrent ignored for GLFW_NO_API window");
+        return;
+    }
     if (!w) {
         if (g_eglContextThreadId != 0 && g_eglContextThreadId != tid) {
             ShimLog("MakeContextCurrent(NULL) ignored: context owned by thread %u, caller %u",
@@ -3386,6 +3414,9 @@ extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
         g_cursorMode == GLFW_CURSOR_NORMAL &&
         CurrentCursorInputOwner() == CursorInputOwnerRelay) {
         bandit_cursor::Draw();
+    }
+    if (g_no_api_window) {
+        return;
     }
     if (wglb::Active()) {
         wglb::Swap();

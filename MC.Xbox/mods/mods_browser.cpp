@@ -602,7 +602,6 @@ static const BlockedMod kBlockedMods[] = {
     { L"lambda-controls", L"LambdaControls conflicts with the bundled Bandit controller compatibility layer" },
     { L"midnightcontrols", L"MidnightControls conflicts with the bundled Bandit controller compatibility layer" },
     { L"midnight-controls", L"MidnightControls conflicts with the bundled Bandit controller compatibility layer" },
-	{ L"puzzle", L"Puzzle applies splash/model mixins and currently hangs before the UWP GLFW shim loads" },
     { L"rrls", L"Remove Reloading Screen failed config file canonical-path checks under LocalState" },
     { L"remove-reloading-screen", L"Remove Reloading Screen failed config file canonical-path checks under LocalState" },
 	{ L"xaeros-minimap", L"Exception Access Violation" },

@@ -1,6 +1,5 @@
 # Compatible Mods
-
-## Mods that have been tested and confirmed working. Will update over time as more mods are tested. Please provide feedback to [this form](https://forms.gle/d3WUReg4YrjPTCGJ8) in order to add or remove mods from this list.
+-# Mods that have been tested and confirmed working. Will update over time as more mods are tested. Please provide feedback to [this form](https://forms.gle/d3WUReg4YrjPTCGJ8) in order to add or remove mods from this list.
 
 - [AsyncParticles](https://modrinth.com/mod/asyncparticles)
 - [Balm](https://modrinth.com/mod/balm)

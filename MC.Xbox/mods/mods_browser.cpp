@@ -598,12 +598,9 @@ static const BlockedMod kBlockedMods[] = {
     { L"crash_assistant", L"Crash Assistant starts an external helper and hangs before GLFW startup" },
 	{ L"flashback", L"Xbox does not have win32, which Flashback requires to run." },
 	{ L"ixeris", L"Ixeris replaces GLFW event polling/threading, which conflicts with the UWP GLFW shim" },
-	{ L"lambdacontrols", L"LambdaControls conflicts with the bundled Bandit controller compatibility layer" },
-    { L"lambda-controls", L"LambdaControls conflicts with the bundled Bandit controller compatibility layer" },
-    { L"midnightcontrols", L"MidnightControls conflicts with the bundled Bandit controller compatibility layer" },
-    { L"midnight-controls", L"MidnightControls conflicts with the bundled Bandit controller compatibility layer" },
     { L"rrls", L"Remove Reloading Screen failed config file canonical-path checks under LocalState" },
     { L"remove-reloading-screen", L"Remove Reloading Screen failed config file canonical-path checks under LocalState" },
+	{ L"vulkanmod", L"Xbox doesn't use Vulkan." },
 	{ L"xaeros-minimap", L"Exception Access Violation" },
     { L"xaeros-world-map", L"Exception Access Violation" },
 };

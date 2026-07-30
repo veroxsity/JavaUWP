@@ -171,7 +171,7 @@ bool EnsureDirectoryTree(const std::wstring& path) {
     }
 
     while (start < path.size()) {
-        size_t next = path.find(L'\\', start);
+        size_t next = path.find_first_of(L"\\/", start);
         std::wstring part = path.substr(
             start,
             next == std::wstring::npos ? path.size() - start : next - start);

@@ -349,6 +349,8 @@ private:
         WriteLog(L"Remote file server stopped");
     }
 
+    static constexpr unsigned long long kMaxUploadBytes = 512ull * 1024ull * 1024ull;
+
     bool ReadRequest(SOCKET s, std::string& request, std::string& body, std::map<std::string, std::string>& headers) {
         std::string data;
         char buffer[8192];
@@ -385,9 +387,17 @@ private:
         if (it != headers.end()) {
             contentLength = strtoull(it->second.c_str(), nullptr, 10);
         }
-        if (contentLength > 512ull * 1024ull * 1024ull) return false;
+        if (contentLength > kMaxUploadBytes) {
+            SendHttpResponse(s, 413, "Payload Too Large", "text/html; charset=utf-8",
+                Layout("Upload too large",
+                    "<h1>Upload too large</h1><p>The console accepts uploads up to "
+                    + FormatBytes(kMaxUploadBytes) + ".</p>"));
+            return false;
+        }
 
         body = data.substr(headerEnd + 4);
+        // string doubles its way up to contentLength without this
+        if (contentLength > body.size()) body.reserve(static_cast<size_t>(contentLength));
         while (body.size() < contentLength) {
             const int read = recv(s, buffer, sizeof(buffer), 0);
             if (read <= 0) return false;
@@ -1267,7 +1277,7 @@ a.btn{text-decoration:none;display:inline-block}
 <div class="body"><nav class="rail" id="rail"></nav><div class="main">
 <div class="bar2"><div class="crumbs" id="crumbs"></div><div id="extra"></div></div>
 <div class="list" id="list"></div></div></div>
-<div id="drop" class="drop">Drop files to upload</div>
+<div id="drop" class="drop">Drop files or folders to upload</div>
 <div id="editor" class="editor"><div class="ehead"><span id="epath" class="pa"></span>
 <button class="btn primary" id="savebtn" onclick="saveEd()">Save</button>
 <button class="btn" onclick="openEd(edPath)">Reload</button>
@@ -1369,11 +1379,35 @@ async function mkdir(){
  var r=await fetch('/api/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+'&path='+enc(cur)+'&name='+enc(nn)});
  toast(r.ok?'Folder created':'Failed');load(cur);
 }
+async function uploadOne(file,sub){
+ var fd=new FormData();fd.append('file',file);
+ var dest=sub?join(cur,sub):cur;
+ var r=await fetch('/api/upload'+q('&path='+enc(dest)),{method:'POST',body:fd});
+ return r.ok;
+}
 async function upload(files){
  if(!files||!files.length)return;
- for(var i=0;i<files.length;i++){var fd=new FormData();fd.append('file',files[i]);
-  await fetch('/api/upload'+q('&path='+enc(cur)),{method:'POST',body:fd});}
- toast(files.length+' file(s) uploaded');document.getElementById('up').value='';load(cur);
+ var ok=0;
+ for(var i=0;i<files.length;i++){if(await uploadOne(files[i],''))ok++}
+ toast(ok+'/'+files.length+' file(s) uploaded');document.getElementById('up').value='';load(cur);
+}
+function entryFile(en){return new Promise(function(res,rej){en.file(res,rej)})}
+function entryBatch(rd){return new Promise(function(res,rej){rd.readEntries(res,rej)})}
+async function walkEntry(en,sub,out){
+ if(en.isFile){out.push({entry:en,sub:sub});return}
+ if(!en.isDirectory)return;
+ var next=sub?sub+'/'+en.name:en.name,rd=en.createReader(),batch;
+ // readEntries only returns a partial batch, keep going until it comes back empty
+ do{batch=await entryBatch(rd);for(var i=0;i<batch.length;i++)await walkEntry(batch[i],next,out)}while(batch.length)
+}
+async function uploadDropped(roots){
+ var flat=[];
+ for(var j=0;j<roots.length;j++){try{await walkEntry(roots[j],'',flat)}catch(e){}}
+ if(!flat.length){toast('Nothing to upload');return}
+ toast('Uploading '+flat.length+' file(s)...');
+ var ok=0;
+ for(var k=0;k<flat.length;k++){try{if(await uploadOne(await entryFile(flat[k].entry),flat[k].sub))ok++}catch(e){}}
+ toast(ok+'/'+flat.length+' file(s) uploaded');load(cur);
 }
 function openEd(p){
  fetch('/api/raw'+q('&path='+enc(p))).then(function(r){if(!r.ok)throw 0;return r.text()}).then(function(t){
@@ -1395,7 +1429,12 @@ var dz=document.getElementById('drop'),dc=0;
 window.addEventListener('dragenter',function(e){e.preventDefault();if(!canWrite)return;dc++;dz.classList.add('show')});
 window.addEventListener('dragover',function(e){e.preventDefault()});
 window.addEventListener('dragleave',function(e){dc--;if(dc<=0)dz.classList.remove('show')});
-window.addEventListener('drop',function(e){e.preventDefault();dc=0;dz.classList.remove('show');if(canWrite&&e.dataTransfer.files.length)upload(e.dataTransfer.files)});
+window.addEventListener('drop',function(e){e.preventDefault();dc=0;dz.classList.remove('show');if(!canWrite)return;
+ var dt=e.dataTransfer,roots=[];
+ // has to run before the first await or the item list is gone
+ if(dt.items)for(var i=0;i<dt.items.length;i++){var en=dt.items[i].webkitGetAsEntry?dt.items[i].webkitGetAsEntry():null;if(en)roots.push(en)}
+ if(roots.length)uploadDropped(roots);
+ else if(dt.files.length)upload(dt.files)});
 initChrome();load('');
 )RFSPA";
     }

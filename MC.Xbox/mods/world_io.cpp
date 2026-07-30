@@ -303,7 +303,8 @@ bool ImportWorldFromZip(
         if (name.empty()) continue;
         if (name.find("..") != std::string::npos) continue;
 
-        const std::wstring rel = a2w(name.c_str());
+        std::wstring rel = a2w(name.c_str());
+        std::replace(rel.begin(), rel.end(), L'/', L'\\');
         const std::wstring destPath = destDir + L"\\" + rel;
         if (!IsSafeRelativePathForWorld(rel)) {
             WriteLogF(L"Skipping unsafe world zip entry: %s", rel.c_str());
@@ -313,9 +314,14 @@ bool ImportWorldFromZip(
 
         size_t outSize = 0;
         void* p = mz_zip_reader_extract_to_heap(&zip, i, &outSize, 0);
-        if (!p) continue;
+        if (!p) {
+            WriteLogF(L"Import world could not unpack entry: %s", rel.c_str());
+            continue;
+        }
         if (WriteAllBytes(destPath, p, outSize)) {
             ++extracted;
+        } else {
+            WriteLogF(L"Import world could not write entry: %s err=%lu", rel.c_str(), GetLastError());
         }
         mz_free(p);
     }

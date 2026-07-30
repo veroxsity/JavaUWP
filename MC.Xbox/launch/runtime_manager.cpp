@@ -179,6 +179,10 @@ static bool IsControlifyJarName(const std::wstring& fileName) {
     return lower.size() > 4 &&
         lower.compare(lower.size() - 4, 4, L".jar") == 0 &&
         lower.rfind(L"controlify", 0) == 0;
+		lower.rfind(L"lambdacontrols", 0) == 0;
+		lower.rfind(L"lambda-controls", 0) == 0;
+		lower.rfind(L"midnightcontrols", 0) == 0;
+		lower.rfind(L"midnight-controls", 0) == 0;
 }
 
 int DeleteBanditControllerModsFromDir(const std::wstring& modsDir) {

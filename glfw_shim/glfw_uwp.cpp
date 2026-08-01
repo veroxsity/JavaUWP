@@ -476,6 +476,7 @@ static EventRegistrationToken g_pointerWheelToken = {};
 static bool g_raw_mouse_motion = false;
 static bool g_mouse_active_latched = false;         
 static const DWORD kMouseCompanionTimeoutMs = 3000; 
+static const ULONGLONG kDisplayScaleCacheMs = 500;
 static int g_width = 1920;
 static volatile LONG g_processing_events = 0;
 static int g_process_events_error_log_count = 0;
@@ -1322,7 +1323,7 @@ static bool UseRawScaledFramebuffer() {
     return !EnvFlagDisabled(L"MC_USE_RAW_SCALED_FRAMEBUFFER");
 }
 
-static void GetDisplayScale(double& scaleX, double& scaleY) {
+static void QueryDisplayScale(double& scaleX, double& scaleY) {
     scaleX = 1.0;
     scaleY = 1.0;
 
@@ -1367,6 +1368,21 @@ static void GetDisplayScale(double& scaleX, double& scaleY) {
         scaleX = logicalDpi / 96.0;
         scaleY = logicalDpi / 96.0;
     }
+}
+
+// called every frame from RefreshWindowMetrics, the activation factory lookup behind it is not cheap
+static void GetDisplayScale(double& scaleX, double& scaleY) {
+    static double cachedX = 1.0;
+    static double cachedY = 1.0;
+    static ULONGLONG lastQuery = 0;
+
+    const ULONGLONG now = GetTickCount64();
+    if (lastQuery == 0 || (now - lastQuery) >= kDisplayScaleCacheMs) {
+        QueryDisplayScale(cachedX, cachedY);
+        lastQuery = now;
+    }
+    scaleX = cachedX;
+    scaleY = cachedY;
 }
 
 static void RefreshWindowMetrics(bool fireCallbacks) {

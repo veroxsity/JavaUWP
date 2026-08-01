@@ -20,6 +20,7 @@
 
 #include <winrt/base.h>
 #include <winrt/Windows.Graphics.Display.h>
+#include <winrt/Windows.System.h>
 
 #include "runtime_config.h"
 #include "launcher_common.h"
@@ -222,6 +223,31 @@ static bool WriteHwndFile(const std::wstring& dir, HWND hwnd) {
     fclose(hf);
     return true;
 }
+
+static void LogPlatformBudget() {
+    try {
+        using winrt::Windows::System::MemoryManager;
+        const uint64_t limit = MemoryManager::AppMemoryUsageLimit();
+        const uint64_t used = MemoryManager::AppMemoryUsage();
+        WriteLogF(L"app memory budget: %llu MB limit, %llu MB in use",
+            (unsigned long long)(limit / (1024ull * 1024ull)),
+            (unsigned long long)(used / (1024ull * 1024ull)));
+    } catch (...) {
+        WriteLog(L"app memory budget: unavailable");
+    }
+
+    SYSTEM_INFO info = {};
+    GetNativeSystemInfo(&info);
+    // GetActiveProcessorCount is desktop partition only and this builds as WINAPI_FAMILY_APP
+    DWORD_PTR mask = info.dwActiveProcessorMask;
+    int active = 0;
+    while (mask) {
+        active += (int)(mask & 1);
+        mask >>= 1;
+    }
+    WriteLogF(L"processors: %u reported, %d in active mask", info.dwNumberOfProcessors, active);
+}
+
 class App : public RuntimeClass<RuntimeClassFlags<WinRtClassicComMix>, IFrameworkView>
 {
 public:
@@ -354,6 +380,7 @@ public:
 
         WriteLog(L"=== MC.App Run() started ===");
         WriteLogF(L"graphicsRuntime=%s", graphicsRuntime.c_str());
+        LogPlatformBudget();
         WriteLogF(L"SetWindow called=%d", g_setWindowCalled ? 1 : 0);
         WriteLogF(L"SetWindow QueryInterface hr=0x%08X", g_windowInteropHr);
         WriteLogF(L"SetWindow get_WindowHandle hr=0x%08X", g_getWindowHandleHr);

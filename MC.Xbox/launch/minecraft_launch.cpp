@@ -1104,11 +1104,20 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const bool neoForgeStartedWithGameClassPath = loaderSetup.neoForgeStartedWithGameClassPath;
 
     std::vector<std::string> vmOptionStorage;
-    vmOptionStorage.reserve(16);
+    vmOptionStorage.reserve(64);
+    // 5120 MB app budget on series s dev mode, so a 3G heap that never resizes fits
     vmOptionStorage.push_back("-Xmx3G");
-    vmOptionStorage.push_back("-Xms512M");
+    vmOptionStorage.push_back("-Xms3G");
     vmOptionStorage.push_back("-XX:MaxDirectMemorySize=512M");
-    WriteLog(L"JVM memory defaults: -Xmx3G -Xms512M -XX:MaxDirectMemorySize=512M");
+
+    // ignoreUnrecognized is JNI_FALSE, so one flag the jre does not know stops it booting.
+    // these go first so a typo in jvm_args.txt gets ignored instead of bricking startup
+    vmOptionStorage.push_back("-XX:+IgnoreUnrecognizedVMOptions");
+    vmOptionStorage.push_back("-XX:+UnlockExperimentalVMOptions");
+    vmOptionStorage.push_back("-XX:+UseG1GC");
+    // hsperfdata is mmapped and rewritten every collection, on console storage that is a frame hitch
+    vmOptionStorage.push_back("-XX:+PerfDisableSharedMem");
+    WriteLog(L"JVM heap: -Xmx3G -Xms3G -XX:MaxDirectMemorySize=512M, G1");
     vmOptionStorage.push_back("--enable-native-access=ALL-UNNAMED");
     vmOptionStorage.push_back("--add-opens=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED");
     const std::wstring selectedJavaBasePatchName =
@@ -1214,6 +1223,77 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-Duser.dir=" + w2a(fwd(gameDir)));
     vmOptionStorage.push_back("-Dlog4j.configurationFile=" + w2a(FileUriFromPath(logConfigPath)));
     vmOptionStorage.push_back("-XX:ErrorFile=" + w2a(fwd(gameDir + L"\\hs_err_pid%p.log")));
+
+    // appended last on purpose, hotspot takes the last occurrence so this overrides the built ins
+    const std::wstring jvmArgsPath = exeDir + L"\\jvm_args.txt";
+    if (GetFileAttributesW(jvmArgsPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        // resolved here because the template has no way to know where LocalState landed
+        const std::wstring gcLogPath = fwd(launcherLogDir) + L"/gc.log";
+        const std::wstring tpl =
+            L"# Bandit Launcher JVM options\n"
+            L"# One option per line. Lines starting with # are ignored.\n"
+            L"#\n"
+            L"# These are appended after the launcher's own options, so anything set here\n"
+            L"# overrides the built in value. The built ins are:\n"
+            L"#   -Xmx3G -Xms3G -XX:MaxDirectMemorySize=512M\n"
+            L"#   -XX:+UseG1GC -XX:+PerfDisableSharedMem\n"
+            L"#\n"
+            L"# Unrecognised options are ignored rather than failing the launch, so a typo\n"
+            L"# here will not stop the game starting. Check mc_launch.log for lines reading\n"
+            L"# \"jvm_args.txt applying:\" to confirm what was actually picked up.\n"
+            L"\n"
+            L"# Write a garbage collection log next to the other logs.\n"
+            L"#-Xlog:gc:file=" + gcLogPath + L":time,uptime\n"
+            L"\n"
+            L"# The stock Minecraft launcher client defaults, minus its -Xmx2G. This is the\n"
+            L"# most widely validated client GC config there is, so try it before anything else.\n"
+            L"#-XX:G1NewSizePercent=20\n"
+            L"#-XX:G1ReservePercent=20\n"
+            L"#-XX:MaxGCPauseMillis=50\n"
+            L"#-XX:G1HeapRegionSize=32M\n"
+            L"\n"
+            L"# More aggressive alternative, derived from server side flag sets. Only worth\n"
+            L"# trying if the block above measurably helps and you want to push further.\n"
+            L"#-XX:G1NewSizePercent=30\n"
+            L"#-XX:G1MaxNewSizePercent=40\n"
+            L"#-XX:G1HeapRegionSize=8M\n"
+            L"#-XX:MaxGCPauseMillis=37\n"
+            L"#-XX:+ParallelRefProcEnabled\n"
+            L"#-XX:+DisableExplicitGC\n"
+            L"\n"
+            L"# Cap the background worker pools if chunk loading starves the render thread.\n"
+            L"#-Dmax.bg.threads=3\n"
+            L"#-XX:ActiveProcessorCount=4\n";
+        if (WriteTextFile(jvmArgsPath, tpl)) {
+            WriteLogF(L"jvm_args.txt seeded at %s", jvmArgsPath.c_str());
+        } else {
+            WriteLogF(L"jvm_args.txt could not be seeded at %s", jvmArgsPath.c_str());
+        }
+    }
+
+    std::wstring jvmArgsText;
+    if (ReadTextFile(jvmArgsPath, jvmArgsText)) {
+        int applied = 0;
+        size_t pos = 0;
+        while (pos < jvmArgsText.size()) {
+            size_t end = jvmArgsText.find(L'\n', pos);
+            if (end == std::wstring::npos) end = jvmArgsText.size();
+            const std::wstring arg = TrimWhitespace(jvmArgsText.substr(pos, end - pos));
+            pos = end + 1;
+
+            if (arg.empty() || arg[0] == L'#') continue;
+            if (arg[0] != L'-') {
+                WriteLogF(L"jvm_args.txt ignoring line, not an option: %s", arg.c_str());
+                continue;
+            }
+            vmOptionStorage.push_back(w2a(arg));
+            WriteLogF(L"jvm_args.txt applying: %s", arg.c_str());
+            ++applied;
+        }
+        WriteLogF(L"jvm_args.txt applied %d option(s) from %s", applied, jvmArgsPath.c_str());
+    } else {
+        WriteLogF(L"jvm_args.txt not present at %s, using built in options only", jvmArgsPath.c_str());
+    }
 
     std::vector<std::string> appArgs = {
         "--username", authConfig.username,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cmath>
 
 namespace mousesupport {
 
@@ -32,6 +33,8 @@ struct ConsumeResult {
     int freshSamples;
     int ringDepthAtConsume;
     bool clamped;
+    double pendingX;
+    double pendingY;
 };
 
 class MouseMailbox {
@@ -49,10 +52,11 @@ public:
         absY_ = 0.0;
         targetButtons_ = 0;
         appliedButtons_ = 0;
-        emaVelX_ = 0.0;
-        emaVelY_ = 0.0;
+        pendingX_ = 0.0;
+        pendingY_ = 0.0;
         lastConsumeMicros_ = 0;
-        smoothAlpha_ = 0.0;
+        lastSubmitMicros_ = 0;
+        smoothTauMicros_ = 0;
         stallThresholdMicros_ = 200000;
     }
 
@@ -60,8 +64,8 @@ public:
     long long overwriteCount() const { return overwrites_; }
     int depth() const { return count_; }
 
-    void setSmoothingAlpha(double alpha) {
-        smoothAlpha_ = alpha < 0.0 ? 0.0 : (alpha > 1.0 ? 1.0 : alpha);
+    void setSmoothingTauMicros(long long micros) {
+        smoothTauMicros_ = micros < 0 ? 0 : micros;
     }
 
     void setStallThresholdMicros(long long micros) {
@@ -70,10 +74,12 @@ public:
 
     void submitRelative(long long tMicros, double dx, double dy, double wheel) {
         pushSample(tMicros, dx, dy, wheel);
+        lastSubmitMicros_ = tMicros;
         ++recvCount_;
     }
 
     void submitAbsolute(long long tMicros, double x, double y, bool window, double wheel) {
+        lastSubmitMicros_ = tMicros;
         absX_ = x;
         absY_ = y;
         absWindow_ = window;
@@ -106,18 +112,25 @@ public:
         out.droppedDy = 0.0;
         out.droppedSamples = 0;
         out.freshSamples = 0;
+        out.pendingX = 0.0;
+        out.pendingY = 0.0;
         out.ringDepthAtConsume = count_;
         out.clamped = false;
 
         const long long gap = lastConsumeMicros_ > 0 ? (nowMicros - lastConsumeMicros_) : 0;
-        const bool bigStall = stallThresholdMicros_ > 0 && gap > stallThresholdMicros_;
+        // nothing arriving means the relay went away and the backlog is junk. packets still
+        // arriving means the game hitched, that motion is real and dropping it moves the view
+        const bool relaySilent = lastSubmitMicros_ == 0 ||
+            (nowMicros - lastSubmitMicros_) > freshnessMicros;
+        const bool dropStale = stallThresholdMicros_ > 0 && gap > stallThresholdMicros_ && relaySilent;
+
         long long oldestFreshT = nowMicros;
         for (int i = 0; i < count_; ++i) {
             const Sample& s = ring_[(head_ + i) % kCap];
             const long long age = nowMicros - s.tMicros;
-            if (!bigStall || age <= freshnessMicros) {
-                out.dx += s.dx;
-                out.dy += s.dy;
+            if (!dropStale || age <= freshnessMicros) {
+                pendingX_ += s.dx;
+                pendingY_ += s.dy;
                 out.wheel += s.wheel;
                 ++out.freshSamples;
                 if (s.tMicros < oldestFreshT) oldestFreshT = s.tMicros;
@@ -135,39 +148,50 @@ public:
             out.appliedAgeMicros = (double)(nowMicros - oldestFreshT);
         }
 
-        if (smoothAlpha_ > 0.0 && !hasAbs_) {
-            const double dtMicros = lastConsumeMicros_ > 0 ? (double)(nowMicros - lastConsumeMicros_) : 0.0;
-            if (dtMicros <= 0.0 || dtMicros > (double)freshnessMicros) {
-                const double seedDt = dtMicros > (double)freshnessMicros
-                    ? (double)freshnessMicros
-                    : (dtMicros > 0.0 ? dtMicros : 1.0);
-                emaVelX_ = out.dx != 0.0 ? out.dx / seedDt : 0.0;
-                emaVelY_ = out.dy != 0.0 ? out.dy / seedDt : 0.0;
-            } else {
-                const double instVelX = out.dx / dtMicros;
-                const double instVelY = out.dy / dtMicros;
-                emaVelX_ += smoothAlpha_ * (instVelX - emaVelX_);
-                emaVelY_ += smoothAlpha_ * (instVelY - emaVelY_);
-                out.dx = emaVelX_ * dtMicros;
-                out.dy = emaVelY_ * dtMicros;
-            }
+        if (dropStale) {
+            pendingX_ = 0.0;
+            pendingY_ = 0.0;
         }
-        lastConsumeMicros_ = nowMicros;
 
+        // clamp the backlog not the emitted delta, stops a hitch turning into a whip
         if (clampMax > 0.0) {
-            if (out.dx > clampMax) { out.dx = clampMax; out.clamped = true; }
-            else if (out.dx < -clampMax) { out.dx = -clampMax; out.clamped = true; }
-            if (out.dy > clampMax) { out.dy = clampMax; out.clamped = true; }
-            else if (out.dy < -clampMax) { out.dy = -clampMax; out.clamped = true; }
+            if (pendingX_ > clampMax) { pendingX_ = clampMax; out.clamped = true; }
+            else if (pendingX_ < -clampMax) { pendingX_ = -clampMax; out.clamped = true; }
+            if (pendingY_ > clampMax) { pendingY_ = clampMax; out.clamped = true; }
+            else if (pendingY_ < -clampMax) { pendingY_ = -clampMax; out.clamped = true; }
         }
 
         if (hasAbs_) {
+            // the cursor was placed outright so any relative backlog is meaningless now
+            pendingX_ = 0.0;
+            pendingY_ = 0.0;
             out.hasAbsolute = true;
             out.absoluteWindow = absWindow_;
             out.absX = absX_;
             out.absY = absY_;
             hasAbs_ = false;
+        } else {
+            double emitX = pendingX_;
+            double emitY = pendingY_;
+            const double dtMicros = lastConsumeMicros_ > 0 ? (double)(nowMicros - lastConsumeMicros_) : 0.0;
+            if (smoothTauMicros_ > 0 && dtMicros > 0.0) {
+                // alpha comes from the real frame delta so the same tau feels identical at 30 and 120 fps
+                const double alpha = 1.0 - std::exp(-dtMicros / (double)smoothTauMicros_);
+                emitX = pendingX_ * alpha;
+                emitY = pendingY_ * alpha;
+                // flush the tail instead of asymptoting, otherwise the view never fully comes to rest
+                if (std::fabs(pendingX_ - emitX) < kSettleEpsilon) emitX = pendingX_;
+                if (std::fabs(pendingY_ - emitY) < kSettleEpsilon) emitY = pendingY_;
+            }
+            pendingX_ -= emitX;
+            pendingY_ -= emitY;
+            out.dx = emitX;
+            out.dy = emitY;
         }
+
+        lastConsumeMicros_ = nowMicros;
+        out.pendingX = pendingX_;
+        out.pendingY = pendingY_;
 
         const int diff = targetButtons_ ^ appliedButtons_;
         const int maxButtons = (int)(sizeof(out.buttons) / sizeof(out.buttons[0]));
@@ -198,6 +222,7 @@ public:
 
 private:
     static const int kCap = 256;
+    static constexpr double kSettleEpsilon = 0.01;
 
     struct Sample {
         long long tMicros;
@@ -236,10 +261,11 @@ private:
     double absY_;
     int targetButtons_;
     int appliedButtons_;
-    double emaVelX_;
-    double emaVelY_;
+    double pendingX_;
+    double pendingY_;
     long long lastConsumeMicros_;
-    double smoothAlpha_;
+    long long lastSubmitMicros_;
+    long long smoothTauMicros_;
     long long stallThresholdMicros_;
 };
 

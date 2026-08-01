@@ -24,6 +24,8 @@ const int kCursorModeNormal = 0x00034001;
 const int kCursorModeDisabled = 0x00034003;
 const DWORD kModeStabilizeMs = 150;
 const double kDefaultFreshnessMs = 50.0;
+const double kDefaultSmoothTauMs = 8.0;
+const int kRecvBufBytes = 32 * 1024;
 
 SRWLOCK g_lock = SRWLOCK_INIT;
 mousesupport::MouseMailbox g_mailbox;
@@ -50,11 +52,12 @@ double g_qpcTicksPerMicro = 1.0;
 bool g_diag = false;
 long long g_freshnessMicros = (long long)(kDefaultFreshnessMs * 1000.0);
 double g_clampMax = 0.0;
-double g_smoothAlpha = 0.0;
+double g_smoothTauMs = kDefaultSmoothTauMs;
 double g_stallMs = 200.0;
 long long g_lastConsumeMicros = 0;
 FILE* g_diagFile = nullptr;
 bool g_diagFileTried = false;
+ULONGLONG g_diagLastFlush = 0;
 
 long long NowMicros() {
     LARGE_INTEGER c;
@@ -71,6 +74,9 @@ void DiagOpenIfNeeded() {
         char path[640] = {};
         sprintf_s(path, "%s\\mouse_support_diag.log", dir);
         fopen_s(&g_diagFile, path, "a");
+        if (g_diagFile) {
+            setvbuf(g_diagFile, nullptr, _IOFBF, 64 * 1024);
+        }
     }
 }
 
@@ -84,7 +90,12 @@ void DiagLog(const char* fmt, ...) {
     DiagOpenIfNeeded();
     if (g_diagFile) {
         fprintf(g_diagFile, "%s\n", line);
-        fflush(g_diagFile);
+        // flushing per line puts a synchronous write on the render thread every frame
+        const ULONGLONG now = GetTickCount64();
+        if (now - g_diagLastFlush >= 1000) {
+            fflush(g_diagFile);
+            g_diagLastFlush = now;
+        }
     } else {
         OutputDebugStringA("[ms-diag] ");
         OutputDebugStringA(line);
@@ -158,6 +169,10 @@ void RememberStatusAddress(const sockaddr_in& from) {
 DWORD WINAPI ReceiveThreadProc(LPVOID) {
     Log("receive thread starting on UDP %u", kInputPort);
 
+    // minecraft saturates the cores during chunk work, at default priority this thread gets
+    // descheduled long enough for packets to pool and land in one burst
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
         Log("socket failed err=%d", WSAGetLastError());
@@ -174,7 +189,8 @@ DWORD WINAPI ReceiveThreadProc(LPVOID) {
         return 0;
     }
 
-    int rcvBuf = 256 * 1024;
+    // latest wins mailbox, a deep buffer just queues stale input so let the kernel drop old packets
+    int rcvBuf = kRecvBufBytes;
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&rcvBuf), sizeof(rcvBuf));
     DWORD rcvTimeoutMs = 50;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&rcvTimeoutMs), sizeof(rcvTimeoutMs));
@@ -358,7 +374,7 @@ MOUSE_SUPPORT_API void MouseSupport_Init(void) {
     const double freshnessMs = ReadEnvDouble("BANDIT_MOUSE_FRESHNESS_MS", kDefaultFreshnessMs, 0.0, 1000.0);
     g_freshnessMicros = (long long)(freshnessMs * 1000.0);
     g_clampMax = ReadEnvDouble("BANDIT_MOUSE_CLAMP", 0.0, 0.0, 100000.0);
-    g_smoothAlpha = ReadEnvDouble("BANDIT_MOUSE_SMOOTH_ALPHA", 0.0, 0.0, 1.0);
+    g_smoothTauMs = ReadEnvDouble("BANDIT_MOUSE_SMOOTH_TAU_MS", kDefaultSmoothTauMs, 0.0, 100.0);
     g_stallMs = ReadEnvDouble("BANDIT_MOUSE_STALL_MS", 200.0, 50.0, 5000.0);
     char diagBuf[16] = {};
     const DWORD dn = GetEnvironmentVariableA("BANDIT_MOUSE_DIAG", diagBuf, sizeof(diagBuf));
@@ -366,14 +382,14 @@ MOUSE_SUPPORT_API void MouseSupport_Init(void) {
 
     AcquireSRWLockExclusive(&g_lock);
     g_mailbox.reset();
-    g_mailbox.setSmoothingAlpha(g_smoothAlpha);
+    g_mailbox.setSmoothingTauMicros((long long)(g_smoothTauMs * 1000.0));
     g_mailbox.setStallThresholdMicros((long long)(g_stallMs * 1000.0));
     ReleaseSRWLockExclusive(&g_lock);
     g_lastConsumeMicros = NowMicros();
 
     InterlockedExchange(&g_shutdown, 0);
     g_receiveThread = CreateThread(nullptr, 0, ReceiveThreadProc, nullptr, 0, nullptr);
-    Log("initialized (freshness %.0fms, stall %.0fms, smoothAlpha %.2f, clamp %.0f, diag %d)", freshnessMs, g_stallMs, g_smoothAlpha, g_clampMax, g_diag ? 1 : 0);
+    Log("initialized (freshness %.0fms, stall %.0fms, smoothTau %.1fms, clamp %.0f, diag %d)", freshnessMs, g_stallMs, g_smoothTauMs, g_clampMax, g_diag ? 1 : 0);
 }
 
 MOUSE_SUPPORT_API void MouseSupport_Shutdown(void) {
@@ -430,11 +446,11 @@ MOUSE_SUPPORT_API int MouseSupport_PollFrame(MouseSupportFrame* out) {
         const double gapMs = (double)(now - g_lastConsumeMicros) / 1000.0;
         const double ageMs = r.appliedAgeMicros / 1000.0;
         if (gapMs > 100.0) {
-            DiagLog("STALL-RESUME gap=%.1fms appliedAgeOldest=%.1fms emitted=(%.2f,%.2f) fresh=%d droppedStale=%d droppedMotion=(%.1f,%.1f) ring=%d clamp=%d bucket=%s",
-                gapMs, ageMs, r.dx, r.dy, r.freshSamples, r.droppedSamples, r.droppedDx, r.droppedDy, r.ringDepthAtConsume, r.clamped ? 1 : 0, GapBucket(gapMs));
+            DiagLog("STALL-RESUME gap=%.1fms appliedAgeOldest=%.1fms emitted=(%.2f,%.2f) pending=(%.2f,%.2f) fresh=%d droppedStale=%d droppedMotion=(%.1f,%.1f) ring=%d clamp=%d bucket=%s",
+                gapMs, ageMs, r.dx, r.dy, r.pendingX, r.pendingY, r.freshSamples, r.droppedSamples, r.droppedDx, r.droppedDy, r.ringDepthAtConsume, r.clamped ? 1 : 0, GapBucket(gapMs));
         } else {
-            DiagLog("consume gap=%.1fms applied=(%.2f,%.2f) ageOldest=%.1fms fresh=%d droppedStale=%d droppedMotion=(%.1f,%.1f) ring=%d clamp=%d bucket=%s",
-                gapMs, r.dx, r.dy, ageMs, r.freshSamples, r.droppedSamples, r.droppedDx, r.droppedDy, r.ringDepthAtConsume, r.clamped ? 1 : 0, GapBucket(gapMs));
+            DiagLog("consume gap=%.1fms applied=(%.2f,%.2f) pending=(%.2f,%.2f) ageOldest=%.1fms fresh=%d droppedStale=%d droppedMotion=(%.1f,%.1f) ring=%d clamp=%d bucket=%s",
+                gapMs, r.dx, r.dy, r.pendingX, r.pendingY, ageMs, r.freshSamples, r.droppedSamples, r.droppedDx, r.droppedDy, r.ringDepthAtConsume, r.clamped ? 1 : 0, GapBucket(gapMs));
         }
     }
     g_lastConsumeMicros = now;

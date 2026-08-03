@@ -7,16 +7,23 @@
     "BanditControllerClientMixin",
     "BanditControllerContainerAccessor",
     "BanditControllerControlsScreenMixin",
+    "BanditControllerCreativeInventoryAccessor",
+    "BanditControllerEditBoxAccessor",
     "BanditControllerGameRendererMixin",
     "BanditControllerHandledScreenMixin",
+    "BanditControllerHudMixin",
     "BanditControllerInventoryScreenMixin",
+    "BanditControllerKeyboardInputMixin",
     "BanditControllerOptionsSubScreenAccessor",
     "BanditControllerRecipeBookAccessor",
     "BanditControllerRecipeBookPageAccessor",
     "BanditControllerRecipeBookScreenMixin",
     "BanditControllerRecipeBookScreenAccessor",
     "BanditControllerRecipeOverlayAccessor",
-    "BanditControllerScreenMixin"
+    "BanditControllerScreenMixin",
+    "BanditControllerSignEditScreenAccessor",
+    "BanditControllerTextFieldAccessor",
+    "BanditControllerTextModelAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

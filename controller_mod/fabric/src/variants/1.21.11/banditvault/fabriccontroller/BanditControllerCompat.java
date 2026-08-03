@@ -14,9 +14,14 @@ import net.minecraft.class_315;
 import net.minecraft.class_332;
 import net.minecraft.class_465;
 import net.minecraft.class_1041;
+import net.minecraft.class_11908;
 import net.minecraft.class_1713;
 import net.minecraft.class_1735;
+import net.minecraft.class_239;
 import net.minecraft.class_2561;
+import net.minecraft.class_3675;
+import net.minecraft.class_3908;
+import net.minecraft.class_3965;
 import net.minecraft.class_437;
 import net.minecraft.class_4185;
 import net.minecraft.class_746;
@@ -36,14 +41,12 @@ public final class BanditControllerCompat {
     private static boolean loggedLookReflectionFailure;
     private static boolean loggedHotbarReflectionFailure;
     private static boolean loggedQuickMoveReflectionFailure;
+    private static boolean loggedKeyReflectionFailure;
     private static boolean active;
     private static double cursorX = -1.0;
     private static double cursorY = -1.0;
-    private static double renderedCursorX = -1.0;
-    private static double renderedCursorY = -1.0;
     private static long lastLookNanos;
     private static long lastScreenCursorNanos;
-    private static long lastRenderedCursorNanos;
     private static int scrollCooldown;
     private static boolean crouchToggled;
     private static boolean sprintToggled;
@@ -53,6 +56,10 @@ public final class BanditControllerCompat {
     private static double lastRelayCursorY = Double.NaN;
     private static boolean relayOwnsCursor;
     private static boolean snapStickLatched;
+    private static class_304 radialPressedKey;
+    private static boolean radialPressedAsKeyboard;
+    private static final java.util.Map<String, class_304> JAVA_KEYS_DOWN = new java.util.HashMap<String, class_304>();
+    private static final java.util.Set<String> RAW_JAVA_KEYS_DOWN = new java.util.HashSet<String>();
     private static CursorMode cursorMode = CursorMode.SNAP;
 
     private static final double RELAY_CURSOR_MOVE_EPSILON = 0.5;
@@ -68,10 +75,18 @@ public final class BanditControllerCompat {
 
     public static void tick(class_310 client) {
         if (client == null) {
+            releaseJavaKeyMappings();
+            BanditControllerKeyboard.close();
             return;
         }
 
+        releaseRadialKey();
         if (!poll()) {
+            releaseJavaKeyMappings();
+            BanditControllerKeyboard.close();
+            if (client.field_1755 instanceof BanditControllerRadialScreen) {
+                client.method_1507(null);
+            }
             if (active) {
                 releaseGameplayKeys(client, client.field_1755 == null);
                 crouchToggled = false;
@@ -88,11 +103,17 @@ public final class BanditControllerCompat {
             FabricControllerLog.log("Bandit controller compat active");
         }
 
+        tickJavaKeyMappings(
+            client,
+            BanditControllerSettings.get(),
+            client.field_1755 == null && client.field_1724 != null && client.method_1569());
+
         if (client.field_1755 != null) {
             lastLookNanos = 0L;
             releaseGameplayKeys(client, false);
             tickScreen(client, client.field_1755);
         } else {
+            BanditControllerKeyboard.close();
             relayOwnsCursor = false;
             tickGameplay(client);
         }
@@ -128,16 +149,40 @@ public final class BanditControllerCompat {
 
     public static void renderCursor(class_437 screen, class_332 context) {
         class_310 client = class_310.method_1551();
-        if (screen instanceof BanditControllerSettingsScreen) {
+        if (screen instanceof BanditControllerSettingsScreen || screen instanceof BanditControllerRadialScreen) {
             return;
         }
-        if (!active || relayOwnsCursor || screen == null || context == null || client == null || client.field_1755 != screen || renderedCursorX < 0.0 || renderedCursorY < 0.0) {
+        if (!active || screen == null || context == null || client == null || client.field_1755 != screen) {
             return;
         }
+        if (!relayOwnsCursor) renderControllerGuide(screen, context, client);
+        if (relayOwnsCursor || cursorX < 0.0 || cursorY < 0.0) return;
 
-        int x = (int)Math.round(renderedCursorX);
-        int y = (int)Math.round(renderedCursorY);
+        int x = (int)Math.round(cursorX);
+        int y = (int)Math.round(cursorY);
         FabricScreenApi.drawCursor(context, x, y);
+    }
+
+    private static void renderControllerGuide(class_437 screen, class_332 context, class_310 client) {
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        boolean container = screen instanceof class_465;
+        BanditControllerGuide.drawVerticalLeft(context, client.field_1772, 8, 8,
+            new ControllerInput[] {
+                settings.binding(ControllerAction.MENU_ACCEPT),
+                settings.binding(ControllerAction.MENU_CANCEL)
+            },
+            new String[] { "Select", "Back" });
+        BanditControllerGuide.drawVerticalRight(context, client.field_1772, screen.field_22789 - 8, 8,
+            container
+                ? new ControllerInput[] {
+                    settings.binding(ControllerAction.QUICK_MOVE),
+                    settings.binding(ControllerAction.MENU_SECONDARY),
+                    settings.binding(ControllerAction.SNAP_FREE_TOGGLE)
+                }
+                : new ControllerInput[] { settings.binding(ControllerAction.SNAP_FREE_TOGGLE) },
+            container
+                ? new String[] { "Quick Move", "Secondary", cursorMode == CursorMode.SNAP ? "Free Cursor" : "Snap Cursor" }
+                : new String[] { cursorMode == CursorMode.SNAP ? "Free Cursor" : "Snap Cursor" });
     }
 
     public static boolean shouldRenderCursorInBaseScreen(class_437 screen) {
@@ -147,7 +192,7 @@ public final class BanditControllerCompat {
     public static void updateScreenCursorBeforeRender(class_437 screen, int mouseX, int mouseY) {
         class_310 client = class_310.method_1551();
         ensureMenuCursorMode(client);
-        if (screen instanceof BanditControllerSettingsScreen) {
+        if (screen instanceof BanditControllerSettingsScreen || screen instanceof BanditControllerRadialScreen) {
             return;
         }
         if (!active || screen == null || client == null || client.field_1755 != screen) {
@@ -156,21 +201,47 @@ public final class BanditControllerCompat {
         observeRelayCursor(screen);
         if (relayOwnsCursor) {
             screen.method_16014(lastRelayCursorX, lastRelayCursorY);
-            lastRenderedCursorNanos = System.nanoTime();
             return;
         }
         if (cursorMode == CursorMode.FREE) {
             updateScreenCursor(client, screen, true);
-            renderedCursorX = cursorX;
-            renderedCursorY = cursorY;
         } else {
-            advanceRenderedCursor();
             screen.method_16014(cursorX, cursorY);
         }
     }
 
     public static void renderCursorOverlay(class_310 client) {
         // 1.20.1 draws the on-screen cursor from Screen.render via DrawContext.
+    }
+
+    public static void renderGameplayGuide(class_332 context) {
+        class_310 client = class_310.method_1551();
+        if (!active || context == null || client == null || client.field_1755 != null || client.field_1724 == null || client.field_1690.field_1842) return;
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        class_3965 blockHit = client.field_1765 instanceof class_3965
+            && client.field_1765.method_17783() == class_239.class_240.field_1332
+                ? (class_3965)client.field_1765
+                : null;
+        boolean openable = blockHit != null && client.field_1687 != null && client.field_1687.method_8321(blockHit.method_17777()) instanceof class_3908;
+        boolean hasTarget = client.field_1765 != null && client.field_1765.method_17783() != class_239.class_240.field_1333;
+        boolean mainHandItem = !client.field_1724.method_6047().method_7960();
+        boolean heldItem = mainHandItem || !client.field_1724.method_6079().method_7960();
+        BanditControllerGuide.drawVerticalLeft(context, client.field_1772, 8, 8,
+            new ControllerInput[] {
+                settings.binding(ControllerAction.JUMP),
+                settings.binding(ControllerAction.SNEAK)
+            },
+            new String[] { "Jump", "Sneak" });
+        BanditControllerGuide.drawVerticalRight(context, client.field_1772, context.method_51421() - 8, 8,
+            new ControllerInput[] {
+                settings.binding(ControllerAction.INVENTORY),
+                settings.binding(ControllerAction.RADIAL_MENU),
+                blockHit == null ? ControllerInput.UNBOUND : settings.binding(ControllerAction.ATTACK),
+                hasTarget || heldItem ? settings.binding(ControllerAction.USE) : ControllerInput.UNBOUND,
+                mainHandItem ? settings.binding(ControllerAction.DROP) : ControllerInput.UNBOUND,
+                settings.binding(ControllerAction.SWAP_HANDS)
+            },
+            new String[] { "Open Inventory", "Radial Menu", "Mine", openable ? "Open" : "Use", "Drop Item", "Swap Hands" });
     }
 
     public static int screenMouseX(class_437 screen, int fallback) {
@@ -187,6 +258,17 @@ public final class BanditControllerCompat {
             return fallback;
         }
         return (int)Math.round(cursorY);
+    }
+
+    public static float[] analogMovement() {
+        class_310 client = class_310.method_1551();
+        if (client == null || client.field_1755 != null || !poll()) {
+            return null;
+        }
+        return ControllerRuntime.shapedMovement(
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
+            BanditControllerSettings.get().moveDeadzone);
     }
 
     private static boolean poll() {
@@ -219,18 +301,18 @@ public final class BanditControllerCompat {
     private static void tickGameplay(class_310 client) {
         BanditControllerSettings settings = BanditControllerSettings.get();
         class_315 options = client.field_1690;
-        float lx = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
-        float ly = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
+
+        if (pressed(settings, ControllerAction.RADIAL_MENU)) {
+            releaseGameplayKeys(client, true);
+            client.method_1507(new BanditControllerRadialScreen());
+            return;
+        }
 
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
             client.method_1507(new BanditControllerSettingsScreen(null));
             return;
         }
 
-        setHeld(options.field_1894, ly < -settings.moveDeadzone);
-        setHeld(options.field_1881, ly > settings.moveDeadzone);
-        setHeld(options.field_1913, lx < -settings.moveDeadzone);
-        setHeld(options.field_1849, lx > settings.moveDeadzone);
         setHeld(options.field_1903, button(settings, ControllerAction.JUMP));
         if (settings.toggleCrouch) {
             if (pressed(settings, ControllerAction.SNEAK)) {
@@ -265,6 +347,10 @@ public final class BanditControllerCompat {
         if (pressed(settings, ControllerAction.DROP)) {
             pressKey(options.field_1869);
         }
+        if (pressed(settings, ControllerAction.SWAP_HANDS)) {
+            class_304 swapHands = class_304.method_65807("key.swapOffhand");
+            if (swapHands != null) pressKey(swapHands);
+        }
         if (pressed(settings, ControllerAction.PICK_BLOCK)) {
             pressKey(options.field_1871);
         }
@@ -283,8 +369,34 @@ public final class BanditControllerCompat {
     private static void tickScreen(class_310 client, class_437 screen) {
         BanditControllerSettings settings = BanditControllerSettings.get();
 
+        if (screen instanceof BanditControllerRadialScreen) {
+            BanditControllerRadialScreen radial = (BanditControllerRadialScreen)screen;
+            if (client.field_1724 == null || !client.method_1569()) {
+                client.method_1507(null);
+                return;
+            }
+            radial.setSelectedSlot(ControllerRuntime.radialSlot(
+                axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X),
+                axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y),
+                settings.lookDeadzone));
+            if (pressed(settings, ControllerAction.MENU_CANCEL)) {
+                client.method_1507(null);
+                return;
+            }
+            if (released(settings, ControllerAction.RADIAL_MENU)) {
+                int slot = radial.selectedSlot();
+                client.method_1507(null);
+                activateRadialSlot(slot);
+            }
+            return;
+        }
+
         if (screen instanceof BanditControllerSettingsScreen) {
             ((BanditControllerSettingsScreen)screen).handleControllerInput(CONTROLLER_STATE, settings.triggerDeadzone);
+            return;
+        }
+
+        if (BanditControllerKeyboard.tick(screen)) {
             return;
         }
 
@@ -302,9 +414,6 @@ public final class BanditControllerCompat {
             MENU_NAVIGATION.reset(screen);
             if (cursorMode == CursorMode.SNAP) {
                 applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
-            } else {
-                renderedCursorX = cursorX;
-                renderedCursorY = cursorY;
             }
             FabricControllerLog.log("Menu cursor mode changed to " + cursorMode + " screen=" + screen.getClass().getName());
             return;
@@ -321,6 +430,9 @@ public final class BanditControllerCompat {
         }
 
         if (pressed(settings, ControllerAction.MENU_ACCEPT)) {
+            if (BanditControllerKeyboard.activate(screen, cursorX, cursorY)) {
+                return;
+            }
             takeControllerCursor();
             if (cursorMode == CursorMode.SNAP && MENU_NAVIGATION.usesNativeActivation(screen)) {
                 FabricScreenApi.keyPressed(screen, GLFW.GLFW_KEY_ENTER, 0, 0);
@@ -332,11 +444,11 @@ public final class BanditControllerCompat {
             (cursorMode == CursorMode.FREE || !MENU_NAVIGATION.usesNativeActivation(screen))) {
             FabricScreenApi.mouseReleased(screen, cursorX, cursorY, LEFT_CLICK);
         }
-        if (pressed(settings, ControllerAction.DROP)) {
+        if (pressed(settings, ControllerAction.MENU_SECONDARY)) {
             takeControllerCursor();
             FabricScreenApi.mousePressed(screen, cursorX, cursorY, RIGHT_CLICK);
         }
-        if (released(settings, ControllerAction.DROP)) {
+        if (released(settings, ControllerAction.MENU_SECONDARY)) {
             FabricScreenApi.mouseReleased(screen, cursorX, cursorY, RIGHT_CLICK);
         }
         if (pressed(settings, ControllerAction.MENU_CANCEL)) {
@@ -364,9 +476,9 @@ public final class BanditControllerCompat {
         }
         if (scrollCooldown == 0) {
             double scroll = 0.0;
-            if (ry < -0.35f || button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP)) {
+            if (ry < -0.35f || (cursorMode == CursorMode.FREE && button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_UP))) {
                 scroll = settings.scrollAmount;
-            } else if (ry > 0.35f || button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN)) {
+            } else if (ry > 0.35f || (cursorMode == CursorMode.FREE && button(GLFW.GLFW_GAMEPAD_BUTTON_DPAD_DOWN))) {
                 scroll = -settings.scrollAmount;
             }
             if (scroll != 0.0) {
@@ -380,11 +492,8 @@ public final class BanditControllerCompat {
         if (screen != lastCursorScreen) {
             lastCursorScreen = screen;
             lastScreenCursorNanos = 0L;
-            lastRenderedCursorNanos = 0L;
             cursorX = Math.max(1, screen.field_22789 / 2);
             cursorY = Math.max(1, screen.field_22790 / 2);
-            renderedCursorX = cursorX;
-            renderedCursorY = cursorY;
             snapStickLatched = false;
             resetRelayCursorBaseline();
             MENU_NAVIGATION.reset(screen);
@@ -396,8 +505,6 @@ public final class BanditControllerCompat {
         if (cursorX < 0.0 || cursorY < 0.0) {
             cursorX = Math.max(1, screen.field_22789 / 2);
             cursorY = Math.max(1, screen.field_22790 / 2);
-            renderedCursorX = cursorX;
-            renderedCursorY = cursorY;
         }
     }
 
@@ -432,24 +539,21 @@ public final class BanditControllerCompat {
         screen.method_16014(cursorX, cursorY);
     }
 
-    private static void advanceRenderedCursor() {
-        long now = System.nanoTime();
-        double seconds = 1.0 / 60.0;
-        if (lastRenderedCursorNanos != 0L) {
-            seconds = (now - lastRenderedCursorNanos) / 1000000000.0;
-            seconds = clamp(seconds, 0.0, 1.0 / 20.0);
-        }
-        lastRenderedCursorNanos = now;
-        double blend = 1.0 - Math.exp(-18.0 * seconds);
-        renderedCursorX += (cursorX - renderedCursorX) * blend;
-        renderedCursorY += (cursorY - renderedCursorY) * blend;
-        if (Math.abs(renderedCursorX - cursorX) < 0.05) renderedCursorX = cursorX;
-        if (Math.abs(renderedCursorY - cursorY) < 0.05) renderedCursorY = cursorY;
-    }
-
     private static void takeControllerCursor() {
         relayOwnsCursor = false;
         resetRelayCursorBaseline();
+    }
+
+    static void resumeMenuAfterKeyboard(class_437 screen) {
+        class_310 client = class_310.method_1551();
+        if (screen == null || client == null || client.field_1755 != screen) return;
+        takeControllerCursor();
+        snapStickLatched = false;
+        ensureScreenCursor(screen);
+        MENU_NAVIGATION.reset(screen);
+        if (cursorMode == CursorMode.SNAP) {
+            applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
+        }
     }
 
     private static void resetRelayCursorBaseline() {
@@ -587,6 +691,7 @@ public final class BanditControllerCompat {
         }
         long window = client.method_22683().method_4490();
         int code = key.method_1429().method_1444();
+        if (code < 0) return false;
         return GLFW.glfwGetKey(window, code) == GLFW.GLFW_PRESS
             || (code >= 0 && code <= GLFW.GLFW_MOUSE_BUTTON_LAST
                 && GLFW.glfwGetMouseButton(window, code) == GLFW.GLFW_PRESS);
@@ -597,6 +702,149 @@ public final class BanditControllerCompat {
             return;
         }
         class_304.method_1420(key.method_1429());
+    }
+
+    public static String radialKeyLabel(String keyId) {
+        if (keyId == null || keyId.isEmpty()) {
+            return "Empty";
+        }
+        class_304 key = class_304.method_65807(keyId);
+        return key == null
+            ? "Missing: " + keyId
+            : key.method_16007().getString() + " - " + class_2561.method_43471(key.method_1431()).getString();
+    }
+
+    public static String radialKeyGlyph(String keyId) {
+        if (keyId == null || keyId.isEmpty()) {
+            return "+";
+        }
+        class_304 key = class_304.method_65807(keyId);
+        if (key == null) {
+            return "?";
+        }
+        String glyph = key.method_16007().getString();
+        return glyph.toLowerCase(java.util.Locale.ROOT).contains("not bound") ? "?" : glyph;
+    }
+
+    public static String[] radialKeyIds() {
+        class_310 client = class_310.method_1551();
+        class_304[] keys = client == null || client.field_1690 == null ? null : client.field_1690.field_1839;
+        if (keys == null || keys.length == 0) {
+            return new String[] { "" };
+        }
+        int count = 1;
+        for (class_304 key : keys) {
+            if (key != null) count++;
+        }
+        String[] ids = new String[count];
+        ids[0] = "";
+        int index = 1;
+        for (class_304 key : keys) {
+            if (key != null) ids[index++] = key.method_1431();
+        }
+        return ids;
+    }
+
+    private static void activateRadialSlot(int slot) {
+        if (slot < 0 || slot >= 8) {
+            return;
+        }
+        class_304 key = class_304.method_65807(BanditControllerSettings.get().radialSlot(slot));
+        if (key == null) {
+            return;
+        }
+        radialPressedAsKeyboard = sendKeyboardKey(key, GLFW.GLFW_PRESS);
+        if (!radialPressedAsKeyboard) {
+            pressMappedKey(key);
+        }
+        radialPressedKey = key;
+    }
+
+    private static void releaseRadialKey() {
+        if (radialPressedKey == null) {
+            return;
+        }
+        if (radialPressedAsKeyboard) sendKeyboardKey(radialPressedKey, GLFW.GLFW_RELEASE);
+        radialPressedKey.method_23481(isBoundInputHeld(radialPressedKey));
+        radialPressedKey = null;
+        radialPressedAsKeyboard = false;
+    }
+
+    private static boolean sendKeyboardKey(class_304 key, int action) {
+        class_3675.class_306 input = key.method_1429();
+        class_3675.class_307 type = input.method_1442();
+        if (type != class_3675.class_307.field_1668 && type != class_3675.class_307.field_1671) return false;
+        class_310 client = class_310.method_1551();
+        if (client == null || client.method_22683() == null) return false;
+        try {
+            int code = input.method_1444();
+            if (code < 0) return false;
+            class_11908 event = new class_11908(
+                type == class_3675.class_307.field_1668 ? code : GLFW.GLFW_KEY_UNKNOWN,
+                type == class_3675.class_307.field_1671 ? code : 0,
+                0);
+            java.lang.reflect.Method handler = findMethod(
+                client.field_1774.getClass(), "method_1466", long.class, int.class, class_11908.class);
+            handler.setAccessible(true);
+            handler.invoke(client.field_1774, client.method_22683().method_4490(), action, event);
+            return true;
+        } catch (Throwable t) {
+            if (!loggedKeyReflectionFailure) {
+                loggedKeyReflectionFailure = true;
+                FabricControllerLog.logException("Bandit controller raw keyboard activation unavailable", t);
+            }
+            return false;
+        }
+    }
+
+    private static void pressMappedKey(class_304 key) {
+        try {
+            java.lang.reflect.Field presses = findField(key.getClass(), "field_1661");
+            presses.setAccessible(true);
+            presses.setInt(key, presses.getInt(key) + 1);
+        } catch (Throwable t) {
+            if (!loggedKeyReflectionFailure) {
+                loggedKeyReflectionFailure = true;
+                FabricControllerLog.logException("Bandit controller fell back to physical-key activation", t);
+            }
+            pressKey(key);
+        }
+        key.method_23481(true);
+    }
+
+    private static void tickJavaKeyMappings(class_310 client, BanditControllerSettings settings, boolean enabled) {
+        java.util.Iterator<java.util.Map.Entry<String, class_304>> active = JAVA_KEYS_DOWN.entrySet().iterator();
+        while (active.hasNext()) {
+            java.util.Map.Entry<String, class_304> entry = active.next();
+            ControllerInput input = settings.javaBinding(entry.getKey());
+            if (enabled && input.held(CONTROLLER_STATE, settings.triggerDeadzone)) continue;
+            if (RAW_JAVA_KEYS_DOWN.remove(entry.getKey())) sendKeyboardKey(entry.getValue(), GLFW.GLFW_RELEASE);
+            entry.getValue().method_23481(isBoundInputHeld(entry.getValue()));
+            active.remove();
+        }
+        if (!enabled || client.field_1690 == null || client.field_1690.field_1839 == null) return;
+        for (class_304 key : client.field_1690.field_1839) {
+            if (key == null) continue;
+            String keyId = key.method_1431();
+            ControllerInput input = settings.javaBinding(keyId);
+            if (JAVA_KEYS_DOWN.containsKey(keyId) || !input.pressed(CONTROLLER_STATE, settings.triggerDeadzone)) continue;
+            boolean raw = sendKeyboardKey(key, GLFW.GLFW_PRESS);
+            if (raw) {
+                RAW_JAVA_KEYS_DOWN.add(keyId);
+            } else {
+                pressMappedKey(key);
+            }
+            JAVA_KEYS_DOWN.put(keyId, key);
+        }
+    }
+
+    private static void releaseJavaKeyMappings() {
+        for (java.util.Map.Entry<String, class_304> entry : JAVA_KEYS_DOWN.entrySet()) {
+            if (RAW_JAVA_KEYS_DOWN.contains(entry.getKey())) sendKeyboardKey(entry.getValue(), GLFW.GLFW_RELEASE);
+            entry.getValue().method_23481(isBoundInputHeld(entry.getValue()));
+        }
+        JAVA_KEYS_DOWN.clear();
+        RAW_JAVA_KEYS_DOWN.clear();
     }
 
     private static void changeHotbarSlot(class_746 player, int direction) {

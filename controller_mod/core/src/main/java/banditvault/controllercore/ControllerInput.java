@@ -16,7 +16,8 @@ public enum ControllerInput {
     DPAD_DOWN("dpadDown", "D-Down", ControllerButton.DPAD_DOWN, null),
     DPAD_LEFT("dpadLeft", "D-Left", ControllerButton.DPAD_LEFT, null),
     LEFT_TRIGGER("leftTrigger", "LT", null, ControllerAxis.LEFT_TRIGGER),
-    RIGHT_TRIGGER("rightTrigger", "RT", null, ControllerAxis.RIGHT_TRIGGER);
+    RIGHT_TRIGGER("rightTrigger", "RT", null, ControllerAxis.RIGHT_TRIGGER),
+    UNBOUND("unbound", "Unbound", null, null);
 
     public final String id;
     public final String label;
@@ -31,15 +32,15 @@ public enum ControllerInput {
     }
 
     public boolean held(ControllerState state, float triggerDeadzone) {
-        return button != null ? state.button(button) : state.trigger(trigger, triggerDeadzone);
+        return button != null ? state.button(button) : trigger != null && state.trigger(trigger, triggerDeadzone);
     }
 
     public boolean pressed(ControllerState state, float triggerDeadzone) {
-        return button != null ? state.pressed(button) : state.triggerPressed(trigger, triggerDeadzone);
+        return button != null ? state.pressed(button) : trigger != null && state.triggerPressed(trigger, triggerDeadzone);
     }
 
     public boolean released(ControllerState state, float triggerDeadzone) {
-        return button != null ? state.released(button) : state.triggerReleased(trigger, triggerDeadzone);
+        return button != null ? state.released(button) : trigger != null && state.triggerReleased(trigger, triggerDeadzone);
     }
 
     public static ControllerInput byId(String id, ControllerInput fallback) {

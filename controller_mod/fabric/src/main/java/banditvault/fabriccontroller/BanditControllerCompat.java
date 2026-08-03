@@ -232,6 +232,11 @@ public final class BanditControllerCompat {
         if (pressed(settings, ControllerAction.DROP)) {
             pressKey(options.field_1869);
         }
+        if (pressed(settings, ControllerAction.SWAP_HANDS)) {
+            for (class_304 key : options.field_1839) {
+                if (key != null && "key.swapOffhand".equals(key.method_1431())) { pressKey(key); break; }
+            }
+        }
         if (pressed(settings, ControllerAction.PICK_BLOCK)) {
             pressKey(options.field_1871);
         }
@@ -289,7 +294,7 @@ public final class BanditControllerCompat {
         boolean controllerAction = snapDirection != null ||
             pressed(settings, ControllerAction.MENU_ACCEPT) ||
             pressed(settings, ControllerAction.MENU_CANCEL) ||
-            pressed(settings, ControllerAction.DROP) ||
+            pressed(settings, ControllerAction.MENU_SECONDARY) ||
             pressed(settings, ControllerAction.QUICK_MOVE);
         if (controllerAction) {
             takeControllerCursor();
@@ -318,10 +323,10 @@ public final class BanditControllerCompat {
         if (released(settings, ControllerAction.MENU_ACCEPT)) {
             screen.method_25406(cursorX, cursorY, LEFT_CLICK);
         }
-        if (pressed(settings, ControllerAction.DROP)) {
+        if (pressed(settings, ControllerAction.MENU_SECONDARY)) {
             screen.method_25402(cursorX, cursorY, RIGHT_CLICK);
         }
-        if (released(settings, ControllerAction.DROP)) {
+        if (released(settings, ControllerAction.MENU_SECONDARY)) {
             screen.method_25406(cursorX, cursorY, RIGHT_CLICK);
         }
         if (pressed(settings, ControllerAction.MENU_CANCEL)) {

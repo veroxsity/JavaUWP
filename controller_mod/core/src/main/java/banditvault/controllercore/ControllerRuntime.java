@@ -139,6 +139,27 @@ public final class ControllerRuntime {
         return Math.copySign((abs - deadzone) / (1.0f - deadzone), value);
     }
 
+    public static float[] shapedMovement(float x, float y, float deadzone) {
+        x = ControllerState.clampAxis(x);
+        y = ControllerState.clampAxis(y);
+        float magnitude = (float)Math.sqrt(x * x + y * y);
+        if (magnitude <= deadzone) {
+            return new float[] { 0.0f, 0.0f };
+        }
+        float scaledMagnitude = (Math.min(magnitude, 1.0f) - deadzone) / (1.0f - deadzone);
+        float scale = scaledMagnitude / magnitude;
+        return new float[] { x * scale, y * scale };
+    }
+
+    public static int radialSlot(float x, float y, float deadzone) {
+        if (x * x + y * y <= deadzone * deadzone) {
+            return -1;
+        }
+        double turn = Math.PI * 2.0;
+        double angle = (Math.atan2(x, -y) + turn + Math.PI / 8.0) % turn;
+        return (int)(angle / (Math.PI / 4.0));
+    }
+
     public static boolean shouldHoldKey(boolean controllerHeld, boolean physicalHeld, boolean preservePhysicalInput) {
         return controllerHeld || (preservePhysicalInput && physicalHeld);
     }

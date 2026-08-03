@@ -1,5 +1,14 @@
 LIBRARY glfw
 EXPORTS
+    banditKeyboardBegin
+    banditKeyboardConsumeFlags
+    banditKeyboardCopyText
+    banditKeyboardEnd
+    banditKeyboardGetRevision
+    banditKeyboardGetSelectionEnd
+    banditKeyboardGetSelectionStart
+    banditKeyboardGetTextLength
+    banditKeyboardUpdate
     glfwCreateCursor
     glfwCreateStandardCursor
     glfwCreateWindow

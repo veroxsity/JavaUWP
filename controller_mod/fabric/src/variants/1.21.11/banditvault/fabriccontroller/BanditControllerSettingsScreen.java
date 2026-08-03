@@ -3,6 +3,10 @@ package banditvault.fabriccontroller;
 import banditvault.controllercore.ControllerAction;
 import banditvault.controllercore.ControllerInput;
 import banditvault.controllercore.ControllerState;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import net.minecraft.class_304;
 import net.minecraft.class_11908;
 import net.minecraft.class_11909;
 import net.minecraft.class_2561;
@@ -12,18 +16,28 @@ import net.minecraft.class_437;
 import org.lwjgl.glfw.GLFW;
 
 public final class BanditControllerSettingsScreen extends class_437 {
+    private static final int PICKER_ROW_HEIGHT = 24;
+    private static final int PICKER_MAX_ROWS = 7;
+
     private final class_437 parent;
+    private final Option[] controlOptions;
     private Tab tab = Tab.BASIC;
     private Focus focus = Focus.LIST;
     private int selected;
     private int page;
-    private ControllerAction captureAction;
+    private Option captureOption;
     private boolean captureArmed;
     private String message = "";
+    private Option pickerOption;
+    private int pickerSelected;
+    private int pickerTop;
+    private String[] pickerRadialIds;
 
     public BanditControllerSettingsScreen(class_437 parent) {
         super(class_2561.method_30163("Bandit Controller"));
         this.parent = parent;
+        this.controlOptions = buildControlOptions();
+        validatePickerOptions();
     }
 
     @Override
@@ -35,10 +49,14 @@ public final class BanditControllerSettingsScreen extends class_437 {
         drawList(context, layout, mouseX, mouseY);
         drawDetails(context, layout);
         drawFooter(context, layout, mouseX, mouseY);
+        if (pickerOption != null) drawPicker(context, mouseX, mouseY);
     }
 
     @Override
     public boolean method_25402(class_11909 event, boolean doubleClick) {
+        if (pickerOption != null) {
+            return clickPicker(event.comp_4798(), event.comp_4799());
+        }
         Layout layout = layout();
         double mx = event.comp_4798();
         double my = event.comp_4799();
@@ -74,8 +92,27 @@ public final class BanditControllerSettingsScreen extends class_437 {
     @Override
     public boolean method_25404(class_11908 event) {
         int key = event.comp_4795();
+        if (pickerOption != null) {
+            if (key == GLFW.GLFW_KEY_ESCAPE) {
+                closePicker();
+            } else if (key == GLFW.GLFW_KEY_UP) {
+                movePicker(-1);
+            } else if (key == GLFW.GLFW_KEY_DOWN) {
+                movePicker(1);
+            } else if (key == GLFW.GLFW_KEY_PAGE_UP) {
+                movePicker(-pickerRows());
+            } else if (key == GLFW.GLFW_KEY_PAGE_DOWN) {
+                movePicker(pickerRows());
+            } else if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_SPACE) {
+                choosePicker();
+            }
+            return true;
+        }
         if (key == GLFW.GLFW_KEY_ESCAPE) {
             close();
+            return true;
+        }
+        if ((key == GLFW.GLFW_KEY_DELETE || key == GLFW.GLFW_KEY_BACKSPACE) && clearSelected()) {
             return true;
         }
         if (key == GLFW.GLFW_KEY_UP) {
@@ -102,6 +139,13 @@ public final class BanditControllerSettingsScreen extends class_437 {
     }
 
     @Override
+    public boolean method_25401(double mouseX, double mouseY, double horizontal, double vertical) {
+        if (pickerOption == null || vertical == 0.0) return false;
+        movePicker(vertical > 0.0 ? -1 : 1);
+        return true;
+    }
+
+    @Override
     public void method_25419() {
         close();
     }
@@ -112,12 +156,29 @@ public final class BanditControllerSettingsScreen extends class_437 {
     }
 
     public boolean isCapturingBinding() {
-        return captureAction != null;
+        return captureOption != null;
     }
 
     public boolean handleControllerInput(ControllerState state, float triggerDeadzone) {
-        if (captureAction != null) {
+        if (captureOption != null) {
             handleControllerCapture(state, triggerDeadzone);
+            return true;
+        }
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        if (pickerOption != null) {
+            if (ControllerInput.DPAD_UP.pressed(state, triggerDeadzone)) {
+                movePicker(-1);
+            } else if (ControllerInput.DPAD_DOWN.pressed(state, triggerDeadzone)) {
+                movePicker(1);
+            } else if (ControllerInput.LEFT_BUMPER.pressed(state, triggerDeadzone)) {
+                movePicker(-pickerRows());
+            } else if (ControllerInput.RIGHT_BUMPER.pressed(state, triggerDeadzone)) {
+                movePicker(pickerRows());
+            } else if (settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A).pressed(state, triggerDeadzone)) {
+                choosePicker();
+            } else if (settingsInput(settings, ControllerAction.MENU_CANCEL, ControllerInput.B).pressed(state, triggerDeadzone)) {
+                closePicker();
+            }
             return true;
         }
         if (ControllerInput.DPAD_UP.pressed(state, triggerDeadzone)) {
@@ -144,15 +205,18 @@ public final class BanditControllerSettingsScreen extends class_437 {
             switchTab(nextTab());
             return true;
         }
-        if (ControllerInput.A.pressed(state, triggerDeadzone)) {
+        if (settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A).pressed(state, triggerDeadzone)) {
             activateFocus();
+            return true;
+        }
+        if (settingsInput(settings, ControllerAction.QUICK_MOVE, ControllerInput.Y).pressed(state, triggerDeadzone) && clearSelected()) {
             return true;
         }
         if (ControllerInput.X.pressed(state, triggerDeadzone)) {
             resetVisible();
             return true;
         }
-        if (ControllerInput.B.pressed(state, triggerDeadzone) || ControllerInput.START.pressed(state, triggerDeadzone)) {
+        if (settingsInput(settings, ControllerAction.MENU_CANCEL, ControllerInput.B).pressed(state, triggerDeadzone) || ControllerInput.START.pressed(state, triggerDeadzone)) {
             close();
             return true;
         }
@@ -160,7 +224,7 @@ public final class BanditControllerSettingsScreen extends class_437 {
     }
 
     public void handleControllerCapture(ControllerState state, float triggerDeadzone) {
-        if (captureAction == null) {
+        if (captureOption == null) {
             return;
         }
         if (!captureArmed) {
@@ -173,12 +237,12 @@ public final class BanditControllerSettingsScreen extends class_437 {
         }
 
         BanditControllerSettings settings = BanditControllerSettings.get();
-        ControllerAction conflict = settings.conflictFor(captureAction, input);
-        settings.setBinding(captureAction, input);
-        message = conflict == null
-            ? captureAction.label + " = " + input.label
-            : "Conflict: " + captureAction.label + " and " + conflict.label + " use " + input.label;
-        captureAction = null;
+        Option option = captureOption;
+        boolean conflict = option.action != null
+            ? settings.rebindController(option.action, input)
+            : settings.rebindJava(option.keyId, input);
+        message = option.label + " = " + input.label + (conflict ? "; conflicts unbound" : "");
+        captureOption = null;
         captureArmed = false;
         BanditControllerSettings.save();
     }
@@ -204,8 +268,10 @@ public final class BanditControllerSettingsScreen extends class_437 {
             boolean active = index == selected && focus == Focus.LIST;
             boolean hover = rowAt(layout, mouseX, mouseY) == i;
             drawPanel(context, layout.listX, y, layout.listW, layout.rowH, active, hover);
-            drawLeft(context, rowLabel(options[index], active), layout.listX + 10, y + 6, rowColor(options[index], active));
-            drawRight(context, currentValue(options[index], BanditControllerSettings.get()), layout.listX + layout.listW - 12, y + 6, active ? 0xFFFFFFFF : 0xFFDDDDDD);
+            String value = currentValue(options[index], BanditControllerSettings.get());
+            int labelWidth = Math.max(20, layout.listW - this.field_22793.method_1727(value) - 34);
+            drawLeft(context, fitPickerLabel(rowLabel(options[index], active), labelWidth), layout.listX + 10, y + 6, rowColor(options[index], active));
+            drawRight(context, value, layout.listX + layout.listW - 12, y + 6, active ? 0xFFFFFFFF : 0xFFDDDDDD);
         }
         drawScroll(context, layout);
     }
@@ -217,17 +283,32 @@ public final class BanditControllerSettingsScreen extends class_437 {
         BanditControllerSettings settings = BanditControllerSettings.get();
         int x = layout.detailX + 8;
         int y = layout.titleY;
-        drawLeft(context, option.label, x, y, 0xFFFFFFFF);
+        drawLeft(context, fitPickerLabel(option.label, layout.detailW - 16), x, y, 0xFFFFFFFF);
         y += 24;
         drawWrapped(context, detailText(option, settings), x, y, layout.detailW - 16, 0xFFDDDDDD);
 
         y = layout.bottomY - layout.rowH * 4;
-        if (captureAction != null) {
-            drawWrapped(context, "Press an Xbox control for " + captureAction.label + ".", x, y, layout.detailW - 16, 0xFFFFFF55);
+        if (captureOption != null) {
+            drawWrapped(context, "Press an Xbox control for " + captureOption.label + ".", x, y, layout.detailW - 16, 0xFFFFFF55);
         } else if (!message.isEmpty()) {
             drawWrapped(context, message, x, y, layout.detailW - 16, 0xFFFFFF55);
         } else {
             drawLeft(context, "Current: " + currentValue(option, settings), x, y, 0xFFFFFFFF);
+            if (option.kind == Kind.BIND) {
+                BanditControllerGuide.drawBar(context, this.field_22793, layout.detailX + layout.detailW / 2, y + 16,
+                    new ControllerInput[] { settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A), settingsInput(settings, ControllerAction.QUICK_MOVE, ControllerInput.Y) },
+                    new String[] { "Change", "Unbind" });
+            } else if (option.kind == Kind.RADIAL) {
+                BanditControllerGuide.drawBar(context, this.field_22793, layout.detailX + layout.detailW / 2, y + 16,
+                    new ControllerInput[] { settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A), settingsInput(settings, ControllerAction.QUICK_MOVE, ControllerInput.Y) },
+                    new String[] { "Choose", "Clear" });
+            } else if (option.kind == Kind.STEP) {
+                BanditControllerGuide.drawBar(context, this.field_22793, layout.detailX + layout.detailW / 2, y + 16,
+                    new ControllerInput[] { settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A) }, new String[] { "Choose" });
+            } else {
+                BanditControllerGuide.drawBar(context, this.field_22793, layout.detailX + layout.detailW / 2, y + 16,
+                    new ControllerInput[] { settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A) }, new String[] { "Toggle" });
+            }
         }
     }
 
@@ -260,12 +341,67 @@ public final class BanditControllerSettingsScreen extends class_437 {
         context.method_25294(trackX - 1, thumbY, trackX + 4, thumbY + thumbH, 0xFFE0E0E0);
     }
 
+    private void drawPicker(class_332 context, int mouseX, int mouseY) {
+        PickerLayout layout = pickerLayout();
+        context.method_25294(0, 0, this.field_22789, this.field_22790, 0xAA000000);
+        context.method_25294(layout.x - 2, layout.y - 2, layout.x + layout.width + 2, layout.bottom + 2, 0xFFFFFFFF);
+        context.method_25294(layout.x, layout.y, layout.x + layout.width, layout.bottom, 0xEE20262E);
+        context.method_27534(this.field_22793, class_2561.method_30163("Choose " + pickerOption.label), this.field_22789 / 2, layout.y + 11, 0xFFFFFFFF);
+
+        int count = pickerChoiceCount();
+        for (int row = 0; row < layout.rows; row++) {
+            int index = pickerTop + row;
+            if (index >= count) break;
+            int y = layout.listY + row * PICKER_ROW_HEIGHT;
+            boolean active = index == pickerSelected;
+            boolean hover = inside(mouseX, mouseY, layout.x + 8, y, layout.width - 16, PICKER_ROW_HEIGHT - 2);
+            drawPanel(context, layout.x + 8, y, layout.width - 16, PICKER_ROW_HEIGHT - 2, active, hover);
+            drawLeft(context, (active ? "> " : "") + fitPickerLabel(pickerChoiceLabel(index), layout.width - 44), layout.x + 16, y + 6, active ? 0xFFFFFFFF : 0xFFE0E0E0);
+        }
+
+        if (count > layout.rows) {
+            int trackX = layout.x + layout.width - 7;
+            int trackHeight = layout.rows * PICKER_ROW_HEIGHT - 2;
+            int thumbHeight = Math.max(16, trackHeight * layout.rows / count);
+            int thumbY = layout.listY + pickerTop * (trackHeight - thumbHeight) / (count - layout.rows);
+            context.method_25294(trackX, layout.listY, trackX + 3, layout.listY + trackHeight, 0x77505050);
+            context.method_25294(trackX - 1, thumbY, trackX + 4, thumbY + thumbHeight, 0xFFE0E0E0);
+        }
+
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        BanditControllerGuide.drawBar(context, this.field_22793, this.field_22789 / 2, layout.footerY,
+            new ControllerInput[] { settingsInput(settings, ControllerAction.MENU_ACCEPT, ControllerInput.A), settingsInput(settings, ControllerAction.MENU_CANCEL, ControllerInput.B), ControllerInput.DPAD_DOWN },
+            new String[] { "Select", "Cancel", "Scroll" });
+    }
+
+    private boolean clickPicker(double mouseX, double mouseY) {
+        PickerLayout layout = pickerLayout();
+        if (!inside(mouseX, mouseY, layout.x, layout.y, layout.width, layout.bottom - layout.y)) {
+            closePicker();
+            return true;
+        }
+        if (mouseY >= layout.listY && mouseY < layout.listY + layout.rows * PICKER_ROW_HEIGHT) {
+            int index = pickerTop + (int)((mouseY - layout.listY) / PICKER_ROW_HEIGHT);
+            if (index < pickerChoiceCount()) {
+                pickerSelected = index;
+                choosePicker();
+            }
+        }
+        return true;
+    }
+
+    private String fitPickerLabel(String text, int width) {
+        if (this.field_22793.method_1727(text) <= width) return text;
+        String suffix = "...";
+        return this.field_22793.method_27523(text, Math.max(1, width - this.field_22793.method_1727(suffix))) + suffix;
+    }
+
     private void switchTab(Tab next) {
         tab = next;
         focus = Focus.LIST;
         selected = 0;
         page = 0;
-        captureAction = null;
+        captureOption = null;
         captureArmed = false;
         message = "";
     }
@@ -332,12 +468,14 @@ public final class BanditControllerSettingsScreen extends class_437 {
                 BanditControllerSettings.save();
                 return;
             case STEP:
-                option.setter.set(settings, wrap(option.value(settings) + option.step, option.min, option.max));
-                BanditControllerSettings.save();
+                openPicker(option);
                 return;
             case BIND:
-                captureAction = option.action;
+                captureOption = option;
                 captureArmed = false;
+                return;
+            case RADIAL:
+                openPicker(option);
                 return;
             default:
         }
@@ -347,11 +485,153 @@ public final class BanditControllerSettingsScreen extends class_437 {
         BanditControllerSettings settings = BanditControllerSettings.get();
         if (tab == Tab.CONTROLS) {
             settings.resetBindings();
+        } else if (tab == Tab.RADIAL) {
+            settings.resetRadialSlots();
         } else {
             resetSettings(settings);
         }
         message = tab.title + " reset";
         BanditControllerSettings.save();
+    }
+
+    private boolean clearSelected() {
+        if (focus != Focus.LIST) {
+            return false;
+        }
+        Option option = options()[selected];
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        if (option.kind == Kind.BIND) {
+            if (option.action != null) {
+                settings.rebindController(option.action, ControllerInput.UNBOUND);
+            } else {
+                settings.rebindJava(option.keyId, ControllerInput.UNBOUND);
+            }
+            message = option.label + " unbound";
+        } else if (option.kind == Kind.RADIAL) {
+            settings.setRadialSlot(option.radialSlot, "");
+            message = option.label + " cleared";
+        } else {
+            return false;
+        }
+        BanditControllerSettings.save();
+        return true;
+    }
+
+    private void openPicker(Option option) {
+        pickerOption = option;
+        pickerRadialIds = null;
+        pickerSelected = 0;
+        pickerTop = 0;
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        message = "";
+        if (option.kind == Kind.STEP) {
+            pickerSelected = clamp((int)Math.round((option.value(settings) - option.min) / option.step), 0, stepChoiceCount(option) - 1);
+        } else {
+            pickerRadialIds = BanditControllerCompat.radialKeyIds();
+            String current = settings.radialSlot(option.radialSlot);
+            int currentIndex = indexOf(pickerRadialIds, current);
+            if (currentIndex < 0) {
+                String[] withMissing = new String[pickerRadialIds.length + 1];
+                System.arraycopy(pickerRadialIds, 0, withMissing, 0, pickerRadialIds.length);
+                withMissing[withMissing.length - 1] = current;
+                pickerRadialIds = withMissing;
+                currentIndex = withMissing.length - 1;
+            }
+            pickerSelected = currentIndex;
+        }
+        ensurePickerVisible();
+    }
+
+    private void movePicker(int delta) {
+        pickerSelected = clamp(pickerSelected + delta, 0, pickerChoiceCount() - 1);
+        ensurePickerVisible();
+    }
+
+    private void ensurePickerVisible() {
+        int rows = pickerRows();
+        if (pickerSelected < pickerTop) {
+            pickerTop = pickerSelected;
+        } else if (pickerSelected >= pickerTop + rows) {
+            pickerTop = pickerSelected - rows + 1;
+        }
+        pickerTop = clamp(pickerTop, 0, Math.max(0, pickerChoiceCount() - rows));
+    }
+
+    private void choosePicker() {
+        Option option = pickerOption;
+        String value = pickerChoiceLabel(pickerSelected);
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        if (option.kind == Kind.STEP) {
+            option.setter.set(settings, stepValue(option, pickerSelected));
+        } else {
+            settings.setRadialSlot(option.radialSlot, pickerRadialIds[pickerSelected]);
+        }
+        closePicker();
+        message = option.label + " = " + value;
+        BanditControllerSettings.save();
+    }
+
+    private void closePicker() {
+        pickerOption = null;
+        pickerRadialIds = null;
+        pickerSelected = 0;
+        pickerTop = 0;
+    }
+
+    private int pickerChoiceCount() {
+        return pickerOption.kind == Kind.STEP ? stepChoiceCount(pickerOption) : pickerRadialIds.length;
+    }
+
+    private String pickerChoiceLabel(int index) {
+        return pickerOption.kind == Kind.STEP
+            ? format(stepValue(pickerOption, index), pickerOption.percent)
+            : BanditControllerCompat.radialKeyLabel(pickerRadialIds[index]);
+    }
+
+    private int pickerRows() {
+        int available = Math.max(1, (this.field_22790 - 104) / PICKER_ROW_HEIGHT);
+        return Math.min(pickerChoiceCount(), Math.min(PICKER_MAX_ROWS, available));
+    }
+
+    private PickerLayout pickerLayout() {
+        int rows = pickerRows();
+        int width = Math.min(this.field_22789 - 32, 460);
+        int height = 66 + rows * PICKER_ROW_HEIGHT;
+        int x = this.field_22789 / 2 - width / 2;
+        int y = this.field_22790 / 2 - height / 2;
+        int listY = y + 34;
+        int footerY = listY + rows * PICKER_ROW_HEIGHT + 8;
+        return new PickerLayout(x, y, width, listY, footerY, y + height, rows);
+    }
+
+    private static int stepChoiceCount(Option option) {
+        return (int)Math.round((option.max - option.min) / option.step) + 1;
+    }
+
+    private static double stepValue(Option option, int index) {
+        return Math.min(option.max, option.min + option.step * index);
+    }
+
+    private static int indexOf(String[] values, String value) {
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(value)) return i;
+        }
+        return -1;
+    }
+
+    private static void validatePickerOptions() {
+        for (Option[] group : new Option[][] { BASIC, ADVANCED }) {
+            for (Option option : group) {
+                if (option.kind == Kind.STEP && (option.step <= 0.0 || stepChoiceCount(option) < 3)) {
+                    throw new IllegalStateException("Invalid multi-choice controller setting: " + option.label);
+                }
+            }
+        }
+    }
+
+    private static ControllerInput settingsInput(BanditControllerSettings settings, ControllerAction action, ControllerInput fallback) {
+        ControllerInput input = settings.binding(action);
+        return input == ControllerInput.UNBOUND ? fallback : input;
     }
 
     private void resetSettings(BanditControllerSettings settings) {
@@ -372,7 +652,7 @@ public final class BanditControllerSettingsScreen extends class_437 {
     }
 
     private int rowColor(Option option, boolean active) {
-        if (option.kind == Kind.BIND) {
+        if (option.kind == Kind.BIND && option.action != null) {
             ControllerInput input = BanditControllerSettings.get().binding(option.action);
             if (BanditControllerSettings.get().conflictFor(option.action, input) != null) {
                 return 0xFFFF6666;
@@ -391,19 +671,28 @@ public final class BanditControllerSettingsScreen extends class_437 {
         if (option.kind == Kind.STEP) {
             return format(option.value(settings), option.percent);
         }
-        ControllerInput input = settings.binding(option.action);
-        ControllerAction conflict = settings.conflictFor(option.action, input);
+        if (option.kind == Kind.RADIAL) {
+            String label = BanditControllerCompat.radialKeyLabel(settings.radialSlot(option.radialSlot));
+            return label.length() <= 24 ? label : label.substring(0, 21) + "...";
+        }
+        ControllerInput input = option.binding(settings);
+        ControllerAction conflict = option.action == null ? null : settings.conflictFor(option.action, input);
         return input.label + (conflict == null ? "" : " !");
     }
 
     private String detailText(Option option, BanditControllerSettings settings) {
         if (option.kind == Kind.BIND) {
-            ControllerInput input = settings.binding(option.action);
-            ControllerAction conflict = settings.conflictFor(option.action, input);
+            ControllerInput input = option.binding(settings);
+            ControllerAction conflict = option.action == null ? null : settings.conflictFor(option.action, input);
             if (conflict != null) {
                 return input.label + " is also bound to " + conflict.label + ". Choose a different control.";
             }
-            return actionDescription(option.action);
+            return option.action == null
+                ? javaActionDescription(option.keyId)
+                : actionDescription(option.action);
+        }
+        if (option.kind == Kind.RADIAL) {
+            return "Runs this registered Minecraft key mapping when the radial direction is selected.";
         }
         if (option.kind == Kind.STEP) {
             return settingDescription(option);
@@ -453,7 +742,8 @@ public final class BanditControllerSettingsScreen extends class_437 {
             case SNEAK: return "Activates sneak.";
             case SPRINT: return "Activates sprint.";
             case INVENTORY: return "Opens and closes the inventory.";
-            case DROP: return "Drops the selected item. In menus, right-clicks.";
+            case DROP: return "Drops the selected item.";
+            case SWAP_HANDS: return "Swaps the main-hand and off-hand items.";
             case PICK_BLOCK: return "Picks the targeted block or item.";
             case PAUSE: return "Opens the pause menu.";
             case HOTBAR_PREVIOUS: return "Selects the previous hotbar slot.";
@@ -462,8 +752,91 @@ public final class BanditControllerSettingsScreen extends class_437 {
             case MENU_CANCEL: return "Goes back or closes the menu.";
             case SNAP_FREE_TOGGLE: return "Switches menu navigation mode.";
             case QUICK_MOVE: return "Quick-moves the focused inventory stack.";
+            case MENU_SECONDARY: return "Performs the secondary action on the focused menu item or slot.";
+            case RADIAL_MENU: return "Hold to open the radial menu, point with the right stick, and release to activate.";
             default: return "Changes this controller binding.";
         }
+    }
+
+    private String javaActionDescription(String keyId) {
+        if (keyId == null) return "Activates this Minecraft or mod control during gameplay.";
+        switch (keyId) {
+            case "key.forward": return "Moves forward.";
+            case "key.left": return "Moves left.";
+            case "key.back": return "Moves backward.";
+            case "key.right": return "Moves right.";
+            case "key.chat": return "Opens chat so you can send a message.";
+            case "key.playerlist": return "Shows the players currently connected.";
+            case "key.command": return "Opens chat with a slash ready for a command.";
+            case "key.socialInteractions": return "Opens controls for managing other players' chat messages.";
+            case "key.screenshot": return "Saves a screenshot.";
+            case "key.togglePerspective": return "Switches between first-person and third-person views.";
+            case "key.smoothCamera": return "Turns cinematic camera smoothing on or off.";
+            case "key.fullscreen": return "Turns full-screen display on or off.";
+            case "key.advancements": return "Opens the Advancements screen.";
+            case "key.quickActions": return "Opens the Quick Actions menu.";
+            case "key.toggleGui": return "Shows or hides the HUD and your hand.";
+            case "key.toggleSpectatorShaderEffects": return "Turns the current spectator shader effect on or off.";
+            case "key.hotbar.1": return "Selects hotbar slot 1.";
+            case "key.hotbar.2": return "Selects hotbar slot 2.";
+            case "key.hotbar.3": return "Selects hotbar slot 3.";
+            case "key.hotbar.4": return "Selects hotbar slot 4.";
+            case "key.hotbar.5": return "Selects hotbar slot 5.";
+            case "key.hotbar.6": return "Selects hotbar slot 6.";
+            case "key.hotbar.7": return "Selects hotbar slot 7.";
+            case "key.hotbar.8": return "Selects hotbar slot 8.";
+            case "key.hotbar.9": return "Selects hotbar slot 9.";
+            case "key.saveToolbarActivator": return "In Creative mode, hold this and select a number to save the current hotbar.";
+            case "key.loadToolbarActivator": return "In Creative mode, hold this and select a number to load a saved hotbar.";
+            case "key.spectatorOutlines": return "Highlights players while you are spectating.";
+            case "key.spectatorHotbar": return "Uses the hotbar controls to choose a spectator menu option.";
+            case "key.debug.overlay": return "Shows or hides the debug overlay.";
+            case "key.debug.modifier": return "Acts as Minecraft's F3 key. Hold it with another debug control to run that action.";
+            case "key.debug.crash": return "With Debug Modifier held, hold this to intentionally crash the game.";
+            case "key.debug.reloadChunk": return "With Debug Modifier held, reloads all visible chunks.";
+            case "key.debug.showHitboxes": return "With Debug Modifier held, shows or hides entity hitboxes.";
+            case "key.debug.clearChat": return "With Debug Modifier held, clears visible chat messages.";
+            case "key.debug.showChunkBorders": return "With Debug Modifier held, shows or hides chunk boundaries.";
+            case "key.debug.showAdvancedTooltips": return "With Debug Modifier held, shows or hides extra item details in tooltips.";
+            case "key.debug.copyRecreateCommand": return "With Debug Modifier held, copies data for the targeted block or entity.";
+            case "key.debug.spectate": return "With Debug Modifier held, switches between Spectator and your previous game mode.";
+            case "key.debug.switchGameMode": return "With Debug Modifier held, opens the game mode switcher.";
+            case "key.debug.debugOptions": return "With Debug Modifier held, opens the Debug Options screen.";
+            case "key.debug.focusPause": return "With Debug Modifier held, changes whether the game pauses when it loses focus.";
+            case "key.debug.dumpDynamicTextures": return "With Debug Modifier held, saves loaded dynamic textures to disk.";
+            case "key.debug.reloadResourcePacks": return "With Debug Modifier held, reloads resource packs.";
+            case "key.debug.profiling": return "With Debug Modifier held, starts or stops performance profiling.";
+            case "key.debug.copyLocation": return "With Debug Modifier held, copies your location as a teleport command.";
+            case "key.debug.dumpVersion": return "With Debug Modifier held, shows detailed client version information.";
+            case "key.debug.profilingChart": return "With Debug Modifier held, shows or hides the profiling chart.";
+            case "key.debug.fpsCharts": return "With Debug Modifier held, shows or hides performance charts.";
+            case "key.debug.networkCharts": return "With Debug Modifier held, shows or hides network traffic charts.";
+            default: return "Activates this Minecraft or mod control during gameplay.";
+        }
+    }
+
+    private static Option[] buildControlOptions() {
+        List<Option> options = new ArrayList<Option>();
+        EnumSet<ControllerAction> shown = EnumSet.noneOf(ControllerAction.class);
+        class_310 client = class_310.method_1551();
+        class_304[] keys = client == null || client.field_1690 == null ? null : client.field_1690.field_1839;
+        if (keys != null) {
+            for (class_304 key : keys) {
+                if (key != null) {
+                    String keyId = key.method_1431();
+                    String label = class_2561.method_43471(keyId).getString();
+                    ControllerAction action = BanditControllerSettings.controllerActionForJavaKey(keyId);
+                    options.add(action == null
+                        ? new Option(label, keyId)
+                        : new Option(label, action));
+                    if (action != null) shown.add(action);
+                }
+            }
+        }
+        for (Option option : CONTROLLER_CONTROLS) {
+            if (!shown.contains(option.action)) options.add(option);
+        }
+        return options.toArray(new Option[options.size()]);
     }
 
     private Option[] options() {
@@ -471,7 +844,9 @@ public final class BanditControllerSettingsScreen extends class_437 {
             case ADVANCED:
                 return ADVANCED;
             case CONTROLS:
-                return CONTROLS;
+                return controlOptions;
+            case RADIAL:
+                return RADIAL;
             default:
                 return BASIC;
         }
@@ -486,7 +861,7 @@ public final class BanditControllerSettingsScreen extends class_437 {
         int paneGap = 24;
         int detailW = Math.max(170, Math.min(300, width * 32 / 100));
         int listW = width - paneGap - detailW;
-        int tabW = (width - tabGap * 2) / 3;
+        int tabW = (width - tabGap * (Tab.values().length - 1)) / Tab.values().length;
         int tabY = Math.max(24, this.field_22790 / 10);
         int titleY = tabY + rowH + 22;
         int listY = titleY + 18;
@@ -525,16 +900,6 @@ public final class BanditControllerSettingsScreen extends class_437 {
 
     private boolean inside(double mx, double my, int x, int y, int w, int h) {
         return mx >= x && mx <= x + w && my >= y && my <= y + h;
-    }
-
-    private double wrap(double value, double min, double max) {
-        if (value > max) {
-            return min;
-        }
-        if (value < min) {
-            return max;
-        }
-        return value;
     }
 
     private int clamp(int value, int min, int max) {
@@ -611,7 +976,8 @@ public final class BanditControllerSettingsScreen extends class_437 {
     private enum Tab {
         BASIC("Basic"),
         ADVANCED("Advanced"),
-        CONTROLS("Controls");
+        CONTROLS("Controls"),
+        RADIAL("Radial");
 
         final String title;
 
@@ -623,7 +989,8 @@ public final class BanditControllerSettingsScreen extends class_437 {
     private enum Kind {
         TOGGLE,
         STEP,
-        BIND
+        BIND,
+        RADIAL
     }
 
     private enum Focus {
@@ -680,6 +1047,26 @@ public final class BanditControllerSettingsScreen extends class_437 {
         }
     }
 
+    private static final class PickerLayout {
+        final int x;
+        final int y;
+        final int width;
+        final int listY;
+        final int footerY;
+        final int bottom;
+        final int rows;
+
+        PickerLayout(int x, int y, int width, int listY, int footerY, int bottom, int rows) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.listY = listY;
+            this.footerY = footerY;
+            this.bottom = bottom;
+            this.rows = rows;
+        }
+    }
+
     private static final class Option {
         final String label;
         final Kind kind;
@@ -690,20 +1077,34 @@ public final class BanditControllerSettingsScreen extends class_437 {
         final double step;
         final boolean percent;
         final ControllerAction action;
+        final String keyId;
+        final int radialSlot;
 
         Option(String label, Getter getter, Setter setter) {
-            this(label, Kind.TOGGLE, getter, setter, 0.0, 1.0, 1.0, false, null);
+            this(label, Kind.TOGGLE, getter, setter, 0.0, 1.0, 1.0, false, null, null, -1);
         }
 
         Option(String label, Getter getter, Setter setter, double min, double max, double step, boolean percent) {
-            this(label, Kind.STEP, getter, setter, min, max, step, percent, null);
+            this(label, Kind.STEP, getter, setter, min, max, step, percent, null, null, -1);
         }
 
         Option(ControllerAction action) {
-            this(action.label, Kind.BIND, null, null, 0.0, 0.0, 0.0, false, action);
+            this(action.label, Kind.BIND, null, null, 0.0, 0.0, 0.0, false, action, null, -1);
         }
 
-        Option(String label, Kind kind, Getter getter, Setter setter, double min, double max, double step, boolean percent, ControllerAction action) {
+        Option(String label, String keyId) {
+            this(label, Kind.BIND, null, null, 0.0, 0.0, 0.0, false, null, keyId, -1);
+        }
+
+        Option(String label, ControllerAction action) {
+            this(label, Kind.BIND, null, null, 0.0, 0.0, 0.0, false, action, null, -1);
+        }
+
+        Option(String label, int radialSlot) {
+            this(label, Kind.RADIAL, null, null, 0.0, 0.0, 0.0, false, null, null, radialSlot);
+        }
+
+        Option(String label, Kind kind, Getter getter, Setter setter, double min, double max, double step, boolean percent, ControllerAction action, String keyId, int radialSlot) {
             this.label = label;
             this.kind = kind;
             this.getter = getter;
@@ -713,10 +1114,16 @@ public final class BanditControllerSettingsScreen extends class_437 {
             this.step = step;
             this.percent = percent;
             this.action = action;
+            this.keyId = keyId;
+            this.radialSlot = radialSlot;
         }
 
         double value(BanditControllerSettings settings) {
             return getter.get(settings);
+        }
+
+        ControllerInput binding(BanditControllerSettings settings) {
+            return action == null ? settings.javaBinding(keyId) : settings.binding(action);
         }
     }
 
@@ -740,7 +1147,7 @@ public final class BanditControllerSettingsScreen extends class_437 {
         new Option("Trigger Threshold", s -> s.triggerDeadzone, (s, v) -> s.triggerDeadzone = (float)v, 0.0, 0.95, 0.05, true)
     };
 
-    private static final Option[] CONTROLS = new Option[] {
+    private static final Option[] CONTROLLER_CONTROLS = new Option[] {
         new Option(ControllerAction.ATTACK),
         new Option(ControllerAction.USE),
         new Option(ControllerAction.JUMP),
@@ -748,6 +1155,7 @@ public final class BanditControllerSettingsScreen extends class_437 {
         new Option(ControllerAction.SPRINT),
         new Option(ControllerAction.INVENTORY),
         new Option(ControllerAction.DROP),
+        new Option(ControllerAction.SWAP_HANDS),
         new Option(ControllerAction.PICK_BLOCK),
         new Option(ControllerAction.PAUSE),
         new Option(ControllerAction.HOTBAR_PREVIOUS),
@@ -755,6 +1163,19 @@ public final class BanditControllerSettingsScreen extends class_437 {
         new Option(ControllerAction.MENU_ACCEPT),
         new Option(ControllerAction.MENU_CANCEL),
         new Option(ControllerAction.SNAP_FREE_TOGGLE),
-        new Option(ControllerAction.QUICK_MOVE)
+        new Option(ControllerAction.QUICK_MOVE),
+        new Option(ControllerAction.MENU_SECONDARY),
+        new Option(ControllerAction.RADIAL_MENU)
+    };
+
+    private static final Option[] RADIAL = new Option[] {
+        new Option("Up", 0),
+        new Option("Up Right", 1),
+        new Option("Right", 2),
+        new Option("Down Right", 3),
+        new Option("Down", 4),
+        new Option("Down Left", 5),
+        new Option("Left", 6),
+        new Option("Up Left", 7)
     };
 }

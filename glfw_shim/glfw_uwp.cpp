@@ -18,7 +18,16 @@
 #include <windows.system.h>
 #include <windows.ui.core.h>
 #include <windows.graphics.display.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.Text.Core.h>
+#include <winrt/Windows.UI.ViewManagement.h>
+#include <algorithm>
+#include <climits>
+#include <mutex>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <windows.devices.input.h>
 #include <windows.ui.input.h>
@@ -949,6 +958,459 @@ static void DispatchCharEvent(unsigned int codepoint) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Native Xbox text input
+// ---------------------------------------------------------------------------
+static constexpr int BANDIT_KEYBOARD_MULTILINE = 1;
+static constexpr int BANDIT_KEYBOARD_SUBMIT = 1;
+static constexpr int BANDIT_KEYBOARD_CLOSED = 2;
+static constexpr int BANDIT_KEYBOARD_HARD_LIMIT = 1 << 20;
+
+static std::mutex g_banditKeyboardMutex;
+static std::wstring g_banditKeyboardText;
+static int g_banditKeyboardSelectionStart = 0;
+static int g_banditKeyboardSelectionEnd = 0;
+static int g_banditKeyboardMaxLength = BANDIT_KEYBOARD_HARD_LIMIT;
+static int g_banditKeyboardRevision = 0;
+static int g_banditKeyboardFlags = 0;
+static bool g_banditKeyboardActive = false;
+static bool g_banditKeyboardWasVisible = false;
+static bool g_banditKeyboardMultiline = false;
+static winrt::Windows::UI::Core::CoreWindow g_banditKeyboardWindow{nullptr};
+static winrt::Windows::UI::Text::Core::CoreTextEditContext g_banditKeyboardContext{nullptr};
+static winrt::Windows::UI::ViewManagement::InputPane g_banditKeyboardPane{nullptr};
+static winrt::event_token g_banditKeyboardTextRequested{};
+static winrt::event_token g_banditKeyboardSelectionRequested{};
+static winrt::event_token g_banditKeyboardTextUpdating{};
+static winrt::event_token g_banditKeyboardSelectionUpdating{};
+static winrt::event_token g_banditKeyboardLayoutRequested{};
+static winrt::event_token g_banditKeyboardFocusRemoved{};
+
+static int ClampBanditKeyboardIndex(int value, int length) {
+    return (std::max)(0, (std::min)(value, length));
+}
+
+static void ClampBanditKeyboardSelection(int length, int& start, int& end) {
+    start = ClampBanditKeyboardIndex(start, length);
+    end = ClampBanditKeyboardIndex(end, length);
+    if (start > end) std::swap(start, end);
+}
+
+static void TruncateBanditKeyboardText(std::wstring& text, int maxLength) {
+    if ((int)text.size() <= maxLength) return;
+    text.resize(maxLength);
+    if (!text.empty() && text.back() >= 0xD800 && text.back() <= 0xDBFF) {
+        text.pop_back();
+    }
+}
+
+static bool BanditKeyboardSelfCheck() {
+    int start = -2;
+    int end = 9;
+    ClampBanditKeyboardSelection(4, start, end);
+    std::wstring text = L"abc";
+    TruncateBanditKeyboardText(text, 2);
+    return start == 0 && end == 4 && text == L"ab";
+}
+
+static bool BanditKeyboardCapturesInput() {
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    return g_banditKeyboardActive;
+}
+
+static void NotifyBanditKeyboardChanged(int oldStart, int oldEnd, int newLength, int selectionStart, int selectionEnd) {
+    if (!g_banditKeyboardContext) return;
+    using namespace winrt::Windows::UI::Text::Core;
+    try {
+        g_banditKeyboardContext.NotifyTextChanged(
+            CoreTextRange{oldStart, oldEnd},
+            newLength,
+            CoreTextRange{selectionStart, selectionEnd});
+        g_banditKeyboardContext.NotifySelectionChanged(CoreTextRange{selectionStart, selectionEnd});
+    } catch (...) {
+    }
+}
+
+static void EndBanditKeyboard(bool markClosed) {
+    {
+        std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+        if (markClosed && g_banditKeyboardActive) g_banditKeyboardFlags |= BANDIT_KEYBOARD_CLOSED;
+        g_banditKeyboardActive = false;
+        g_banditKeyboardWasVisible = false;
+    }
+    if (g_banditKeyboardContext) {
+        try { g_banditKeyboardContext.NotifyFocusLeave(); } catch (...) {}
+    }
+    if (g_banditKeyboardPane) {
+        try { g_banditKeyboardPane.TryHide(); } catch (...) {}
+    }
+}
+
+static void RefreshBanditKeyboardVisibility() {
+    if (!BanditKeyboardCapturesInput() || !g_banditKeyboardPane) return;
+    bool visible = false;
+    try { visible = g_banditKeyboardPane.Visible(); } catch (...) { return; }
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    if (!g_banditKeyboardActive) return;
+    if (visible) {
+        g_banditKeyboardWasVisible = true;
+    } else if (g_banditKeyboardWasVisible) {
+        g_banditKeyboardActive = false;
+        g_banditKeyboardWasVisible = false;
+        g_banditKeyboardFlags |= BANDIT_KEYBOARD_CLOSED;
+    }
+}
+
+static bool ReplaceBanditKeyboardSelection(const std::wstring& replacement) {
+    int oldStart = 0;
+    int oldEnd = 0;
+    int newSelection = 0;
+    int inserted = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+        if (!g_banditKeyboardActive) return false;
+        const int oldLength = (int)g_banditKeyboardText.size();
+        oldStart = g_banditKeyboardSelectionStart;
+        oldEnd = g_banditKeyboardSelectionEnd;
+        ClampBanditKeyboardSelection(oldLength, oldStart, oldEnd);
+        std::wstring next = g_banditKeyboardText.substr(0, oldStart) + replacement + g_banditKeyboardText.substr(oldEnd);
+        TruncateBanditKeyboardText(next, g_banditKeyboardMaxLength);
+        inserted = (std::max)(0, (int)next.size() - (oldLength - (oldEnd - oldStart)));
+        newSelection = ClampBanditKeyboardIndex(oldStart + inserted, (int)next.size());
+        g_banditKeyboardText = std::move(next);
+        g_banditKeyboardSelectionStart = newSelection;
+        g_banditKeyboardSelectionEnd = newSelection;
+        ++g_banditKeyboardRevision;
+    }
+    NotifyBanditKeyboardChanged(oldStart, oldEnd, inserted, newSelection, newSelection);
+    return true;
+}
+
+static bool HandleBanditKeyboardKeyDown(VirtualKey virtualKey) {
+    if (!BanditKeyboardCapturesInput()) return false;
+    if (virtualKey == VirtualKey_Back) {
+        int start = 0;
+        int end = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+            start = g_banditKeyboardSelectionStart;
+            end = g_banditKeyboardSelectionEnd;
+            ClampBanditKeyboardSelection((int)g_banditKeyboardText.size(), start, end);
+            if (start == end && start > 0) {
+                --start;
+                if (start > 0 && g_banditKeyboardText[start] >= 0xDC00 && g_banditKeyboardText[start] <= 0xDFFF &&
+                    g_banditKeyboardText[start - 1] >= 0xD800 && g_banditKeyboardText[start - 1] <= 0xDBFF) {
+                    --start;
+                }
+            }
+            g_banditKeyboardSelectionStart = start;
+            g_banditKeyboardSelectionEnd = end;
+        }
+        ReplaceBanditKeyboardSelection(L"");
+        return true;
+    }
+    if (virtualKey == VirtualKey_Enter) {
+        bool multiline = false;
+        {
+            std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+            multiline = g_banditKeyboardMultiline;
+            if (!multiline) g_banditKeyboardFlags |= BANDIT_KEYBOARD_SUBMIT;
+        }
+        if (multiline) ReplaceBanditKeyboardSelection(L"\n");
+        return true;
+    }
+    if (virtualKey == VirtualKey_Escape || virtualKey == VirtualKey_GamepadB) {
+        EndBanditKeyboard(true);
+        return true;
+    }
+    return true;
+}
+
+static void MarkBanditKeyboardEventHandled(IInspectable* args) {
+    if (!args) return;
+    ComPtr<ICoreWindowEventArgs> eventArgs;
+    if (SUCCEEDED(args->QueryInterface(IID_PPV_ARGS(eventArgs.GetAddressOf()))) && eventArgs) {
+        eventArgs->put_Handled(TRUE);
+    }
+}
+
+static bool CreateBanditKeyboardContext() {
+    using namespace winrt::Windows::UI::Text::Core;
+    if (g_banditKeyboardContext) return true;
+    if (!g_coreWindow || !BanditKeyboardSelfCheck()) {
+        ShimLog("Bandit keyboard unavailable: native self-check or CoreWindow failed");
+        return false;
+    }
+    try {
+        winrt::copy_from_abi(g_banditKeyboardWindow, g_coreWindow.Get());
+        auto manager = CoreTextServicesManager::GetForCurrentView();
+        g_banditKeyboardContext = manager.CreateEditContext();
+        g_banditKeyboardContext.InputPaneDisplayPolicy(CoreTextInputPaneDisplayPolicy::Manual);
+        g_banditKeyboardContext.InputScope(CoreTextInputScope::Text);
+
+        g_banditKeyboardTextRequested = g_banditKeyboardContext.TextRequested(
+            [](auto&&, CoreTextTextRequestedEventArgs const& args) {
+                auto request = args.Request();
+                auto range = request.Range();
+                std::wstring text;
+                {
+                    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+                    const int length = (int)g_banditKeyboardText.size();
+                    const int start = ClampBanditKeyboardIndex(range.StartCaretPosition, length);
+                    const int end = (std::max)(start, ClampBanditKeyboardIndex(range.EndCaretPosition, length));
+                    text = g_banditKeyboardText.substr(start, end - start);
+                }
+                request.Text(winrt::hstring(text));
+            });
+
+        g_banditKeyboardSelectionRequested = g_banditKeyboardContext.SelectionRequested(
+            [](auto&&, CoreTextSelectionRequestedEventArgs const& args) {
+                CoreTextRange selection;
+                {
+                    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+                    selection = CoreTextRange{g_banditKeyboardSelectionStart, g_banditKeyboardSelectionEnd};
+                }
+                args.Request().Selection(selection);
+            });
+
+        g_banditKeyboardTextUpdating = g_banditKeyboardContext.TextUpdating(
+            [](auto&&, CoreTextTextUpdatingEventArgs const& args) {
+                const auto range = args.Range();
+                std::wstring incoming;
+                bool multiline = false;
+                {
+                    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+                    if (!g_banditKeyboardActive) {
+                        args.Result(CoreTextTextUpdatingResult::Succeeded);
+                        return;
+                    }
+                    multiline = g_banditKeyboardMultiline;
+                }
+                bool sawNewline = false;
+                bool previousCarriageReturn = false;
+                for (wchar_t ch : std::wstring_view(args.Text())) {
+                    if (ch == L'\r' || ch == L'\n') {
+                        sawNewline = true;
+                        if (multiline && !(ch == L'\n' && previousCarriageReturn)) incoming.push_back(L'\n');
+                        previousCarriageReturn = ch == L'\r';
+                        continue;
+                    }
+                    previousCarriageReturn = false;
+                    if (ch != L'\t') incoming.push_back(ch);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+                    const int oldLength = (int)g_banditKeyboardText.size();
+                    const int start = ClampBanditKeyboardIndex(range.StartCaretPosition, oldLength);
+                    const int end = (std::max)(start, ClampBanditKeyboardIndex(range.EndCaretPosition, oldLength));
+                    g_banditKeyboardText = g_banditKeyboardText.substr(0, start) + incoming + g_banditKeyboardText.substr(end);
+                    TruncateBanditKeyboardText(g_banditKeyboardText, g_banditKeyboardMaxLength);
+                    const auto selection = args.NewSelection();
+                    g_banditKeyboardSelectionStart = selection.StartCaretPosition;
+                    g_banditKeyboardSelectionEnd = selection.EndCaretPosition;
+                    ClampBanditKeyboardSelection((int)g_banditKeyboardText.size(), g_banditKeyboardSelectionStart, g_banditKeyboardSelectionEnd);
+                    if (sawNewline && !multiline) g_banditKeyboardFlags |= BANDIT_KEYBOARD_SUBMIT;
+                    ++g_banditKeyboardRevision;
+                }
+                args.Result(CoreTextTextUpdatingResult::Succeeded);
+            });
+
+        g_banditKeyboardSelectionUpdating = g_banditKeyboardContext.SelectionUpdating(
+            [](auto&&, CoreTextSelectionUpdatingEventArgs const& args) {
+                {
+                    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+                    if (!g_banditKeyboardActive) {
+                        args.Result(CoreTextSelectionUpdatingResult::Succeeded);
+                        return;
+                    }
+                    const auto selection = args.Selection();
+                    g_banditKeyboardSelectionStart = selection.StartCaretPosition;
+                    g_banditKeyboardSelectionEnd = selection.EndCaretPosition;
+                    ClampBanditKeyboardSelection((int)g_banditKeyboardText.size(), g_banditKeyboardSelectionStart, g_banditKeyboardSelectionEnd);
+                    ++g_banditKeyboardRevision;
+                }
+                args.Result(CoreTextSelectionUpdatingResult::Succeeded);
+            });
+
+        g_banditKeyboardLayoutRequested = g_banditKeyboardContext.LayoutRequested(
+            [](auto&&, CoreTextLayoutRequestedEventArgs const& args) {
+                winrt::Windows::Foundation::Rect rect{0.0f, 0.0f, 1.0f, 1.0f};
+                if (g_banditKeyboardWindow) rect = g_banditKeyboardWindow.Bounds();
+                auto bounds = args.Request().LayoutBounds();
+                bounds.TextBounds(rect);
+                bounds.ControlBounds(rect);
+            });
+
+        g_banditKeyboardFocusRemoved = g_banditKeyboardContext.FocusRemoved(
+            [](auto&&, auto&&) {
+                std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+                if (g_banditKeyboardActive) {
+                    g_banditKeyboardActive = false;
+                    g_banditKeyboardWasVisible = false;
+                    g_banditKeyboardFlags |= BANDIT_KEYBOARD_CLOSED;
+                }
+            });
+
+        try { g_banditKeyboardPane = winrt::Windows::UI::ViewManagement::InputPane::GetForCurrentView(); } catch (...) {}
+        ShimLog("Bandit native keyboard context ready");
+        return true;
+    } catch (winrt::hresult_error const& error) {
+        ShimLog("Bandit native keyboard context failed hr=0x%08X", static_cast<unsigned int>(error.code()));
+    } catch (...) {
+        ShimLog("Bandit native keyboard context failed");
+    }
+    g_banditKeyboardContext = nullptr;
+    g_banditKeyboardPane = nullptr;
+    g_banditKeyboardWindow = nullptr;
+    return false;
+}
+
+static void DestroyBanditKeyboardContext() {
+    EndBanditKeyboard(false);
+    if (g_banditKeyboardContext) {
+        try {
+            g_banditKeyboardContext.TextRequested(g_banditKeyboardTextRequested);
+            g_banditKeyboardContext.SelectionRequested(g_banditKeyboardSelectionRequested);
+            g_banditKeyboardContext.TextUpdating(g_banditKeyboardTextUpdating);
+            g_banditKeyboardContext.SelectionUpdating(g_banditKeyboardSelectionUpdating);
+            g_banditKeyboardContext.LayoutRequested(g_banditKeyboardLayoutRequested);
+            g_banditKeyboardContext.FocusRemoved(g_banditKeyboardFocusRemoved);
+        } catch (...) {
+        }
+    }
+    g_banditKeyboardContext = nullptr;
+    g_banditKeyboardPane = nullptr;
+    g_banditKeyboardWindow = nullptr;
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    g_banditKeyboardText.clear();
+    g_banditKeyboardSelectionStart = 0;
+    g_banditKeyboardSelectionEnd = 0;
+    g_banditKeyboardFlags = 0;
+    g_banditKeyboardWasVisible = false;
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardBegin(
+    const wchar_t* text,
+    int length,
+    int selectionStart,
+    int selectionEnd,
+    int maxLength,
+    int options) {
+    if (!CreateBanditKeyboardContext()) return 0;
+    const int boundedLength = text ? ClampBanditKeyboardIndex(length, BANDIT_KEYBOARD_HARD_LIMIT) : 0;
+    const int boundedMax = maxLength <= 0 ? BANDIT_KEYBOARD_HARD_LIMIT : ClampBanditKeyboardIndex(maxLength, BANDIT_KEYBOARD_HARD_LIMIT);
+    int oldLength = 0;
+    int newLength = 0;
+    int newSelectionStart = 0;
+    int newSelectionEnd = 0;
+    bool multiline = false;
+    int revision = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+        oldLength = (int)g_banditKeyboardText.size();
+        g_banditKeyboardText.assign(text ? text : L"", boundedLength);
+        g_banditKeyboardMaxLength = boundedMax;
+        TruncateBanditKeyboardText(g_banditKeyboardText, boundedMax);
+        g_banditKeyboardSelectionStart = selectionStart;
+        g_banditKeyboardSelectionEnd = selectionEnd;
+        ClampBanditKeyboardSelection((int)g_banditKeyboardText.size(), g_banditKeyboardSelectionStart, g_banditKeyboardSelectionEnd);
+        g_banditKeyboardMultiline = (options & BANDIT_KEYBOARD_MULTILINE) != 0;
+        g_banditKeyboardFlags = 0;
+        g_banditKeyboardActive = true;
+        g_banditKeyboardWasVisible = false;
+        newLength = (int)g_banditKeyboardText.size();
+        newSelectionStart = g_banditKeyboardSelectionStart;
+        newSelectionEnd = g_banditKeyboardSelectionEnd;
+        multiline = g_banditKeyboardMultiline;
+        revision = ++g_banditKeyboardRevision;
+    }
+    try {
+        using namespace winrt::Windows::UI::Text::Core;
+        g_banditKeyboardContext.InputScope(CoreTextInputScope::Text);
+        g_banditKeyboardContext.NotifyFocusEnter();
+        NotifyBanditKeyboardChanged(0, oldLength, newLength, newSelectionStart, newSelectionEnd);
+        if (g_banditKeyboardPane) g_banditKeyboardPane.TryShow();
+        ShimLog("Bandit native keyboard opened length=%d multiline=%d", newLength, multiline ? 1 : 0);
+        return revision;
+    } catch (...) {
+        EndBanditKeyboard(false);
+        ShimLog("Bandit native keyboard failed to open");
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardUpdate(
+    const wchar_t* text,
+    int length,
+    int selectionStart,
+    int selectionEnd,
+    int maxLength) {
+    const int boundedLength = text ? ClampBanditKeyboardIndex(length, BANDIT_KEYBOARD_HARD_LIMIT) : 0;
+    const int boundedMax = maxLength <= 0 ? BANDIT_KEYBOARD_HARD_LIMIT : ClampBanditKeyboardIndex(maxLength, BANDIT_KEYBOARD_HARD_LIMIT);
+    int oldLength = 0;
+    int newLength = 0;
+    int newSelectionStart = 0;
+    int newSelectionEnd = 0;
+    int revision = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+        if (!g_banditKeyboardActive) return 0;
+        oldLength = (int)g_banditKeyboardText.size();
+        g_banditKeyboardText.assign(text ? text : L"", boundedLength);
+        g_banditKeyboardMaxLength = boundedMax;
+        TruncateBanditKeyboardText(g_banditKeyboardText, boundedMax);
+        g_banditKeyboardSelectionStart = selectionStart;
+        g_banditKeyboardSelectionEnd = selectionEnd;
+        ClampBanditKeyboardSelection((int)g_banditKeyboardText.size(), g_banditKeyboardSelectionStart, g_banditKeyboardSelectionEnd);
+        newLength = (int)g_banditKeyboardText.size();
+        newSelectionStart = g_banditKeyboardSelectionStart;
+        newSelectionEnd = g_banditKeyboardSelectionEnd;
+        revision = ++g_banditKeyboardRevision;
+    }
+    NotifyBanditKeyboardChanged(0, oldLength, newLength, newSelectionStart, newSelectionEnd);
+    return revision;
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardGetRevision() {
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    return g_banditKeyboardRevision;
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardGetTextLength() {
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    return (int)g_banditKeyboardText.size();
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardCopyText(wchar_t* output, int capacity) {
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    const int length = (int)g_banditKeyboardText.size();
+    const int copied = (std::max)(0, (std::min)(capacity, length));
+    if (output && copied > 0) memcpy(output, g_banditKeyboardText.data(), copied * sizeof(wchar_t));
+    return copied;
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardGetSelectionStart() {
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    return g_banditKeyboardSelectionStart;
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardGetSelectionEnd() {
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    return g_banditKeyboardSelectionEnd;
+}
+
+extern "C" __declspec(dllexport) int banditKeyboardConsumeFlags() {
+    RefreshBanditKeyboardVisibility();
+    std::lock_guard<std::mutex> lock(g_banditKeyboardMutex);
+    const int flags = g_banditKeyboardFlags;
+    g_banditKeyboardFlags = 0;
+    return flags;
+}
+
+extern "C" __declspec(dllexport) void banditKeyboardEnd() {
+    EndBanditKeyboard(false);
+}
+
 static bool EnsureGameInput() {
     if (g_gameInput) return true;
     if (g_gameInputCreateTried) return false;
@@ -1145,6 +1607,10 @@ static bool InstallKeyboardHooks() {
             CorePhysicalKeyStatus status = {};
             args->get_VirtualKey(&virtualKey);
             args->get_KeyStatus(&status);
+            if (HandleBanditKeyboardKeyDown(virtualKey)) {
+                MarkBanditKeyboardEventHandled(args);
+                return S_OK;
+            }
             DispatchKeyEvent(virtualKey, status, GLFW_PRESS);
             return S_OK;
         });
@@ -1155,6 +1621,10 @@ static bool InstallKeyboardHooks() {
             CorePhysicalKeyStatus status = {};
             args->get_VirtualKey(&virtualKey);
             args->get_KeyStatus(&status);
+            if (BanditKeyboardCapturesInput()) {
+                MarkBanditKeyboardEventHandled(args);
+                return S_OK;
+            }
             DispatchKeyEvent(virtualKey, status, GLFW_RELEASE);
             return S_OK;
         });
@@ -1163,6 +1633,10 @@ static bool InstallKeyboardHooks() {
             if (!args) return S_OK;
             UINT32 codepoint = 0;
             args->get_KeyCode(&codepoint);
+            if (BanditKeyboardCapturesInput()) {
+                MarkBanditKeyboardEventHandled(args);
+                return S_OK;
+            }
             DispatchCharEvent(codepoint);
             return S_OK;
         });
@@ -1209,6 +1683,7 @@ static void InstallCoreWindowLifecycleHooks() {
                 MarkCoreWindowInputStateChanged();
                 ClearKeyboardState();
                 ClearGamepadState();
+                if (!next) EndBanditKeyboard(true);
                 ShimLog("CoreWindow VisibilityChanged visible=%d", next);
             }
             return S_OK;
@@ -1231,6 +1706,7 @@ static void InstallCoreWindowLifecycleHooks() {
                 MarkCoreWindowInputStateChanged();
                 ClearKeyboardState();
                 ClearGamepadState();
+                if (!next) EndBanditKeyboard(true);
                 ShimLog("CoreWindow Activated state=%d active=%d", (int)state, next);
             }
             if (g_focus_cb) {
@@ -2409,6 +2885,7 @@ static IClipboardStatics* GetClipboardStatics() {
 
 extern "C" __declspec(dllexport) void glfwTerminate(void) {
     ShimLog("glfwTerminate");
+    DestroyBanditKeyboardContext();
     if (g_coreWindow && g_keyboardHooksInstalled) {
         g_coreWindow->remove_KeyDown(g_keyDownToken);
         g_coreWindow->remove_KeyUp(g_keyUpToken);

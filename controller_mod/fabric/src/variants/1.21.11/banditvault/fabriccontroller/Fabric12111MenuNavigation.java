@@ -9,6 +9,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import net.minecraft.class_339;
+import net.minecraft.class_8016;
+import net.minecraft.class_8023;
+import net.minecraft.class_8028;
 import net.minecraft.class_4069;
 import net.minecraft.class_364;
 import net.minecraft.class_8030;
@@ -17,7 +20,6 @@ import net.minecraft.class_465;
 import net.minecraft.class_508;
 import net.minecraft.class_507;
 import net.minecraft.class_1735;
-import org.lwjgl.glfw.GLFW;
 
 final class Fabric12111MenuNavigation {
     enum Region {
@@ -257,7 +259,7 @@ final class Fabric12111MenuNavigation {
 
     private Position moveNative(class_437 currentclass_437, GridNavigation.Direction direction, boolean allowSameTarget) {
         class_364 before = deepestFocused(currentclass_437);
-        FabricScreenApi.keyPressed(currentclass_437, key(direction), 0, 0);
+        applyNavigation(currentclass_437, new class_8023.class_8024(nativeDirection(direction)), false);
         class_364 focused = deepestFocused(currentclass_437);
         Position position = focusedPosition(focused);
         if (position != null && (allowSameTarget || focused != before)) {
@@ -275,7 +277,7 @@ final class Fabric12111MenuNavigation {
     private Position discoverNative(class_437 currentclass_437, boolean logFailure) {
         Position focused = focusedPosition(deepestFocused(currentclass_437));
         if (focused == null) {
-            FabricScreenApi.keyPressed(currentclass_437, GLFW.GLFW_KEY_TAB, 0, 0);
+            applyNavigation(currentclass_437, new class_8023.class_8026(true), true);
             focused = focusedPosition(deepestFocused(currentclass_437));
         }
         if (focused != null) {
@@ -410,7 +412,7 @@ final class Fabric12111MenuNavigation {
         return currentclass_437.field_22789 < 379;
     }
 
-    private static class_364 deepestFocused(class_4069 container) {
+    static class_364 deepestFocused(class_4069 container) {
         class_364 focused = container.method_25399();
         while (focused instanceof class_4069) {
             class_364 child = ((class_4069) focused).method_25399();
@@ -434,13 +436,25 @@ final class Fabric12111MenuNavigation {
         return new Position(rectangle.method_49620() + rectangle.comp_1196() / 2.0, rectangle.method_49618() + rectangle.comp_1197() / 2.0);
     }
 
-    private static int key(GridNavigation.Direction direction) {
+    private static class_8028 nativeDirection(GridNavigation.Direction direction) {
         switch (direction) {
-            case UP: return GLFW.GLFW_KEY_UP;
-            case DOWN: return GLFW.GLFW_KEY_DOWN;
-            case LEFT: return GLFW.GLFW_KEY_LEFT;
-            case RIGHT: return GLFW.GLFW_KEY_RIGHT;
-            default: return GLFW.GLFW_KEY_UNKNOWN;
+            case UP: return class_8028.field_41826;
+            case DOWN: return class_8028.field_41827;
+            case LEFT: return class_8028.field_41828;
+            case RIGHT: return class_8028.field_41829;
+            default: throw new IllegalArgumentException("Unknown navigation direction " + direction);
+        }
+    }
+
+    private static void applyNavigation(class_437 screen, class_8023 navigation, boolean retryAfterClearingFocus) {
+        class_8016 path = screen.method_48205(navigation);
+        if (path == null && retryAfterClearingFocus) {
+            screen.method_48267();
+            path = screen.method_48205(navigation);
+        }
+        if (path != null) {
+            screen.method_48267();
+            path.method_48195(true);
         }
     }
 
@@ -568,4 +582,3 @@ final class Fabric12111MenuNavigation {
         }
     }
 }
-

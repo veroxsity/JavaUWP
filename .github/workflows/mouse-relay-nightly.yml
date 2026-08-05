@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      # drop before merging, only here so the ios job runs while the channel is in flight
-      - experimental-ios-ipa
     paths:
       - ".github/workflows/mouse-relay-nightly.yml"
       - "tools/mouse-relay/**"

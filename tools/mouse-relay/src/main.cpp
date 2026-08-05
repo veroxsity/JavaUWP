@@ -648,7 +648,7 @@ public:
         : window_(window), renderer_(renderer) {
         RefreshWindowSize();
         ipBuffer_ = LoadSavedIp();
-        SDL_StartTextInput(window_);
+        BeginIpTextInput();
         netRunning_ = true;
         netThread_ = std::thread(&RelayApp::NetLoop, this);
     }
@@ -1006,7 +1006,7 @@ private:
                 connecting_ = false;
                 transport_.Close();
                 ipError_.clear();
-                SDL_StartTextInput(window_);
+                BeginIpTextInput();
                 break;
             }
             if (hostSet_) {
@@ -1025,7 +1025,7 @@ private:
             ipBuffer_ = host_;
             ipError_.clear();
             SetMouseCapture(false);
-            SDL_StartTextInput(window_);
+            BeginIpTextInput();
             break;
         case UiAction::ToggleMode:
             mode_ = mode_ == RelayMode::Gameplay ? RelayMode::Menu : RelayMode::Gameplay;
@@ -1389,6 +1389,13 @@ private:
         RefreshMotionScale();
     }
 
+    void BeginIpTextInput() {
+        // touch has its own keypad, ios would pop the system keyboard over the ui
+        if (!kTouchLayout) {
+            SDL_StartTextInput(window_);
+        }
+    }
+
     void SetMouseCapture(bool on) {
         SDL_SetWindowRelativeMouseMode(window_, on);
         SDL_SetWindowMouseGrab(window_, on);
@@ -1605,7 +1612,7 @@ private:
             pendingHost_.clear();
             transport_.Close();
             ipError_ = "No Bandit launcher response from " + failedHost;
-            SDL_StartTextInput(window_);
+            BeginIpTextInput();
             return;
         }
 

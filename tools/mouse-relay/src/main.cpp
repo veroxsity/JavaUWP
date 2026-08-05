@@ -54,7 +54,7 @@ constexpr float kDebugGlyphWidth = 8.0f;
 constexpr float kDebugGlyphHeight = 8.0f;
 constexpr float kTouchScrollStep = 1.0f;
 
-#ifdef BANDIT_MOUSE_RELAY_ANDROID
+#ifdef BANDIT_MOUSE_RELAY_TOUCH
 constexpr bool kTouchLayout = true;
 #else
 constexpr bool kTouchLayout = false;
@@ -740,12 +740,26 @@ public:
 
     void Render() {
         const float scale = UiScale();
-        const float uiWidth = static_cast<float>(windowWidth_) / scale;
-        const float uiHeight = static_cast<float>(windowHeight_) / scale;
+        const float uiWidth = UiAreaWidth();
+        const float uiHeight = UiAreaHeight();
 
-        SDL_SetRenderScale(renderer_, scale, scale);
+        // otherwise the 8px font draws 1x and ios upscales it
+        const float renderScale = scale * pixelDensity_;
+
+        SDL_SetRenderViewport(renderer_, nullptr);
+        SDL_SetRenderScale(renderer_, renderScale, renderScale);
         SDL_SetRenderDrawColor(renderer_, 9, 12, 18, 255);
         SDL_RenderClear(renderer_);
+
+        if (safeArea_.x != 0 || safeArea_.y != 0) {
+            const SDL_Rect viewport{
+                static_cast<int>(std::lround(safeArea_.x / scale)),
+                static_cast<int>(std::lround(safeArea_.y / scale)),
+                static_cast<int>(std::lround(safeArea_.w / scale)),
+                static_cast<int>(std::lround(safeArea_.h / scale))
+            };
+            SDL_SetRenderViewport(renderer_, &viewport);
+        }
 
         if (enteringIp_) {
             RenderIpScreen(uiWidth, uiHeight);
@@ -753,6 +767,7 @@ public:
             RenderRelayScreen(uiWidth, uiHeight);
         }
 
+        SDL_SetRenderViewport(renderer_, nullptr);
         SDL_RenderPresent(renderer_);
     }
 
@@ -789,7 +804,17 @@ private:
     }
 
     float UiScale() const {
-        return Clamp(static_cast<float>(windowHeight_) / 720.0f, 1.0f, 3.0f);
+        // under 1 only works because the retina render scale keeps small text sharp
+        const float minScale = kTouchLayout ? 0.75f : 1.0f;
+        return Clamp(static_cast<float>(safeArea_.h) / 720.0f, minScale, 3.0f);
+    }
+
+    float UiAreaWidth() const {
+        return static_cast<float>(safeArea_.w) / UiScale();
+    }
+
+    float UiAreaHeight() const {
+        return static_cast<float>(safeArea_.h) / UiScale();
     }
 
     std::vector<Button> BuildButtons(float uiWidth, float uiHeight) const {
@@ -871,8 +896,28 @@ private:
             const float padWidth = 132.0f;
             const float padHeight = 48.0f;
             const float padGap = 10.0f;
+            const float padTop = 172.0f;
+            const float columnHeight = (padHeight * 4.0f) + (padGap * 3.0f);
+
+            // column needs 222ui, iphone landscape leaves about 130
+            const bool padGrid = (utilityY - padGap - padTop) < columnHeight;
+
+            if (padGrid) {
+                const float gridWidth = (padWidth * 2.0f) + padGap;
+                const float gridX = uiWidth - gridWidth - margin;
+                const float gridY = std::max(padTop, utilityY - padGap - (padHeight * 2.0f) - padGap);
+                const float colB = gridX + padWidth + padGap;
+                const float rowB = gridY + padHeight + padGap;
+
+                buttons.push_back({ SDL_FRect{ gridX, gridY, padWidth, padHeight }, "Hold L", UiAction::None, 0, 0.0f });
+                buttons.push_back({ SDL_FRect{ colB, gridY, padWidth, padHeight }, "Hold R", UiAction::None, 1, 0.0f });
+                buttons.push_back({ SDL_FRect{ gridX, rowB, padWidth, padHeight }, "Wheel Up", UiAction::None, -1, kTouchScrollStep });
+                buttons.push_back({ SDL_FRect{ colB, rowB, padWidth, padHeight }, "Wheel Down", UiAction::None, -1, -kTouchScrollStep });
+                return buttons;
+            }
+
             const float padX = uiWidth - padWidth - margin;
-            float padY = std::max(172.0f, utilityY - ((padHeight + padGap) * 4.0f) - 10.0f);
+            float padY = std::max(padTop, utilityY - ((padHeight + padGap) * 4.0f) - 10.0f);
 
             buttons.push_back({ SDL_FRect{ padX, padY, padWidth, padHeight }, "Hold L", UiAction::None, 0, 0.0f });
             padY += padHeight + padGap;
@@ -912,11 +957,7 @@ private:
     }
 
     std::optional<Button> HitButtonAtUi(float uiX, float uiY) const {
-        const float scale = UiScale();
-        const float uiWidth = static_cast<float>(windowWidth_) / scale;
-        const float uiHeight = static_cast<float>(windowHeight_) / scale;
-
-        for (const Button& button : BuildButtons(uiWidth, uiHeight)) {
+        for (const Button& button : BuildButtons(UiAreaWidth(), UiAreaHeight())) {
             if (uiX >= button.rect.x && uiX <= button.rect.x + button.rect.w &&
                 uiY >= button.rect.y && uiY <= button.rect.y + button.rect.h) {
                 return button;
@@ -933,7 +974,9 @@ private:
 
     std::optional<Button> HitButton(float windowX, float windowY) const {
         const float scale = UiScale();
-        return HitButtonAtUi(windowX / scale, windowY / scale);
+        return HitButtonAtUi(
+            (windowX - static_cast<float>(safeArea_.x)) / scale,
+            (windowY - static_cast<float>(safeArea_.y)) / scale);
     }
 
     UiAction HitAction(float windowX, float windowY) const {
@@ -946,9 +989,8 @@ private:
             return UiAction::None;
         }
 
-        const float scale = UiScale();
-        const float uiWidth = static_cast<float>(windowWidth_) / scale;
-        const float uiHeight = static_cast<float>(windowHeight_) / scale;
+        const float uiWidth = UiAreaWidth();
+        const float uiHeight = UiAreaHeight();
         const float uiX = Clamp((virtualX_ / MenuTargetWidth()) * uiWidth, 0.0f, uiWidth - 1.0f);
         const float uiY = Clamp((virtualY_ / MenuTargetHeight()) * uiHeight, 0.0f, uiHeight - 1.0f);
         return HitActionAtUi(uiX, uiY);
@@ -1098,9 +1140,8 @@ private:
         if (enteringIp_ || mode_ != RelayMode::Menu) {
             return std::nullopt;
         }
-        const float scale = UiScale();
-        const float uiWidth = static_cast<float>(windowWidth_) / scale;
-        const float uiHeight = static_cast<float>(windowHeight_) / scale;
+        const float uiWidth = UiAreaWidth();
+        const float uiHeight = UiAreaHeight();
         const float uiX = Clamp((virtualX_ / MenuTargetWidth()) * uiWidth, 0.0f, uiWidth - 1.0f);
         const float uiY = Clamp((virtualY_ / MenuTargetHeight()) * uiHeight, 0.0f, uiHeight - 1.0f);
         return HitButtonAtUi(uiX, uiY);
@@ -1330,6 +1371,21 @@ private:
 
         windowWidth_ = width;
         windowHeight_ = height;
+
+        safeArea_ = SDL_Rect{ 0, 0, width, height };
+        if (kTouchLayout) {
+            SDL_Rect safe{};
+            // notch and home indicator sit over the ui otherwise
+            if (SDL_GetWindowSafeArea(window_, &safe) && safe.w > 0 && safe.h > 0) {
+                safeArea_ = safe;
+            }
+        }
+
+        pixelDensity_ = SDL_GetWindowPixelDensity(window_);
+        if (!(pixelDensity_ > 0.0f)) {
+            pixelDensity_ = 1.0f;
+        }
+
         RefreshMotionScale();
     }
 
@@ -1812,11 +1868,13 @@ private:
         const bool diagRelative = SDL_GetWindowRelativeMouseMode(window_);
         const bool diagGrab = SDL_GetWindowMouseGrab(window_);
         const bool diagFocus = (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS) != 0;
-        char diagLine[176];
+        char diagLine[240];
         std::snprintf(diagLine, sizeof(diagLine),
-            "Capture: rel=%s grab=%s focus=%s  pixels=%dx%d  scale=%.2f",
+            "Capture: rel=%s grab=%s focus=%s  pixels=%dx%d  dpr=%.2f  safe=%dx%d+%d+%d  ui=%.0fx%.0f @%.2f",
             diagRelative ? "on" : "off", diagGrab ? "on" : "off", diagFocus ? "yes" : "no",
-            diagPixelW, diagPixelH, SDL_GetWindowDisplayScale(window_));
+            diagPixelW, diagPixelH, SDL_GetWindowDisplayScale(window_),
+            safeArea_.w, safeArea_.h, safeArea_.x, safeArea_.y,
+            UiAreaWidth(), UiAreaHeight(), UiScale());
         DrawText(18.0f, 162.0f, diagLine, SDL_Color{ 150, 205, 165, 255 });
 
         char sendLine[120];
@@ -1871,6 +1929,8 @@ private:
 
     int windowWidth_ = 1280;
     int windowHeight_ = 720;
+    SDL_Rect safeArea_{ 0, 0, 1280, 720 };
+    float pixelDensity_ = 1.0f;
     float scaleX_ = 1.0f;
     float scaleY_ = 1.0f;
     float targetWidth_ = kTargetWidth;
@@ -1944,10 +2004,19 @@ int main(int, char**) {
     TimerResolution timerResolution;
 
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    if (kTouchLayout) {
+        // android gets this from the activity instead
+        SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    }
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return 2;
+    }
+
+    if (kTouchLayout) {
+        // relay takes no touches mid-game so the idle timer would lock the phone
+        SDL_DisableScreenSaver();
     }
 
     SDL_Window* window = nullptr;
@@ -1956,7 +2025,7 @@ int main(int, char**) {
             "Bandit Mouse Relay",
             960,
             540,
-            SDL_WINDOW_RESIZABLE,
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY,
             &window,
             &renderer)) {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());

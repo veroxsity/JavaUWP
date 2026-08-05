@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      # drop before merging, only here so the ios job runs while the channel is in flight
+      - experimental-ios-ipa
     paths:
       - ".github/workflows/mouse-relay-nightly.yml"
       - "tools/mouse-relay/**"
@@ -96,12 +98,65 @@ jobs:
             dist/mouse-relay/BanditMouseRelay-nightly-android-debug.sha256
           if-no-files-found: error
 
+  ios:
+    name: Build iOS unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure iOS project
+        shell: bash
+        run: |
+          cmake -S tools/mouse-relay -B build/ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+
+      - name: Build iOS app bundle
+        shell: bash
+        run: cmake --build build/ios --config Release
+
+      - name: Stage iOS artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find build/ios -maxdepth 3 -name 'BanditMouseRelay.app' -type d | head -n 1)"
+          if [ -z "$app" ]; then
+            echo "no BanditMouseRelay.app produced"
+            find build/ios -maxdepth 3 -name '*.app' -o -maxdepth 3 -name 'Release*' -type d
+            exit 1
+          fi
+          echo "bundling $app"
+          # an ipa is just a zip with the bundle under Payload/
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$app" build/ipa/Payload/
+          mkdir -p dist/mouse-relay
+          ( cd build/ipa && zip -qry "$GITHUB_WORKSPACE/dist/mouse-relay/BanditMouseRelay-nightly-ios.ipa" Payload )
+          cd dist/mouse-relay
+          shasum -a 256 BanditMouseRelay-nightly-ios.ipa > BanditMouseRelay-nightly-ios.sha256
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BanditMouseRelay-nightly-ios
+          path: |
+            dist/mouse-relay/BanditMouseRelay-nightly-ios.ipa
+            dist/mouse-relay/BanditMouseRelay-nightly-ios.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish mouse relay assets
     runs-on: ubuntu-latest
+    # experimental branches build but must not clobber the nightly release
+    if: github.ref == 'refs/heads/main'
     needs:
       - windows
       - android
+      - ios
     timeout-minutes: 15
 
     steps:
@@ -137,4 +192,6 @@ jobs:
             dist/BanditMouseRelay-nightly-win-x64/BanditMouseRelay-nightly-win-x64.sha256 \
             dist/BanditMouseRelay-nightly-android-debug/BanditMouseRelay-nightly-android-debug.apk \
             dist/BanditMouseRelay-nightly-android-debug/BanditMouseRelay-nightly-android-debug.sha256 \
+            dist/BanditMouseRelay-nightly-ios/BanditMouseRelay-nightly-ios.ipa \
+            dist/BanditMouseRelay-nightly-ios/BanditMouseRelay-nightly-ios.sha256 \
             --clobber

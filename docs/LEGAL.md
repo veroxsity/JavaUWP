@@ -8,6 +8,8 @@ The Mesa UWP runtime DLLs in `mesa-runtime/` remain under their own upstream lic
 
 `docs/THIRD-PARTY.md` lists every third party component, its upstream, its version and its license.
 
+`docs/PRIVACY.md` covers what the launcher does with account data, what opt-in telemetry sends and where it goes, and what the Remote Files and mouse relay servers expose on a local network.
+
 ## Repository license
 
 Original project code is covered by the custom license in `LICENSE`.

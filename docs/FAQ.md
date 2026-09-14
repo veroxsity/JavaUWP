@@ -2,7 +2,15 @@
 This doc answers Frequently Asked Questions in case you happen to be stuck.
 
 ## Will this hack my XBOX?
-Bandit Launcher does not provide any way to hack the XBOX. All code runs natively on the console. The launcher also does not collect your personal information.
+Bandit Launcher does not provide any way to hack the XBOX. All code runs natively on the console.
+
+## What data does the launcher collect?
+Signing in gives the launcher your Minecraft username, account UUID and an access token, which it needs to start the game. Those stay on the console. The only thing kept between sessions is your Microsoft refresh token, stored in the Windows Credential Locker so you don't have to sign in every time.
+
+Crash and usage reporting is off until you switch it on. When it is on it sends version numbers, a mod set hash, a crash fingerprint and a stack trace, never your account details and never your log files. The full breakdown, including what the Remote Files and mouse relay servers expose on your network, is in [PRIVACY.md](PRIVACY.md).
+
+## How do I turn crash reporting off?
+Answer Never when the launcher asks, or change it later in the launcher. You can also reset your install ID from there, which generates a new random one and clears anything still waiting to send.
 
 ## Do I need a Java account?
 Bandit Launcher requires a valid copy of Minecraft: Java Edition. The launcher does not condone piracy or redistribution of the game, but rather only makes it playable to legal users.
@@ -27,6 +35,8 @@ Unfortunately, you can't allocate more than 3-4 GB of RAM, as this is the max ac
 
 ## How do I upload worlds?
 Open Bandit Launcher, start Remote Files, and go to that link and upload your world to the portal.
+
+Remote Files is plain HTTP on your local network, and the PIN sits in the URL, so treat it as open to anyone on the same wifi. Stop it when you're done, and never forward that port through your router.
 
 ## How do I check crash reports?
 Open Bandit Launcher, start Remote Files, and go to the crash reports directory.

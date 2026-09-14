@@ -264,6 +264,7 @@ Detailed build, patching, architecture, compatible mods, FAQs and legal notes li
 - [Architecture](docs/ARCHITECTURE.md): UWP host layout, launch flow, and loader modules.
 - [Patching notes](docs/PATCHING.md): why Fabric, GLFW, and sandbox patches exist.
 - [Legal notes](docs/LEGAL.md): licensing, redistribution, and nightly package rules.
+- [Privacy](docs/PRIVACY.md): account data, opt-in telemetry, and the local network servers.
 - [Contributing](CONTRIBUTING.md): auth policy and contribution expectations.
 - [FAQ](docs/FAQ.md) - Contains answers to frequent questions asked by many users.
 

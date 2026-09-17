@@ -491,6 +491,46 @@ function Get-LibraryVersion($Profile, [string]$Prefix) {
     return ""
 }
 
+function Get-NeoFormVersionFromProfile($Profile) {
+    if (-not $Profile -or -not $Profile.arguments -or -not $Profile.arguments.game) {
+        return ""
+    }
+
+    $arguments = @($Profile.arguments.game)
+    for ($i = 0; $i -lt $arguments.Count - 1; $i++) {
+        if ([string]$arguments[$i] -eq "--fml.neoFormVersion") {
+            return [string]$arguments[$i + 1]
+        }
+    }
+
+    return ""
+}
+
+function Add-NeoFormArchiveEntry(
+    [string]$MinecraftVersion,
+    [string]$NeoFormVersion,
+    [System.Collections.Generic.List[object]]$Entries) {
+    if (-not $NeoFormVersion) {
+        return
+    }
+
+    # on-device prep feeds this zip to installertools MCP_DATA. profiles up to 21.9 declare it as a
+    # library and it arrives with the rest, newer ones stopped, so add it from the version instead
+    $coordinate = "$MinecraftVersion-$NeoFormVersion"
+    $path = "net/neoforged/neoform/$coordinate/neoform-$coordinate.zip"
+    $manifestPath = "game/libraries/$path"
+    foreach ($entry in $Entries) {
+        if ($entry.Path -eq $manifestPath) {
+            return
+        }
+    }
+
+    $url = "https://maven.neoforged.net/releases/$path"
+    $sha1 = Get-RemoteTextOrThrow "$url.sha1"
+    $size = Get-RemoteSizeOrZero $url
+    Add-Entry $Entries $manifestPath $sha1 $size $url
+}
+
 function Add-Assets($VersionJson, [System.Collections.Generic.List[object]]$Entries) {
     $assetIndex = $VersionJson.assetIndex
     Add-Entry $Entries "assets/indexes/$($assetIndex.id).json" $assetIndex.sha1 ([UInt64]$assetIndex.size) $assetIndex.url
@@ -546,6 +586,7 @@ if ($Loader -eq "fabric") {
     if ($installerJar -and (Test-Path $installerJar)) {
         Add-InstallerMavenEntries $installerJar "https://maven.neoforged.net/releases/" $entries
     }
+    Add-NeoFormArchiveEntry $MinecraftVersion (Get-NeoFormVersionFromProfile $loaderProfile) $entries
 }
 Add-Assets $versionJson $entries
 

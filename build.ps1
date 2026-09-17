@@ -390,18 +390,33 @@ if ($runtimeConfigContent -match '@@[A-Z_]+@@') { throw "runtime_config.h still 
 Write-Host "runtime_config.h written for MC $($ProjectConfig.MinecraftVersion) / fabric-loader $($ProjectConfig.FabricLoaderVersion) / asset index $($ProjectConfig.MinecraftAssetIndex)"
 
 Write-Host "=== Building MC.Xbox.exe ==="
-Push-Location (Join-Path $root "MC.Xbox")
+$mcSources = @(
+    Get-ChildItem (Join-Path $root "MC.Xbox") -Recurse -File -Include *.cpp, *.c, *.h, *.hpp
+    Get-ChildItem (Join-Path $root "mouse_support") -Recurse -File -Include *.cpp, *.h
+) | Select-Object -ExpandProperty FullName
+$mcStampPath = Join-Path $mcBuildDir "MC.Xbox.stamp"
+$mcStamp = New-BuildStamp `
+    -Values @("mc_xbox_exe", $tools.ClExe, $sdkVer, $jreSrc, ($CommonClFlags -join " ")) `
+    -ContentFiles (@($PSCommandPath, $runtimeConfigOutput) + $mcSources)
+$mcNeedsBuild = -not (Test-BuildStampCurrent -StampPath $mcStampPath -Stamp $mcStamp -RequiredOutputs @($mcExe))
 
-$env:INCLUDE = "$mcBuildDir;$($tools.MsvcRoot)\include;${sdkRoot}Include\$sdkVer\ucrt;${sdkRoot}Include\$sdkVer\shared;${sdkRoot}Include\$sdkVer\um;${sdkRoot}Include\$sdkVer\winrt;${sdkRoot}Include\$sdkVer\cppwinrt;$jreSrc\include;$jreSrc\include\win32"
-$env:LIB = "$($tools.MsvcRoot)\lib\x64;${sdkRoot}Lib\$sdkVer\ucrt\x64;${sdkRoot}Lib\$sdkVer\um\x64"
+if ($mcNeedsBuild) {
+    Push-Location (Join-Path $root "MC.Xbox")
 
-& $tools.ClExe App.cpp launch\app_globals.cpp common\launcher_common.cpp common\crash_report.cpp mods\mod_defaults.cpp mods\modpack_io.cpp mods\world_io.cpp net\http_client.cpp profiles\profiles.cpp net\remote_file_server.cpp net\web_relay_server.cpp auth\minecraft_auth.cpp ui\launcher_ui.cpp ui\launcher_mouse.cpp ui\mods_ui_globals.cpp mods\mods_browser.cpp launch\runtime_manager.cpp launch\minecraft_launch.cpp launch\launch_internal.cpp launch\loaders\loader_common.cpp launch\loaders\loader.cpp launch\loaders\fabric.cpp launch\loaders\neoforge.cpp launch\loaders\forge.cpp telemetry\telemetry.cpp telemetry\crash_fingerprint.cpp telemetry\crash_parse.cpp telemetry\compat_feed.cpp third_party\miniz\miniz.c /std:c++17 /EHsc $CommonClFlags /O2 /GL /Gw /MP /arch:AVX2 /DNDEBUG /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry /I..\mouse_support /Fo"$mcBuildDir\" `
-    /DWINAPI_FAMILY=WINAPI_FAMILY_APP `
-    /link /LTCG /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /MACHINE:X64 `
-    /OUT:"$mcExe" kernel32.lib shell32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib d2d1.lib dwrite.lib d3d11.lib dxgi.lib windowscodecs.lib winhttp.lib bcrypt.lib ws2_32.lib
-if ($LASTEXITCODE -ne 0) { throw "Compile failed" }
-Pop-Location
-Write-Host "MC.Xbox.exe built"
+    $env:INCLUDE = "$mcBuildDir;$($tools.MsvcRoot)\include;${sdkRoot}Include\$sdkVer\ucrt;${sdkRoot}Include\$sdkVer\shared;${sdkRoot}Include\$sdkVer\um;${sdkRoot}Include\$sdkVer\winrt;${sdkRoot}Include\$sdkVer\cppwinrt;$jreSrc\include;$jreSrc\include\win32"
+    $env:LIB = "$($tools.MsvcRoot)\lib\x64;${sdkRoot}Lib\$sdkVer\ucrt\x64;${sdkRoot}Lib\$sdkVer\um\x64"
+
+    & $tools.ClExe App.cpp launch\app_globals.cpp common\launcher_common.cpp common\crash_report.cpp mods\mod_defaults.cpp mods\modpack_io.cpp mods\world_io.cpp net\http_client.cpp profiles\profiles.cpp net\remote_file_server.cpp net\web_relay_server.cpp auth\minecraft_auth.cpp ui\launcher_ui.cpp ui\launcher_mouse.cpp ui\mods_ui_globals.cpp mods\mods_browser.cpp launch\runtime_manager.cpp launch\minecraft_launch.cpp launch\launch_internal.cpp launch\loaders\loader_common.cpp launch\loaders\loader.cpp launch\loaders\fabric.cpp launch\loaders\neoforge.cpp launch\loaders\forge.cpp telemetry\telemetry.cpp telemetry\crash_fingerprint.cpp telemetry\crash_parse.cpp telemetry\compat_feed.cpp third_party\miniz\miniz.c /std:c++17 /EHsc $CommonClFlags /O2 /GL /Gw /MP /arch:AVX2 /DNDEBUG /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry /I..\mouse_support /Fo"$mcBuildDir\" `
+        /DWINAPI_FAMILY=WINAPI_FAMILY_APP `
+        /link /LTCG /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /MACHINE:X64 `
+        /OUT:"$mcExe" kernel32.lib shell32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib d2d1.lib dwrite.lib d3d11.lib dxgi.lib windowscodecs.lib winhttp.lib bcrypt.lib ws2_32.lib
+    if ($LASTEXITCODE -ne 0) { throw "Compile failed" }
+    Pop-Location
+    Set-BuildStamp -StampPath $mcStampPath -Stamp $mcStamp
+    Write-Host "MC.Xbox.exe built"
+} else {
+    Write-Host "MC.Xbox.exe up to date, skipping compile."
+}
 
 Write-Host "=== Building mouse support DLL ==="
 & (Join-Path $root "mouse_support\build_mouse_support.ps1") -OutputDir $mouseSupportBuildDir
@@ -506,7 +521,6 @@ function Ensure-TinyRemapperJar {
         Invoke-WebRequest -UseBasicParsing -Uri $tinyUrl -OutFile $tinySrc -TimeoutSec 60
     }
 
-    Write-Host "Patching TinyRemapper $TinyRemapperVersion for Xbox filesystem..."
     $java = Resolve-JavaHome
     $jarExe = Join-Path $java "bin\jar.exe"
     $tmp = Join-Path $buildDir "patch-tinyremapper\$TinyRemapperVersion"
@@ -514,56 +528,67 @@ function Ensure-TinyRemapperJar {
     $classesTmp = Join-Path $tmp "classes"
     $jarTmp = Join-Path $tmp "jar"
     $patchedTiny = Join-Path $tmp "tiny-remapper-$TinyRemapperVersion-patched.jar"
-    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-    Ensure-Dir $srcTmp, $classesTmp, $jarTmp
+    $tinyPatchSources = @("FileSystemReference.java", "FileSystemHandler.java", "OutputConsumerPath.java" | ForEach-Object { Join-Path $root "patch\$_" })
+    $tinyStampPath = Join-Path $buildDir "patch-tinyremapper\$TinyRemapperVersion.stamp"
+    $tinyStamp = New-BuildStamp `
+        -Values @("tinyremapper_patch", $TinyRemapperVersion, $java) `
+        -ContentFiles (@($PSCommandPath) + $tinyPatchSources) `
+        -DependencyFiles @($tinySrc)
 
-    foreach ($name in @("FileSystemReference.java", "FileSystemHandler.java", "OutputConsumerPath.java")) {
-        $sourcePath = Join-Path $root "patch\$name"
-        $sourceText = [System.IO.File]::ReadAllText($sourcePath)
-        $sourceText = $sourceText.Replace(
-            "package net.fabricmc.loader.impl.lib.tinyremapper;",
-            "package net.fabricmc.tinyremapper;")
-        [System.IO.File]::WriteAllText((Join-Path $srcTmp $name), $sourceText)
-    }
+    if (-not (Test-BuildStampCurrent -StampPath $tinyStampPath -Stamp $tinyStamp -RequiredOutputs @($patchedTiny))) {
+        Write-Host "Patching TinyRemapper $TinyRemapperVersion for Xbox filesystem..."
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        Ensure-Dir $srcTmp, $classesTmp, $jarTmp
 
-    & (Join-Path $java "bin\javac.exe") --release 21 -cp $tinySrc -d $classesTmp `
-        (Join-Path $srcTmp "FileSystemReference.java") `
-        (Join-Path $srcTmp "FileSystemHandler.java") `
-        (Join-Path $srcTmp "OutputConsumerPath.java")
-    if ($LASTEXITCODE -ne 0) { throw "TinyRemapper patch compile failed for $TinyRemapperVersion" }
+        foreach ($name in @("FileSystemReference.java", "FileSystemHandler.java", "OutputConsumerPath.java")) {
+            $sourcePath = Join-Path $root "patch\$name"
+            $sourceText = [System.IO.File]::ReadAllText($sourcePath)
+            $sourceText = $sourceText.Replace(
+                "package net.fabricmc.loader.impl.lib.tinyremapper;",
+                "package net.fabricmc.tinyremapper;")
+            [System.IO.File]::WriteAllText((Join-Path $srcTmp $name), $sourceText)
+        }
 
-    Push-Location $jarTmp
-    & $jarExe xf $tinySrc
-    Pop-Location
-    if ($LASTEXITCODE -ne 0) { throw "TinyRemapper JAR extract failed for $TinyRemapperVersion" }
+        & (Join-Path $java "bin\javac.exe") --release 21 -cp $tinySrc -d $classesTmp `
+            (Join-Path $srcTmp "FileSystemReference.java") `
+            (Join-Path $srcTmp "FileSystemHandler.java") `
+            (Join-Path $srcTmp "OutputConsumerPath.java")
+        if ($LASTEXITCODE -ne 0) { throw "TinyRemapper patch compile failed for $TinyRemapperVersion" }
 
-    $classFiles = Get-ChildItem -LiteralPath $classesTmp -Recurse -Filter "*.class"
-    foreach ($classFile in $classFiles) {
-        $relativePath = $classFile.FullName.Substring($classesTmp.Length).TrimStart('\', '/')
-        $dst = Join-Path $jarTmp $relativePath
-        Ensure-Dir (Split-Path $dst -Parent)
-        Copy-Item -LiteralPath $classFile.FullName -Destination $dst -Force
-        Write-Host "  injected $($relativePath.Replace('\', '/'))"
-    }
+        Push-Location $jarTmp
+        & $jarExe xf $tinySrc
+        Pop-Location
+        if ($LASTEXITCODE -ne 0) { throw "TinyRemapper JAR extract failed for $TinyRemapperVersion" }
 
-    $metaInf = Join-Path $jarTmp "META-INF"
-    if (Test-Path $metaInf) {
-        Get-ChildItem -LiteralPath $metaInf -File |
-            Where-Object { $_.Name -match '\.(SF|RSA|DSA|EC)$' } |
-            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+        $classFiles = Get-ChildItem -LiteralPath $classesTmp -Recurse -Filter "*.class"
+        foreach ($classFile in $classFiles) {
+            $relativePath = $classFile.FullName.Substring($classesTmp.Length).TrimStart('\', '/')
+            $dst = Join-Path $jarTmp $relativePath
+            Ensure-Dir (Split-Path $dst -Parent)
+            Copy-Item -LiteralPath $classFile.FullName -Destination $dst -Force
+            Write-Host "  injected $($relativePath.Replace('\', '/'))"
+        }
+
+        $metaInf = Join-Path $jarTmp "META-INF"
+        if (Test-Path $metaInf) {
+            Get-ChildItem -LiteralPath $metaInf -File |
+                Where-Object { $_.Name -match '\.(SF|RSA|DSA|EC)$' } |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+        }
+        $manifest = Join-Path $jarTmp "META-INF\MANIFEST.MF"
+        $manifestCopy = Join-Path $tmp "MANIFEST.MF"
+        if (Test-Path $manifest) {
+            Copy-Item -LiteralPath $manifest -Destination $manifestCopy -Force
+            Remove-Item -LiteralPath $manifest -Force
+        }
+        if (Test-Path $manifestCopy) {
+            & $jarExe cfm $patchedTiny $manifestCopy -C $jarTmp .
+        } else {
+            & $jarExe cf $patchedTiny -C $jarTmp .
+        }
+        if ($LASTEXITCODE -ne 0) { throw "TinyRemapper JAR repack failed for $TinyRemapperVersion" }
+        Set-BuildStamp -StampPath $tinyStampPath -Stamp $tinyStamp
     }
-    $manifest = Join-Path $jarTmp "META-INF\MANIFEST.MF"
-    $manifestCopy = Join-Path $tmp "MANIFEST.MF"
-    if (Test-Path $manifest) {
-        Copy-Item -LiteralPath $manifest -Destination $manifestCopy -Force
-        Remove-Item -LiteralPath $manifest -Force
-    }
-    if (Test-Path $manifestCopy) {
-        & $jarExe cfm $patchedTiny $manifestCopy -C $jarTmp .
-    } else {
-        & $jarExe cf $patchedTiny -C $jarTmp .
-    }
-    if ($LASTEXITCODE -ne 0) { throw "TinyRemapper JAR repack failed for $TinyRemapperVersion" }
 
     $tinyDst = Join-Path $pkg "runtime\libraries\$tinyRelative"
     Ensure-Dir (Split-Path $tinyDst -Parent)
@@ -822,6 +847,9 @@ function Copy-PackagedJre {
     Write-Host "Copying JRE ($PackageRelativeDir)..."
     Write-Host "JRE source: $JavaHome"
     Copy-Item -Recurse $JavaHome $dest
+    # jmods is jlink input, nothing at runtime opens it, and it is about 80 MB of every packaged jre
+    $jmods = Join-Path $dest "jmods"
+    if (Test-Path $jmods) { Remove-Item -Recurse -Force $jmods }
     Copy-Item $SecurityPropertiesPath (Join-Path $dest "conf\security\xbox.properties") -Force
     Copy-Item $SecurityPropertiesPath (Join-Path $dest "conf\security\java.security") -Force
 }
@@ -833,13 +861,24 @@ function Build-JavaBaseUwpFilesystemPatch {
         [Parameter(Mandatory = $true)][string]$WorkName
     )
 
-    Write-Host "Building Java base UWP filesystem patch: $OutputJar"
     $javacExe = Join-Path $JavaHome "bin\javac.exe"
     if (-not (Test-Path $javacExe)) { throw "javac.exe not found at $javacExe; Java base UWP filesystem patch requires a JDK, not a JRE." }
     $runtimeJarExe = Join-Path $JavaHome "bin\jar.exe"
     if (-not (Test-Path $runtimeJarExe)) { $runtimeJarExe = $jarExe }
     $srcZip = Join-Path $JavaHome "lib\src.zip"
     if (-not (Test-Path $srcZip)) { throw "JDK source archive not found at $srcZip; Java base UWP filesystem patch cannot be generated." }
+    $cacheJar = Join-Path $buildDir "$WorkName.jar"
+    $stampPath = Join-Path $buildDir "$WorkName.stamp"
+    $stamp = New-BuildStamp `
+        -Values @("java_base_uwp_filesystem_patch", $JavaHome) `
+        -ContentFiles @($PSCommandPath, (Join-Path $JavaHome "release")) `
+        -ImmutableFiles @($srcZip)
+    if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($cacheJar)) {
+        Copy-Item $cacheJar $OutputJar -Force
+        Write-Host "Java base UWP filesystem patch up to date: $OutputJar"
+        return
+    }
+    Write-Host "Building Java base UWP filesystem patch: $OutputJar"
     $javaBasePatchDir = Join-Path $buildDir $WorkName
     $javaBasePatchSrcDir = Join-Path $javaBasePatchDir "src"
     $javaBasePatchClassesDir = Join-Path $javaBasePatchDir "classes"
@@ -933,9 +972,11 @@ function Build-JavaBaseUwpFilesystemPatch {
     & $javacExe --patch-module "java.base=$javaBasePatchSrcDir" -d $javaBasePatchClassesDir $javaBasePatchSources
     if ($LASTEXITCODE -ne 0) { throw "Java base UWP filesystem patch compile failed" }
     Push-Location $javaBasePatchClassesDir
-    & $runtimeJarExe cf $OutputJar .
+    & $runtimeJarExe cf $cacheJar .
     Pop-Location
     if ($LASTEXITCODE -ne 0) { throw "Java base UWP filesystem patch jar creation failed" }
+    Set-BuildStamp -StampPath $stampPath -Stamp $stamp
+    Copy-Item $cacheJar $OutputJar -Force
     Write-Host "Java base UWP filesystem patch: $OutputJar"
 }
 
@@ -953,6 +994,18 @@ function Build-JavaZipfsRealpathPatch {
     if (-not (Test-Path $runtimeJarExe)) { $runtimeJarExe = $jarExe }
     $srcZip = Join-Path $JavaHome "lib\src.zip"
     if (-not (Test-Path $srcZip)) { throw "JDK source archive not found at $srcZip; Java ZipFS patch cannot be generated." }
+
+    $cacheJar = Join-Path $buildDir "$WorkName.jar"
+    $stampPath = Join-Path $buildDir "$WorkName.stamp"
+    $stamp = New-BuildStamp `
+        -Values @("java_zipfs_realpath_patch", $JavaHome) `
+        -ContentFiles @($PSCommandPath, (Join-Path $JavaHome "release")) `
+        -ImmutableFiles @($srcZip)
+    if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($cacheJar)) {
+        Copy-Item $cacheJar $OutputJar -Force
+        Write-Host "Java ZipFS patch up to date: $OutputJar"
+        return
+    }
 
     $zipfsPatchDir = Join-Path $buildDir $WorkName
     $zipfsPatchSrcDir = Join-Path $zipfsPatchDir "src"
@@ -1014,9 +1067,11 @@ function Build-JavaZipfsRealpathPatch {
     & $javacExe --patch-module "jdk.zipfs=$zipfsPatchSrcDir" -d $zipfsPatchClassesDir $providerSourcePath
     if ($LASTEXITCODE -ne 0) { throw "Java ZipFS patch compile failed" }
     Push-Location $zipfsPatchClassesDir
-    & $runtimeJarExe cf $OutputJar .
+    & $runtimeJarExe cf $cacheJar .
     Pop-Location
     if ($LASTEXITCODE -ne 0) { throw "Java ZipFS patch jar creation failed" }
+    Set-BuildStamp -StampPath $stampPath -Stamp $stamp
+    Copy-Item $cacheJar $OutputJar -Force
     Write-Host "Java ZipFS patch: $OutputJar"
 }
 
@@ -1034,6 +1089,18 @@ function Build-JavaDesktopUwpAwtPatch {
     if (-not (Test-Path $runtimeJarExe)) { $runtimeJarExe = $jarExe }
     $srcZip = Join-Path $JavaHome "lib\src.zip"
     if (-not (Test-Path $srcZip)) { throw "JDK source archive not found at $srcZip; Java desktop UWP AWT patch cannot be generated." }
+
+    $cacheJar = Join-Path $buildDir "$WorkName.jar"
+    $stampPath = Join-Path $buildDir "$WorkName.stamp"
+    $stamp = New-BuildStamp `
+        -Values @("java_desktop_uwp_awt_patch", $JavaHome) `
+        -ContentFiles @($PSCommandPath, (Join-Path $JavaHome "release")) `
+        -ImmutableFiles @($srcZip)
+    if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($cacheJar)) {
+        Copy-Item $cacheJar $OutputJar -Force
+        Write-Host "Java desktop UWP AWT patch up to date: $OutputJar"
+        return
+    }
 
     $desktopPatchDir = Join-Path $buildDir $WorkName
     $desktopPatchSrcDir = Join-Path $desktopPatchDir "src"
@@ -1072,9 +1139,11 @@ function Build-JavaDesktopUwpAwtPatch {
     & $javacExe --patch-module "java.desktop=$desktopPatchSrcDir" -d $desktopPatchClassesDir $desktopSourcePath
     if ($LASTEXITCODE -ne 0) { throw "Java desktop UWP AWT patch compile failed" }
     Push-Location $desktopPatchClassesDir
-    & $runtimeJarExe cf $OutputJar .
+    & $runtimeJarExe cf $cacheJar .
     Pop-Location
     if ($LASTEXITCODE -ne 0) { throw "Java desktop UWP AWT patch jar creation failed" }
+    Set-BuildStamp -StampPath $stampPath -Stamp $stamp
+    Copy-Item $cacheJar $OutputJar -Force
     Write-Host "Java desktop UWP AWT patch: $OutputJar"
 }
 
@@ -1121,6 +1190,18 @@ function Build-SecureJarHandlerUwpPatch {
         throw "securejarhandler patch sources missing: $patchSourceRoot"
     }
 
+    $cacheJar = Join-Path $buildDir "securejarhandler_uwp_patch\$Version.jar"
+    $stampPath = Join-Path $buildDir "securejarhandler_uwp_patch\$Version.stamp"
+    $stamp = New-BuildStamp `
+        -Values @("securejarhandler_uwp_patch", $Version, $JavaHome) `
+        -ContentFiles (@($PSCommandPath) + $patchSources) `
+        -DependencyFiles @($secureJar)
+    if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($cacheJar)) {
+        Copy-Item $cacheJar $OutputJar -Force
+        Write-Host "securejarhandler UWP patch up to date: $OutputJar"
+        return
+    }
+
     $patchDir = Join-Path $buildDir "securejarhandler_uwp_patch\$Version"
     $classesDir = Join-Path $patchDir "classes"
     Remove-Item -Recurse -Force $patchDir -ErrorAction SilentlyContinue
@@ -1129,8 +1210,10 @@ function Build-SecureJarHandlerUwpPatch {
     & $javacExe --release 21 -cp $secureJar -d $classesDir $patchSources
     if ($LASTEXITCODE -ne 0) { throw "securejarhandler UWP patch compile failed" }
 
-    & $runtimeJarExe cf $OutputJar -C $classesDir .
+    & $runtimeJarExe cf $cacheJar -C $classesDir .
     if ($LASTEXITCODE -ne 0) { throw "securejarhandler UWP patch jar creation failed" }
+    Set-BuildStamp -StampPath $stampPath -Stamp $stamp
+    Copy-Item $cacheJar $OutputJar -Force
     Write-Host "securejarhandler UWP patch: $OutputJar"
 }
 

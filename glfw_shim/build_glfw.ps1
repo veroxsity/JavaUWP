@@ -42,6 +42,19 @@ $env:LIB = "$($tools.MsvcRoot)\lib\x64;" +
            "${sdkRoot}Lib\$sdkVer\ucrt\x64;" +
            "${sdkRoot}Lib\$sdkVer\um\x64"
 
+$sources = @(Get-ChildItem $PSScriptRoot -File -Include *.cpp, *.h, *.def -Recurse | Select-Object -ExpandProperty FullName)
+$sources += @(Get-ChildItem $MouseSupportInclude -File -Include *.h -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+$stampPath = Join-Path $OutputDir "build.stamp"
+$stamp = New-BuildStamp `
+    -Values @("glfw_shim", $tools.ClExe, $sdkVer) `
+    -ContentFiles (@($PSCommandPath) + $sources) `
+    -DependencyFiles @($MouseSupportLib)
+
+if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($dllPath)) {
+    Write-Host "glfw.dll up to date -> $dllPath"
+    return
+}
+
 Push-Location $PSScriptRoot
 Write-Host "Building glfw.dll (CoreWindow shim)..."
 & $tools.ClExe glfw_uwp.cpp /LD /EHsc /std:c++17 $CommonClFlags /O2 /GL /Gw /arch:AVX2 /DNDEBUG /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /I"$MouseSupportInclude" /Fo"$objPath" `
@@ -51,4 +64,5 @@ Write-Host "Building glfw.dll (CoreWindow shim)..."
     kernel32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib gameinput.lib ws2_32.lib
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "glfw_uwp build FAILED" }
 Pop-Location
+Set-BuildStamp -StampPath $stampPath -Stamp $stamp
 Write-Host "glfw.dll built OK -> $dllPath"

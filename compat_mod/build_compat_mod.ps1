@@ -39,13 +39,28 @@ if (-not (Test-Path $clientJar)) {
 
 Ensure-Dir $modsDir
 
+$script:ClientJarEntries = @{}
 function Test-ClientJarHasClass {
     param(
         [Parameter(Mandatory = $true)][string]$ClientJar,
         [Parameter(Mandatory = $true)][string]$ClassName
     )
 
-    return [bool](& $jar tf $ClientJar | Select-String -SimpleMatch "net/minecraft/$ClassName.class" -Quiet)
+    # jar tf starts a jvm and pipes 25k lines through Select-String per probe, four probes per
+    # target across 20 targets. reading the central directory once is about 20x cheaper
+    if (-not $script:ClientJarEntries.ContainsKey($ClientJar)) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($ClientJar)
+        try {
+            $names = New-Object "System.Collections.Generic.HashSet[string]"
+            foreach ($entry in $archive.Entries) { [void]$names.Add($entry.FullName) }
+            $script:ClientJarEntries[$ClientJar] = $names
+        } finally {
+            $archive.Dispose()
+        }
+    }
+
+    return $script:ClientJarEntries[$ClientJar].Contains("net/minecraft/$ClassName.class")
 }
 
 $disabledMixins = @()

@@ -13,6 +13,35 @@ function Resolve-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
 
+$script:JavaHomeMajorCache = @{}
+
+function Get-SmallCacheValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    $path = Join-Path (Get-ConfigPath "MetadataCacheDir") $FileName
+    if (-not (Test-Path $path)) { return $null }
+    foreach ($line in [System.IO.File]::ReadAllLines($path)) {
+        $parts = $line -split "`t"
+        if ($parts.Count -eq 2 -and $parts[0] -eq $Key) { return $parts[1] }
+    }
+    return $null
+}
+
+function Set-SmallCacheValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    $dir = Get-ConfigPath "MetadataCacheDir"
+    Ensure-Dir $dir
+    [System.IO.File]::AppendAllText((Join-Path $dir $FileName), "$Key`t$Value`r`n")
+}
+
 function Get-JavaHomeMajorVersion {
     param(
         [Parameter(Mandatory = $true)]
@@ -23,6 +52,19 @@ function Get-JavaHomeMajorVersion {
     $javacExe = Join-Path $JavaHome "bin\javac.exe"
     if (-not (Test-Path $javaExe) -or -not (Test-Path $javacExe)) {
         return $null
+    }
+
+    # every build script resolves a java home and the per-version mod loop runs about a hundred of
+    # them, so the answer is cached on disk, keyed on java.exe so a jdk upgrade in place still busts it
+    $item = Get-Item -LiteralPath $javaExe
+    $cacheKey = "$JavaHome|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)"
+    if ($script:JavaHomeMajorCache.ContainsKey($cacheKey)) {
+        return $script:JavaHomeMajorCache[$cacheKey]
+    }
+    $cached = Get-SmallCacheValue -FileName "java-majors.tsv" -Key $cacheKey
+    if ($cached) {
+        $script:JavaHomeMajorCache[$cacheKey] = [int]$cached
+        return [int]$cached
     }
 
     # java -version writes to stderr, and $ErrorActionPreference = 'Stop' in
@@ -42,8 +84,10 @@ function Get-JavaHomeMajorVersion {
     if ($versionOutput -match '"(?<major>\d+)(?:\.(?<minor>\d+))?') {
         $major = [int]$Matches.major
         if ($major -eq 1 -and $Matches.minor) {
-            return [int]$Matches.minor
+            $major = [int]$Matches.minor
         }
+        $script:JavaHomeMajorCache[$cacheKey] = $major
+        Set-SmallCacheValue -FileName "java-majors.tsv" -Key $cacheKey -Value $major
         return $major
     }
 
@@ -329,7 +373,16 @@ function Get-MinecraftJavaMajorVersion {
         return $script:MinecraftJavaMajorCache[$MinecraftVersion]
     }
 
+    # parsing the 570 KB version manifest per script invocation costs more than the answer is worth,
+    # and a released version never changes the java it wants
+    $cached = Get-SmallCacheValue -FileName "minecraft-java-majors.tsv" -Key $MinecraftVersion
+    if ($cached) {
+        $script:MinecraftJavaMajorCache[$MinecraftVersion] = [int]$cached
+        return [int]$cached
+    }
+
     $major = [int]$ProjectConfig.JavaRelease
+    $resolved = $false
     try {
         $manifest = Get-MinecraftVersionManifest
         $entry = $manifest.versions | Where-Object { $_.id -eq $MinecraftVersion } | Select-Object -First 1
@@ -337,6 +390,7 @@ function Get-MinecraftJavaMajorVersion {
             $versionJson = Get-CachedRemoteJson -Uri $entry.url
             if ($versionJson.javaVersion -and $versionJson.javaVersion.majorVersion) {
                 $major = [int]$versionJson.javaVersion.majorVersion
+                $resolved = $true
             }
         }
     } catch {
@@ -344,6 +398,9 @@ function Get-MinecraftJavaMajorVersion {
     }
 
     $script:MinecraftJavaMajorCache[$MinecraftVersion] = $major
+    if ($resolved) {
+        Set-SmallCacheValue -FileName "minecraft-java-majors.tsv" -Key $MinecraftVersion -Value $major
+    }
     return $major
 }
 

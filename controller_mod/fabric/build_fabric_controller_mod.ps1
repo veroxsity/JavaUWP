@@ -144,10 +144,12 @@ if ($MinecraftVersion -ne $parityReference) {
 }
 
 $compileJars = @($clientJar, $mixinJar)
-$allLibraryJars = Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Recurse -Filter "*.jar" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -notlike "*natives*" } |
-    Select-Object -ExpandProperty FullName
+$libraryJarItems = @(Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Recurse -Filter "*.jar" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notlike "*natives*" })
+$allLibraryJars = @($libraryJarItems | Select-Object -ExpandProperty FullName)
 if ($allLibraryJars) { $compileJars += $allLibraryJars }
+# count and total size stands in for stamping 600 jars individually, which costs a Get-Item each
+$libraryDigest = "{0}:{1}" -f $allLibraryJars.Count, (($libraryJarItems | Measure-Object Length -Sum).Sum)
 $cp = ($compileJars | Select-Object -Unique) -join ";"
 $javaRelease = if (Test-MinecraftVersionAtLeast -Version $MinecraftVersion -Minimum "1.21") { 21 } elseif (Test-MinecraftVersionAtLeast -Version $MinecraftVersion -Minimum "1.17") { 17 } else { 8 }
 
@@ -174,11 +176,11 @@ $stamp = New-BuildStamp `
         "release=$javaRelease",
         "compatLevel=$compatLevel",
         "jar=$jarName",
+        "libs=$libraryDigest",
         "sources=$(($sources | Sort-Object) -join ';')"
     ) `
     -ContentFiles (@($PSCommandPath) + $sources + $resourceFiles) `
-    -DependencyFiles @($clientJar, $mixinJar) `
-    -ImmutableFiles $allLibraryJars
+    -DependencyFiles @($clientJar, $mixinJar)
 
 if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($jarPath)) {
     Write-Host "Fabric controller mod up to date ($MinecraftVersion), skipping compile."

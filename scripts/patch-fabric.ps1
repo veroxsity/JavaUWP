@@ -18,25 +18,26 @@ $tmp    = Join-Path $buildDir "patch\$loaderVersion"
 $classesTmp = Join-Path $tmp "classes"
 $jarTmp = Join-Path $tmp "jar"
 $patchedLoader = Join-Path $tmp "fabric-loader-$loaderVersion-patched.jar"
-
-Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-Ensure-Dir $classesTmp
-Ensure-Dir $jarTmp
+$stampPath = Join-Path $buildDir "patch\$loaderVersion.stamp"
 
 if (-not (Test-Path $loader)) {
     throw "Fabric loader jar not found: $loader"
 }
 
-# Compile the patched classes against the original JAR.
-Write-Host "Compiling patched Fabric loader classes..."
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$loaderArchive = [System.IO.Compression.ZipFile]::OpenRead($loader)
+try {
+    $hasTinyRemapperOutputConsumer = [bool]$loaderArchive.GetEntry("net/fabricmc/loader/impl/lib/tinyremapper/OutputConsumerPath.class")
+} finally {
+    $loaderArchive.Dispose()
+}
+
 $jarExe = Join-Path $java "bin\jar.exe"
 $patchSources = @(
     (Join-Path $patch "LoaderUtil.java"),
     (Join-Path $patch "FileSystemUtil.java"),
     (Join-Path $patch "FabricLauncherBase.java")
 )
-$hasTinyRemapperOutputConsumer = & $jarExe tf $loader |
-    Select-String -SimpleMatch "net/fabricmc/loader/impl/lib/tinyremapper/OutputConsumerPath.class" -Quiet
 if ($hasTinyRemapperOutputConsumer) {
     $patchSources += @(
         (Join-Path $patch "FileSystemReference.java"),
@@ -46,6 +47,24 @@ if ($hasTinyRemapperOutputConsumer) {
     Write-Host "TinyRemapper OutputConsumerPath is not bundled in fabric-loader-$loaderVersion; skipping that patch."
 }
 
+# the patched jar replaces the one it was built from, so the stamp hashes the loader itself.
+# a jar that still hashes to the recorded output is already patched, a freshly downloaded one is not
+function Get-PatchStamp {
+    return New-BuildStamp `
+        -Values @("patch_fabric", $loaderVersion, "tinyremapper=$hasTinyRemapperOutputConsumer") `
+        -ContentFiles (@($PSCommandPath, $loader) + $patchSources)
+}
+
+if (Test-BuildStampCurrent -StampPath $stampPath -Stamp (Get-PatchStamp)) {
+    Write-Host "fabric-loader-$loaderVersion.jar is already patched, skipping."
+    return
+}
+
+Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+Ensure-Dir $classesTmp
+Ensure-Dir $jarTmp
+
+Write-Host "Compiling patched Fabric loader classes..."
 & (Join-Path $java "bin\javac.exe") --release 21 -cp $loader -d $classesTmp $patchSources
 if ($LASTEXITCODE -ne 0) { throw "Compile failed" }
 
@@ -93,6 +112,7 @@ if (Test-Path $manifestCopy) {
 }
 if ($LASTEXITCODE -ne 0) { throw "JAR repack failed" }
 Move-Item -LiteralPath $patchedLoader -Destination $loader -Force
+Set-BuildStamp -StampPath $stampPath -Stamp (Get-PatchStamp)
 
 Write-Host "Done - fabric-loader-$loaderVersion.jar patched"
 Write-Host "Classes injected from compiled patch output: $($classFiles.Count)"

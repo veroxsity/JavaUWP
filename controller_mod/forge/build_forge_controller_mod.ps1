@@ -56,9 +56,6 @@ if (-not (Test-Path $profilePath)) {
 }
 $forgeProfile = Get-Content -Raw -Path $profilePath | ConvertFrom-Json
 
-Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
-Ensure-Dir $classesDir, $compileOnlyDir
-
 $compileJava = Join-Path $PSScriptRoot "src\compile\java"
 $compileOnlySources = @(Get-ChildItem $compileJava -Recurse -Filter "*.java" -ErrorAction SilentlyContinue)
 $mainSources = @(Get-ChildItem $srcJava -Recurse -Filter "*.java")
@@ -66,6 +63,32 @@ if (Test-Path $controllerCoreJava) {
     $mainSources += @(Get-ChildItem $controllerCoreJava -Recurse -Filter "*.java")
 }
 if (-not $mainSources) { throw "No Forge controller sources found." }
+
+$sourcePaths = @(@($compileOnlySources) + @($mainSources) | ForEach-Object { $_.FullName } | Sort-Object)
+$resourceFiles = @(Get-ChildItem $srcResources -Recurse -File | Select-Object -ExpandProperty FullName)
+$stampPath = Join-Path $buildRoot "build.stamp"
+$stamp = New-BuildStamp `
+    -Values @(
+        "forge_controller",
+        $MinecraftVersion,
+        $ForgeVersion,
+        "jar=$jarName",
+        "sources=$($sourcePaths -join ';')"
+    ) `
+    -ContentFiles (@($PSCommandPath, $profilePath) + $sourcePaths + $resourceFiles) `
+    -DependencyFiles @($patchedClient, $mixinJar.FullName)
+
+if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($jarPath)) {
+    Write-Host "Forge controller mod up to date ($ForgeVersion), skipping compile."
+    if ($OutputDir) {
+        Ensure-Dir $OutputDir
+        Copy-Item $jarPath (Join-Path $OutputDir $jarName) -Force
+    }
+    return
+}
+
+Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
+Ensure-Dir $classesDir, $compileOnlyDir
 
 $compileJars = @()
 if ($patchedClient -is [string]) {
@@ -173,6 +196,8 @@ $manifestText = Get-Content $manifestPath -Raw
 if ($manifestText -notmatch "MixinConfigs:\s*banditvault-forge-controller\.mixins\.json") {
     throw "Forge controller manifest is missing MixinConfigs entry."
 }
+
+Set-BuildStamp -StampPath $stampPath -Stamp $stamp
 
 if ($OutputDir) {
     Ensure-Dir $OutputDir

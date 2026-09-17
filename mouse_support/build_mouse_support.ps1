@@ -29,6 +29,17 @@ $env:LIB = "$($tools.MsvcRoot)\lib\x64;" +
            "${sdkRoot}Lib\$sdkVer\ucrt\x64;" +
            "${sdkRoot}Lib\$sdkVer\um\x64"
 
+$sources = @(Get-ChildItem $PSScriptRoot -File -Include *.cpp, *.h -Recurse | Select-Object -ExpandProperty FullName)
+$stampPath = Join-Path $OutputDir "build.stamp"
+$stamp = New-BuildStamp `
+    -Values @("mouse_support", $tools.ClExe, $sdkVer) `
+    -ContentFiles (@($PSCommandPath) + $sources)
+
+if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($dllPath, $libPath)) {
+    Write-Host "mouse_support.dll up to date -> $dllPath"
+    return
+}
+
 Push-Location $PSScriptRoot
 Write-Host "Building mouse_support.dll (relay receiver + smoothing)..."
 & $tools.ClExe mouse_support.cpp /LD /EHsc /std:c++17 $CommonClFlags /O2 /DNDEBUG /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /Fo"$objPath" `
@@ -37,4 +48,5 @@ Write-Host "Building mouse_support.dll (relay receiver + smoothing)..."
     kernel32.lib ws2_32.lib
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "mouse_support build FAILED" }
 Pop-Location
+Set-BuildStamp -StampPath $stampPath -Stamp $stamp
 Write-Host "mouse_support.dll built OK -> $dllPath"

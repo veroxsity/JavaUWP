@@ -46,6 +46,11 @@ if (-not $variantLayers.ContainsKey($MinecraftVersion)) {
 function Resolve-NeoFormVersion([string]$Version) {
     $installerDir = Join-Path (Get-ConfigPath "StagingDir") "cache\neoforge\$Version"
     Ensure-Dir $installerDir
+    $neoFormCache = Join-Path $installerDir "neoform.txt"
+    if (Test-Path $neoFormCache) {
+        $cached = ([System.IO.File]::ReadAllText($neoFormCache)).Trim()
+        if ($cached) { return $cached }
+    }
     $installerJar = Join-Path $installerDir "neoforge-$Version-installer.jar"
     if (-not (Test-Path $installerJar)) {
         Invoke-WebRequest -UseBasicParsing `
@@ -72,7 +77,9 @@ function Resolve-NeoFormVersion([string]$Version) {
     $arguments = @($profile.arguments.game)
     for ($i = 0; $i -lt $arguments.Count - 1; $i++) {
         if ([string]$arguments[$i] -eq "--fml.neoFormVersion") {
-            return [string]$arguments[$i + 1]
+            $resolved = [string]$arguments[$i + 1]
+            [System.IO.File]::WriteAllText($neoFormCache, $resolved, (New-Object System.Text.UTF8Encoding($false)))
+            return $resolved
         }
     }
     throw "NeoForm version missing from NeoForge $Version profile"
@@ -118,6 +125,41 @@ if (-not $mixinJar) {
     }
 }
 
+$compileOnlySources = @(Get-ChildItem $compileJava -Recurse -Filter "*.java")
+$mainSourcesByName = @{}
+Get-ChildItem $srcJava -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
+Get-ChildItem $coreJava -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
+foreach ($layer in @($variantLayers[$MinecraftVersion])) {
+    $layerDir = Join-Path $PSScriptRoot "src\variants\$layer"
+    Get-ChildItem $layerDir -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
+}
+$mainSources = @($mainSourcesByName.Values)
+
+$sourcePaths = @(@($compileOnlySources) + @($mainSources) | ForEach-Object { $_.FullName } | Sort-Object)
+$resourceFiles = @(Get-ChildItem $srcResources -Recurse -File | Select-Object -ExpandProperty FullName)
+$stampPath = Join-Path $buildRoot "build.stamp"
+$stamp = New-BuildStamp `
+    -Values @(
+        "neoforge_controller",
+        $MinecraftVersion,
+        $NeoForgeVersion,
+        $NeoFormVersion,
+        "jar=$jarName",
+        "layers=$(@($variantLayers[$MinecraftVersion]) -join ',')",
+        "sources=$($sourcePaths -join ';')"
+    ) `
+    -ContentFiles (@($PSCommandPath) + $sourcePaths + $resourceFiles) `
+    -DependencyFiles @($patchedClient, $srgClient, $universalJar, $mixinJar)
+
+if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($jarPath)) {
+    Write-Host "NeoForge controller mod up to date ($MinecraftVersion / $NeoForgeVersion), skipping compile."
+    if ($OutputDir) {
+        Ensure-Dir $OutputDir
+        Copy-Item $jarPath (Join-Path $OutputDir $jarName) -Force
+    }
+    return
+}
+
 $lwjglJars = @(Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries\org\lwjgl") -Recurse -Filter "*.jar" -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike "*natives*" } |
     Select-Object -ExpandProperty FullName)
@@ -131,15 +173,6 @@ $libraryJars = @(Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Re
 Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
 Ensure-Dir $classesDir, $compileOnlyDir
 
-$compileOnlySources = @(Get-ChildItem $compileJava -Recurse -Filter "*.java")
-$mainSourcesByName = @{}
-Get-ChildItem $srcJava -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
-Get-ChildItem $coreJava -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
-foreach ($layer in @($variantLayers[$MinecraftVersion])) {
-    $layerDir = Join-Path $PSScriptRoot "src\variants\$layer"
-    Get-ChildItem $layerDir -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
-}
-$mainSources = @($mainSourcesByName.Values)
 $classpath = @($patchedClient, $srgClient, $universalJar, $mixinJar) + $lwjglJars + $libraryJars
 
 function Invoke-Javac([string]$Name, [string[]]$Sources, [string]$Destination, [string[]]$Classpath) {
@@ -205,6 +238,8 @@ foreach ($required in @(
 if ($listing | Where-Object { $_ -like "net/neoforged/*" }) {
     throw "NeoForge controller jar contains compile-only NeoForge classes."
 }
+
+Set-BuildStamp -StampPath $stampPath -Stamp $stamp
 
 if ($OutputDir) {
     Ensure-Dir $OutputDir

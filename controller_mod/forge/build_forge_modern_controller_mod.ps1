@@ -64,20 +64,15 @@ if (-not (Test-Path $universalJar)) {
         -TimeoutSec 180
 }
 
-$mixinJar = Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Recurse -Filter "*mixin*.jar" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -notlike "*natives*" } |
-    Sort-Object FullName -Descending |
-    Select-Object -First 1 -ExpandProperty FullName
-if (-not $mixinJar) {
-    throw "Mixin compile dependency is missing. prepare the Fabric cache first"
-}
-
 $libraryJars = @(Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Recurse -Filter "*.jar" -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike "*natives*" } |
     Select-Object -ExpandProperty FullName)
 
-Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
-Ensure-Dir $classesDir, $compileOnlyDir
+$mixinJar = @($libraryJars | Where-Object { (Split-Path $_ -Leaf) -like "*mixin*" } | Sort-Object -Descending) |
+    Select-Object -First 1
+if (-not $mixinJar) {
+    throw "Mixin compile dependency is missing. prepare the Fabric cache first"
+}
 
 $compileOnlySources = @(
     Get-ChildItem $compileSource -Recurse -Filter "*.java"
@@ -94,6 +89,34 @@ foreach ($layer in @($variantLayers[$MinecraftVersion])) {
 }
 Get-ChildItem $forgeSource -Recurse -Filter "*.java" | ForEach-Object { $mainSourcesByName[$_.Name] = $_ }
 $mainSources = @($mainSourcesByName.Values)
+
+$sourcePaths = @(@($compileOnlySources) + @($mainSources) | ForEach-Object { $_.FullName } | Sort-Object)
+$resourceFiles = @(Get-ChildItem $resources -Recurse -File | Select-Object -ExpandProperty FullName)
+$stampPath = Join-Path $buildRoot "build.stamp"
+$stamp = New-BuildStamp `
+    -Values @(
+        "forge_modern_controller",
+        $MinecraftVersion,
+        $ForgeVersion,
+        "jar=$jarName",
+        "layers=$(@($variantLayers[$MinecraftVersion]) -join ',')",
+        "sources=$($sourcePaths -join ';')"
+    ) `
+    -ContentFiles (@($PSCommandPath) + $sourcePaths + $resourceFiles) `
+    -DependencyFiles @($patchedClient, $universalJar, $mixinJar)
+
+if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($jarPath)) {
+    Write-Host "Forge controller mod up to date ($MinecraftVersion / $ForgeVersion), skipping compile."
+    if ($OutputDir) {
+        Ensure-Dir $OutputDir
+        Copy-Item $jarPath (Join-Path $OutputDir $jarName) -Force
+    }
+    return
+}
+
+Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
+Ensure-Dir $classesDir, $compileOnlyDir
+
 $classpath = @($patchedClient, $universalJar, $mixinJar) + $libraryJars
 
 function Invoke-Javac([string]$Name, [string[]]$Sources, [string]$Destination, [string[]]$Classpath) {
@@ -159,6 +182,8 @@ foreach ($required in @(
 if ($listing | Where-Object { $_ -like "net/minecraftforge/*" }) {
     throw "Forge controller jar contains compile-only Forge classes"
 }
+
+Set-BuildStamp -StampPath $stampPath -Stamp $stamp
 
 if ($OutputDir) {
     Ensure-Dir $OutputDir

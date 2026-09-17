@@ -779,6 +779,7 @@ public:
         }
 
         g_minecraftRunning.store(true);
+        const bool jvmSpentBeforeLaunch = EmbeddedJvmAlreadyUsed();
         const std::wstring effLaunchVersion = versionInfo.launchVersion.empty() ? a2w(kFabricLaunchVersion) : versionInfo.launchVersion;
         const std::wstring effAssetIndex = versionInfo.assetIndex.empty() ? a2w(kMinecraftAssetIndex) : versionInfo.assetIndex;
         const bool launched = RunLaunchTaskWithLiveUi(
@@ -828,11 +829,19 @@ public:
                 failedRenderer = &failedRendererInstance;
             }
             AuthUiState failedState;
+            const wchar_t* failedTitle = L"Launch failed";
+            const wchar_t* failedDetail = L"Minecraft could not start. Check logs for details.";
+            if (jvmSpentBeforeLaunch) {
+                failedTitle = L"Restart the launcher";
+                failedDetail = L"An earlier launch used this session's Java runtime. Close the launcher and open it again to play.";
+            } else if (EmbeddedJvmAlreadyUsed()) {
+                failedDetail = L"Minecraft could not start. Check logs for details. Close the launcher and open it again before trying another version.";
+            }
             RenderPreparationProgress(
                 failedRenderer,
                 failedState,
-                L"Launch failed",
-                L"Minecraft could not start. Check logs for details.",
+                failedTitle,
+                failedDetail,
                 1.0f);
             SleepWithAuthUi(failedRenderer, failedState, 6000);
             continue;

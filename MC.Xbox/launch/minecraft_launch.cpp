@@ -51,6 +51,15 @@ using namespace ABI::Windows::UI::Core;
 
 typedef jint(JNICALL* JNI_CreateJavaVM_t)(JavaVM**, void**, void*);
 
+// hotspot allows one vm per process and refuses forever after DestroyJavaVM, so a failed launch
+// leaves the process unable to start anything else. JNI_CreateJavaVM answers -1 or -5 and the
+// user just sees a launch that did nothing
+static bool g_embeddedJvmUsed = false;
+
+bool EmbeddedJvmAlreadyUsed() {
+    return g_embeddedJvmUsed;
+}
+
 static void DestroyEmbeddedJvm(JavaVM*& vm, JNIEnv*& env) {
     if (!vm) return;
     vm->DestroyJavaVM();
@@ -909,6 +918,15 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         }
     };
 
+    if (g_embeddedJvmUsed) {
+        WriteLog(L"Refusing launch: this process has already run a JVM, it cannot start another");
+        reportProgress(
+            L"Restart the launcher",
+            L"A previous launch already used this session's Java runtime. Close the launcher and open it again.",
+            1.0f);
+        return false;
+    }
+
     const LoaderId loaderId = ParseLoaderId(loader);
     std::wstring loaderLabel = L"Minecraft";
     if (loaderId == LoaderId::Fabric) {
@@ -1337,6 +1355,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     if (createResult != JNI_OK || !vm || !env) {
         return false;
     }
+    g_embeddedJvmUsed = true;
     {
         // App.cpp reads this before the heap exists, so that one says nothing about headroom
         unsigned long long limitMb = 0;

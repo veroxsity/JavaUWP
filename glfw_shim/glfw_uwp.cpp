@@ -2373,10 +2373,38 @@ static bool AnyMouseButtonDown() {
     }
     return false;
 }
-static bool MouseCompanionActive() {
+// The console's own mouse: set by the CoreWindow pointer and MouseDevice handlers. Those only fire
+// when the Xbox shell delivers mouse input to this package, which it does only for an allowlisted
+// identity (build.ps1 -MouseIdentity).
+static volatile DWORD g_nativeMouseTick = 0;
+
+static void NoteNativeMouseActivity() {
+    const DWORD now = GetTickCount();
+    g_nativeMouseTick = now ? now : 1;
+    // The mouse owns the cursor, the same as when the relay is driving it. That is what makes the
+    // shim draw its own cursor in menus - the system arrow is hidden (launcher App.cpp), so without
+    // this the menus would have no visible cursor at all. A controller takes ownership back the
+    // moment it shows cursor intent, as before.
+    SetCursorInputOwner(CursorInputOwnerRelay);
+}
+
+static bool NativeMouseActive() {
+    const DWORD last = g_nativeMouseTick;
+    if (last == 0) return false;
+    return (DWORD)(GetTickCount() - last) <= kMouseCompanionTimeoutMs;
+}
+
+static bool RelayMouseActive() {
     const unsigned int last = MouseSupport_LastActivityTickMs();
     if (last == 0) return false;
     return (DWORD)(GetTickCount() - (DWORD)last) <= kMouseCompanionTimeoutMs;
+}
+
+// Whether mouse input should reach the game at all. This was the relay alone, so on a console the
+// native mouse was received, dispatched, and then dropped at every callback. Idle for the timeout
+// either way and the controller mod takes the cursor back, exactly as before.
+static bool MouseCompanionActive() {
+    return RelayMouseActive() || NativeMouseActive();
 }
 static void FlushMouseButtonsForDeactivate() {
     for (int i = 0; i < (int)sizeof(g_mouse_state); ++i) {
@@ -2576,13 +2604,16 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
         return;
     }
 
+    NoteNativeMouseActivity();
+
     double x = g_cursor_x;
     double y = g_cursor_y;
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
-    if (hasPoint) {
-        DispatchCursorPos(x, y);
-    } else if (kind == PointerDispatchEnter) {
+    // The native mouse positions the cursor from MouseDevice deltas only (HandleMouseDeviceMoved): with
+    // the system cursor hidden the absolute point stops updating, so using it here would snap the
+    // cursor back to a stale position on every click. Buttons and the wheel below are unaffected.
+    if (!hasPoint && kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
 
@@ -2636,11 +2667,36 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
-    DispatchMouseDelta(delta.X, delta.Y);
+    NoteNativeMouseActivity();
+    if (g_cursorDisabled) {
+        DispatchMouseDelta(delta.X, delta.Y);
+        return;
+    }
+    // Menus run on raw deltas too - the whole game behaves as if the pointer were always locked.
+    // With the system cursor hidden (launcher App.cpp), the Xbox stops moving the absolute pointer
+    // the way a browser does under pointer lock: press/release still arrive, moves do not, and the
+    // cursor froze where it was. MouseDevice deltas keep flowing regardless, so they drive the drawn
+    // cursor here.
+    //
+    // Two coordinate spaces, kept strictly apart: the game's cursor (g_cursor_x) is in its menu space
+    // (854x480 here), while the drawn cursor (bandit_cursor::Draw) reads g_menu_abs_x as WINDOW
+    // space (1920x1080). Updating one from the other in the wrong space put the drawn pointer at
+    // ~44% of where the real cursor was. So: start from the game's cursor converted to window space,
+    // move by the raw delta in window pixels (a mouse move covers the same screen distance as a
+    // visible arrow would), then hand the game the menu-space position and the overlay the window
+    // one - never letting the dispatch overwrite g_menu_abs_x with a menu-space value.
+    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + (double)delta.X, 0.0, CursorMaxX());
+    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + (double)delta.Y, 0.0, CursorMaxY());
+    g_menu_abs_x = windowX;
+    g_menu_abs_y = windowY;
+    DispatchCursorPosInternal(WindowToMenuInputX(windowX), WindowToMenuInputY(windowY), false);
+    SendCursorOverlayState();
 }
 static void PollCoreWindowPointerPosition() {
+    // Not for the native mouse: its absolute position freezes while the system cursor is hidden, and
+    // polling it would drag the delta-driven cursor back to that stale point every frame.
     if (!g_coreWindow || g_cursorDisabled ||
-        MouseSupport_LastActivityTickMs() != 0) {
+        MouseSupport_LastActivityTickMs() != 0 || NativeMouseActive()) {
         return;
     }
 
@@ -3228,7 +3284,9 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
     }
     g_mouse_active_latched = mouseCompanionActive;
 
-    if (mouseCompanionActive) {
+    // Relay-only sources. GameInput reads the same physical mouse the native handlers do, so polling
+    // it on native activity would deliver every movement and click twice.
+    if (RelayMouseActive()) {
         DrainRemoteMouseInput();
         PollGameInputMouse();
     }

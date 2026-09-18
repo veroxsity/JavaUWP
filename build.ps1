@@ -11,7 +11,15 @@ param(
     [switch]$SkipVersionManifests,
     [switch]$SkipVersionCompat,
     [switch]$IncludePrebuiltNeoForgeArtifacts,
-    [switch]$StrictTargets
+    [switch]$StrictTargets,
+    # Package under a Microsoft Edge channel identity so the Xbox shell delivers the mouse. There is
+    # no API for mouse input in a UWP app on Xbox: the shell keeps an allowlist (MouseEnabledApps,
+    # in Xbox.Shell.Api.dll) keyed by package identity, and Edge is on it. Unset = the normal
+    # BanditVault identity. Different channels are separate identities, so this can sit alongside
+    # another app that already borrowed one (NeoXS uses Canary). Changing identity changes the
+    # package family name, so the app starts with fresh LocalState.
+    [ValidateSet("", "Canary", "Beta", "Dev", "Stable")]
+    [string]$MouseIdentity = $env:MOUSE_IDENTITY
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +104,9 @@ function Assert-AppxVersion {
         }
     }
 }
+
+$mouseIdentityPublisher = "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+$mouseIdentityName = if ($MouseIdentity) { "Microsoft.MicrosoftEdge.$MouseIdentity" } else { "" }
 
 $manifestSourcePath = Join-Path $root "MC.Xbox\Package.appxmanifest"
 [xml]$sourceManifest = Get-Content $manifestSourcePath
@@ -455,6 +466,11 @@ Copy-Item $mcExe (Join-Path $pkg "MC.Xbox.exe")
 $manifestOut = Join-Path $pkg "AppxManifest.xml"
 $manifestText = [System.IO.File]::ReadAllText($manifestSourcePath)
 $manifestText = [regex]::Replace($manifestText, '(<Identity\b[^>]*\bVersion=")\d+\.\d+\.\d+\.\d+(")', ('${1}' + $appVersion + '${2}'))
+if ($MouseIdentity) {
+    $manifestText = [regex]::Replace($manifestText, '(<Identity\b[^>]*\bName=")[^"]*(")', ('${1}' + $mouseIdentityName + '${2}'))
+    $manifestText = [regex]::Replace($manifestText, '(<Identity\b[^>]*\bPublisher=")[^"]*(")', ('${1}' + $mouseIdentityPublisher + '${2}'))
+    Write-Host "Mouse identity: $mouseIdentityName ($mouseIdentityPublisher)"
+}
 [System.IO.File]::WriteAllText($manifestOut, $manifestText)
 Write-Host "App package version: $appVersion"
 
@@ -1252,6 +1268,13 @@ foreach ($name in $appxAssetNames) {
 Write-Host "=== Packaging ==="
 $cert = Join-Path $certDir $ProjectConfig.CertificateFileName
 $certName = if ($env:APPX_CERT_SUBJECT) { $env:APPX_CERT_SUBJECT } else { $ProjectConfig.DefaultCertificateSubject }
+if ($MouseIdentity) {
+    # The manifest Publisher must equal the signing cert's subject exactly, and a pfx is only
+    # generated when its file is missing - so the Edge identity gets its own pfx rather than
+    # reusing (and being refused by) the BanditVault one.
+    $cert = Join-Path $certDir "MC_DevMode_Edge.pfx"
+    $certName = $mouseIdentityPublisher
+}
 
 if (-not (Test-Path $cert)) {
     $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject $certName `
@@ -1270,6 +1293,11 @@ $allSigningCertCandidates = Get-ChildItem Cert:\CurrentUser\My |
 $exactSigningCertCandidates = $allSigningCertCandidates | Where-Object { $_.Subject -eq $certName } | Sort-Object NotBefore -Descending
 $banditVaultSigningCertCandidates = $allSigningCertCandidates | Where-Object { $_.Subject -like '*BanditVault*' -and $_.Subject -ne $certName } | Sort-Object NotBefore -Descending
 $signingCertCandidates = @($exactSigningCertCandidates) + @($banditVaultSigningCertCandidates)
+if ($MouseIdentity) {
+    # A BanditVault cert cannot sign a package whose manifest says Microsoft Corporation - signtool
+    # refuses the publisher mismatch - so falling back to one would only bury the real error.
+    $signingCertCandidates = @($exactSigningCertCandidates)
+}
 if (-not $signingCertCandidates) {
     throw "No signing certificate for '$certName' in Cert:\CurrentUser\My. Restore the BanditVault certificate, or set APPX_CERT_SUBJECT to the subject you want to sign with. Signing with an unrelated certificate changes the package family name and loses LocalState."
 }

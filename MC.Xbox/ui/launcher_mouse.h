@@ -6,7 +6,7 @@ public:
     ~LauncherMouse();
 
     bool Available() const { return available_; }
-    bool Visible() const { return available_ && connected_ && seeded_; }
+    bool Visible() const { return (available_ || nativeActive_) && connected_ && seeded_; }
     float X() const { return x_; }
     float Y() const { return y_; }
 
@@ -16,6 +16,8 @@ public:
 
 private:
     void PushHostState(float renderWidth, float renderHeight);
+    bool UpdateNative(float renderWidth, float renderHeight);
+    bool nativeActive_ = false;
 
     void* module_ = nullptr;
     void* pollProc_ = nullptr;
@@ -32,6 +34,14 @@ private:
 };
 
 LauncherMouse& LauncherMouseInstance();
+
+// The console's own mouse, fed from CoreWindow pointer events. The Xbox shell only delivers these
+// to allowlisted package identities (see build.ps1 -MouseIdentity); without that nothing arrives
+// and the launcher keeps using the network relay. Position is in window DIPs, alongside the
+// window's size in DIPs, so it can be mapped onto whatever size the launcher renders at.
+void LauncherMouseNativeMove(float dipX, float dipY, float windowWidthDip, float windowHeightDip);
+void LauncherMouseNativeLeftButton(bool down);
+void LauncherMouseNativeWheel(int wheelDelta);
 
 namespace launchhit {
 constexpr int kNone = -1;

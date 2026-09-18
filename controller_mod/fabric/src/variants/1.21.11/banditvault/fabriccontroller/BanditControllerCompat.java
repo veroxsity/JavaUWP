@@ -55,6 +55,14 @@ public final class BanditControllerCompat {
     private static double lastRelayCursorX = Double.NaN;
     private static double lastRelayCursorY = Double.NaN;
     private static boolean relayOwnsCursor;
+    // Gameplay's version of relayOwnsCursor. Screens work out mouse ownership in observeRelayCursor,
+    // but gameplay reset it every tick, so the gameplay button guide stayed up while playing with a
+    // mouse. Set when the mouse turns the camera, cleared the moment the controller is used.
+    private static boolean mouseOwnsGameplay;
+    private static double lastGameplayMouseX = Double.NaN;
+    private static double lastGameplayMouseY = Double.NaN;
+    private static final double GAMEPLAY_MOUSE_MOVE_EPSILON = 0.5;
+    private static final float GAMEPLAY_STICK_INTENT = 0.35f;
     private static boolean snapStickLatched;
     private static class_304 radialPressedKey;
     private static boolean radialPressedAsKeyboard;
@@ -110,11 +118,15 @@ public final class BanditControllerCompat {
 
         if (client.field_1755 != null) {
             lastLookNanos = 0L;
+            // Re-baseline on the way back to gameplay, so reopening the world is not read as a move.
+            lastGameplayMouseX = Double.NaN;
+            lastGameplayMouseY = Double.NaN;
             releaseGameplayKeys(client, false);
             tickScreen(client, client.field_1755);
         } else {
             BanditControllerKeyboard.close();
             relayOwnsCursor = false;
+            observeGameplayMouse(client);
             tickGameplay(client);
         }
 
@@ -210,9 +222,46 @@ public final class BanditControllerCompat {
         }
     }
 
+    // In gameplay the cursor is locked, and the mouse position the handler reports still moves with
+    // every look delta - so a change in it means the mouse is steering. Any controller input takes
+    // ownership straight back, the same rule the screens follow.
+    private static void observeGameplayMouse(class_310 client) {
+        if (client == null || client.field_1729 == null) {
+            return;
+        }
+        double mouseX = client.field_1729.method_1603();
+        double mouseY = client.field_1729.method_1604();
+        if (!Double.isNaN(lastGameplayMouseX) && !Double.isNaN(lastGameplayMouseY) &&
+            (Math.abs(mouseX - lastGameplayMouseX) > GAMEPLAY_MOUSE_MOVE_EPSILON ||
+             Math.abs(mouseY - lastGameplayMouseY) > GAMEPLAY_MOUSE_MOVE_EPSILON)) {
+            mouseOwnsGameplay = true;
+        }
+        lastGameplayMouseX = mouseX;
+        lastGameplayMouseY = mouseY;
+        if (controllerHasGameplayIntent()) {
+            mouseOwnsGameplay = false;
+        }
+    }
+
+    private static boolean controllerHasGameplayIntent() {
+        for (int i = 0; i <= GLFW.GLFW_GAMEPAD_BUTTON_LAST; i++) {
+            if (GLFW_STATE.buttons(i) == GLFW.GLFW_PRESS) {
+                return true;
+            }
+        }
+        for (int i = GLFW.GLFW_GAMEPAD_AXIS_LEFT_X; i <= GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y; i++) {
+            if (Math.abs(GLFW_STATE.axes(i)) > GAMEPLAY_STICK_INTENT) {
+                return true;
+            }
+        }
+        // Triggers rest at -1.
+        return GLFW_STATE.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER) > 0.0f ||
+            GLFW_STATE.axes(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER) > 0.0f;
+    }
+
     public static void renderGameplayGuide(class_332 context) {
         class_310 client = class_310.method_1551();
-        if (!active || context == null || client == null || client.field_1755 != null || client.field_1724 == null || client.field_1690.field_1842) return;
+        if (!active || mouseOwnsGameplay || context == null || client == null || client.field_1755 != null || client.field_1724 == null || client.field_1690.field_1842) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
         class_3965 blockHit = client.field_1765 instanceof class_3965
             && client.field_1765.method_17783() == class_239.class_240.field_1332

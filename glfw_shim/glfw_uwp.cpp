@@ -2610,15 +2610,10 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
     double y = g_cursor_y;
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
-    if (hasPoint) {
-        // ReadPointerEvent gives window coordinates (the full swapchain, 1920x1080), but the game's
-        // cursor lives in its own menu space (854x480 here), and dispatching window coordinates
-        // straight in clamped every event to the bottom-right corner. In gameplay the cursor is
-        // locked and the camera runs on MouseDevice deltas, so the absolute point is ignored there.
-        if (!g_cursorDisabled) {
-            DispatchCursorPos(WindowToMenuInputX(x), WindowToMenuInputY(y));
-        }
-    } else if (kind == PointerDispatchEnter) {
+    // The native mouse positions the cursor from MouseDevice deltas only (HandleMouseDeviceMoved): with
+    // the system cursor hidden the absolute point stops updating, so using it here would snap the
+    // cursor back to a stale position on every click. Buttons and the wheel below are unaffected.
+    if (!hasPoint && kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
 
@@ -2673,14 +2668,27 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
     NoteNativeMouseActivity();
-    // Raw deltas are for gameplay (cursor locked) only. In menus the absolute pointer position is
-    // authoritative; adding deltas on top of it moved the cursor twice and fought the pointer.
-    if (!g_cursorDisabled) return;
-    DispatchMouseDelta(delta.X, delta.Y);
+    if (g_cursorDisabled) {
+        DispatchMouseDelta(delta.X, delta.Y);
+        return;
+    }
+    // Menus run on raw deltas too - the whole game behaves as if the pointer were always locked.
+    // With the system cursor hidden (launcher App.cpp), the Xbox stops moving the absolute pointer
+    // the way a browser does under pointer lock: press/release still arrive, moves do not, and the
+    // cursor froze where it was. MouseDevice deltas keep flowing regardless, so they drive the drawn
+    // cursor here. Scaled from window pixels into the game's menu space so a mouse move covers the
+    // same fraction of the screen it would with a visible arrow.
+    const double sx = g_window_width > 0 && g_menu_window_width > 0
+        ? (double)g_menu_window_width / (double)g_window_width : 1.0;
+    const double sy = g_window_height > 0 && g_menu_window_height > 0
+        ? (double)g_menu_window_height / (double)g_window_height : 1.0;
+    DispatchCursorPosInternal(g_cursor_x + (double)delta.X * sx, g_cursor_y + (double)delta.Y * sy, true);
 }
 static void PollCoreWindowPointerPosition() {
+    // Not for the native mouse: its absolute position freezes while the system cursor is hidden, and
+    // polling it would drag the delta-driven cursor back to that stale point every frame.
     if (!g_coreWindow || g_cursorDisabled ||
-        MouseSupport_LastActivityTickMs() != 0) {
+        MouseSupport_LastActivityTickMs() != 0 || NativeMouseActive()) {
         return;
     }
 

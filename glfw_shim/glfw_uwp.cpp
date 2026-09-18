@@ -2676,13 +2676,21 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
     // With the system cursor hidden (launcher App.cpp), the Xbox stops moving the absolute pointer
     // the way a browser does under pointer lock: press/release still arrive, moves do not, and the
     // cursor froze where it was. MouseDevice deltas keep flowing regardless, so they drive the drawn
-    // cursor here. Scaled from window pixels into the game's menu space so a mouse move covers the
-    // same fraction of the screen it would with a visible arrow.
-    const double sx = g_window_width > 0 && g_menu_window_width > 0
-        ? (double)g_menu_window_width / (double)g_window_width : 1.0;
-    const double sy = g_window_height > 0 && g_menu_window_height > 0
-        ? (double)g_menu_window_height / (double)g_window_height : 1.0;
-    DispatchCursorPosInternal(g_cursor_x + (double)delta.X * sx, g_cursor_y + (double)delta.Y * sy, true);
+    // cursor here.
+    //
+    // Two coordinate spaces, kept strictly apart: the game's cursor (g_cursor_x) is in its menu space
+    // (854x480 here), while the drawn cursor (bandit_cursor::Draw) reads g_menu_abs_x as WINDOW
+    // space (1920x1080). Updating one from the other in the wrong space put the drawn pointer at
+    // ~44% of where the real cursor was. So: start from the game's cursor converted to window space,
+    // move by the raw delta in window pixels (a mouse move covers the same screen distance as a
+    // visible arrow would), then hand the game the menu-space position and the overlay the window
+    // one - never letting the dispatch overwrite g_menu_abs_x with a menu-space value.
+    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + (double)delta.X, 0.0, CursorMaxX());
+    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + (double)delta.Y, 0.0, CursorMaxY());
+    g_menu_abs_x = windowX;
+    g_menu_abs_y = windowY;
+    DispatchCursorPosInternal(WindowToMenuInputX(windowX), WindowToMenuInputY(windowY), false);
+    SendCursorOverlayState();
 }
 static void PollCoreWindowPointerPosition() {
     // Not for the native mouse: its absolute position freezes while the system cursor is hidden, and

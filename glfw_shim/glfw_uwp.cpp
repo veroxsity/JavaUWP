@@ -2373,10 +2373,33 @@ static bool AnyMouseButtonDown() {
     }
     return false;
 }
-static bool MouseCompanionActive() {
+// The console's own mouse: set by the CoreWindow pointer and MouseDevice handlers. Those only fire
+// when the Xbox shell delivers mouse input to this package, which it does only for an allowlisted
+// identity (build.ps1 -MouseIdentity).
+static volatile DWORD g_nativeMouseTick = 0;
+
+static void NoteNativeMouseActivity() {
+    const DWORD now = GetTickCount();
+    g_nativeMouseTick = now ? now : 1;
+}
+
+static bool NativeMouseActive() {
+    const DWORD last = g_nativeMouseTick;
+    if (last == 0) return false;
+    return (DWORD)(GetTickCount() - last) <= kMouseCompanionTimeoutMs;
+}
+
+static bool RelayMouseActive() {
     const unsigned int last = MouseSupport_LastActivityTickMs();
     if (last == 0) return false;
     return (DWORD)(GetTickCount() - (DWORD)last) <= kMouseCompanionTimeoutMs;
+}
+
+// Whether mouse input should reach the game at all. This was the relay alone, so on a console the
+// native mouse was received, dispatched, and then dropped at every callback. Idle for the timeout
+// either way and the controller mod takes the cursor back, exactly as before.
+static bool MouseCompanionActive() {
+    return RelayMouseActive() || NativeMouseActive();
 }
 static void FlushMouseButtonsForDeactivate() {
     for (int i = 0; i < (int)sizeof(g_mouse_state); ++i) {
@@ -2576,12 +2599,20 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
         return;
     }
 
+    NoteNativeMouseActivity();
+
     double x = g_cursor_x;
     double y = g_cursor_y;
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
     if (hasPoint) {
-        DispatchCursorPos(x, y);
+        // ReadPointerEvent gives window coordinates (the full swapchain, 1920x1080), but the game's
+        // cursor lives in its own menu space (854x480 here), and dispatching window coordinates
+        // straight in clamped every event to the bottom-right corner. In gameplay the cursor is
+        // locked and the camera runs on MouseDevice deltas, so the absolute point is ignored there.
+        if (!g_cursorDisabled) {
+            DispatchCursorPos(WindowToMenuInputX(x), WindowToMenuInputY(y));
+        }
     } else if (kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
@@ -2636,6 +2667,10 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
+    NoteNativeMouseActivity();
+    // Raw deltas are for gameplay (cursor locked) only. In menus the absolute pointer position is
+    // authoritative; adding deltas on top of it moved the cursor twice and fought the pointer.
+    if (!g_cursorDisabled) return;
     DispatchMouseDelta(delta.X, delta.Y);
 }
 static void PollCoreWindowPointerPosition() {
@@ -3228,7 +3263,9 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
     }
     g_mouse_active_latched = mouseCompanionActive;
 
-    if (mouseCompanionActive) {
+    // Relay-only sources. GameInput reads the same physical mouse the native handlers do, so polling
+    // it on native activity would deliver every movement and click twice.
+    if (RelayMouseActive()) {
         DrainRemoteMouseInput();
         PollGameInputMouse();
     }

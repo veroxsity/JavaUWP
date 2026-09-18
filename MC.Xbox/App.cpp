@@ -29,6 +29,7 @@
 #include "profiles.h"
 #include "auth_screen.h"
 #include "launcher_ui.h"
+#include "launcher_mouse.h"
 #include "web_relay_server.h"
 #include "app_globals.h"
 #include "loader.h"
@@ -166,6 +167,55 @@ static void RegisterLifecycleHandlers(ICoreApplication* coreApp) {
     }
 }
 
+// The console's own mouse, for the launcher's menus. The shell only sends pointer events to an
+// allowlisted package identity (build.ps1 -MouseIdentity); without that these never fire and the
+// launcher keeps using the network relay. Minecraft itself reads the mouse in the glfw shim.
+using CoreWindowPointerHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CPointerEventArgs_t;
+static ComPtr<CoreWindowPointerHandler> g_pointerHandler;
+static EventRegistrationToken g_pointerMovedToken{};
+static EventRegistrationToken g_pointerPressedToken{};
+static EventRegistrationToken g_pointerReleasedToken{};
+static EventRegistrationToken g_pointerWheelToken{};
+
+static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
+    if (!window) return;
+    g_pointerHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow* sender, IPointerEventArgs* args) -> HRESULT {
+            if (!sender || !args) return S_OK;
+            ComPtr<ABI::Windows::UI::Input::IPointerPoint> point;
+            if (FAILED(args->get_CurrentPoint(point.GetAddressOf())) || !point) return S_OK;
+            ABI::Windows::Foundation::Point position{};
+            ABI::Windows::Foundation::Rect bounds{};
+            point->get_Position(&position);
+            sender->get_Bounds(&bounds);
+            LauncherMouseNativeMove(position.X, position.Y, bounds.Width, bounds.Height);
+
+            ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
+            if (SUCCEEDED(point->get_Properties(props.GetAddressOf())) && props) {
+                boolean left = false;
+                props->get_IsLeftButtonPressed(&left);
+                LauncherMouseNativeLeftButton(left != 0);
+                INT32 wheel = 0;
+                props->get_MouseWheelDelta(&wheel);
+                if (wheel != 0) {
+                    LauncherMouseNativeWheel(wheel);
+                }
+            }
+            return S_OK;
+        });
+    // One handler serves all four: every event carries the full current state (position, buttons,
+    // wheel), so which event fired does not matter.
+    HRESULT hr = window->add_PointerMoved(g_pointerHandler.Get(), &g_pointerMovedToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerMoved failed hr=0x%08X", hr);
+    hr = window->add_PointerPressed(g_pointerHandler.Get(), &g_pointerPressedToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerPressed failed hr=0x%08X", hr);
+    hr = window->add_PointerReleased(g_pointerHandler.Get(), &g_pointerReleasedToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerReleased failed hr=0x%08X", hr);
+    hr = window->add_PointerWheelChanged(g_pointerHandler.Get(), &g_pointerWheelToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerWheelChanged failed hr=0x%08X", hr);
+    WriteLog(L"CoreWindow pointer handlers installed");
+}
+
 static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
     if (!window || g_coreWindowLifecycleHooksInstalled) return;
 
@@ -223,6 +273,8 @@ static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
     if (FAILED(hr)) {
         WriteLogF(L"CoreWindow add_Activated failed hr=0x%08X", hr);
     }
+
+    RegisterCoreWindowPointerHandlers(window);
 
     g_coreWindowLifecycleHooksInstalled = true;
     WriteLog(L"CoreWindow lifecycle handlers installed");

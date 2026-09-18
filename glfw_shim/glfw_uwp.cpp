@@ -2381,6 +2381,11 @@ static volatile DWORD g_nativeMouseTick = 0;
 static void NoteNativeMouseActivity() {
     const DWORD now = GetTickCount();
     g_nativeMouseTick = now ? now : 1;
+    // The mouse owns the cursor, the same as when the relay is driving it. That is what makes the
+    // shim draw its own cursor in menus - the system arrow is hidden (launcher App.cpp), so without
+    // this the menus would have no visible cursor at all. A controller takes ownership back the
+    // moment it shows cursor intent, as before.
+    SetCursorInputOwner(CursorInputOwnerRelay);
 }
 
 static bool NativeMouseActive() {

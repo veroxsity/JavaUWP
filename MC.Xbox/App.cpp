@@ -213,6 +213,12 @@ static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
     if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerReleased failed hr=0x%08X", hr);
     hr = window->add_PointerWheelChanged(g_pointerHandler.Get(), &g_pointerWheelToken);
     if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerWheelChanged failed hr=0x%08X", hr);
+    // Hide the system arrow, the way a browser game's pointer lock does. Pointer events and raw
+    // MouseDevice deltas keep arriving with it hidden; the launcher and the glfw shim each draw their
+    // own cursor instead, which matches the UI, scales with it, and does not sit on top of Minecraft
+    // during gameplay. Minecraft runs on this same CoreWindow, so this covers it too.
+    hr = window->put_PointerCursor(nullptr);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow put_PointerCursor(null) failed hr=0x%08X", hr);
     WriteLog(L"CoreWindow pointer handlers installed");
 }
 

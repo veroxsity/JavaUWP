@@ -330,9 +330,9 @@ Run:
 
 ## Nightly Workflow
 
-The GitHub Actions workflow in `.github/workflows/nightly.yml` builds and publishes the moving `nightly` release when relevant source, build, runtime, or workflow files change on `main`. Documentation only changes such as README updates do not trigger a nightly package.
+The GitHub Actions workflow in `.github/workflows/nightly.yml` builds and publishes the moving `nightly-native` release when relevant source, build, runtime, or workflow files change on `main-native`. Documentation only changes such as README updates do not trigger a package.
 
-The workflow publishes `BanditLauncher-nightly.appx` and `BanditLauncher-nightly.sha256` to the `nightly` release, and force moves the `nightly` tag to the commit that produced the package.
+The workflow publishes `BanditLauncherNative-nightly.appx`, `BanditLauncherNative-nightly.sha256`, and the matching public certificate to the `nightly-native` release. It moves the `nightly-native` tag to the commit that produced the package.
 
 Nightly releases are experimental, unsupported, and not full game releases. The generated release notes also remind users that APPX redistribution, public install tutorials, public mirrors, public modified copies, and auth bypass builds are not permitted before the full release.
 

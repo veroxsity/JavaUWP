@@ -1,4 +1,4 @@
-name: Native branch build
+name: Native release
 
 on:
   push:
@@ -23,11 +23,11 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
-    name: Build native package
+    name: Build and publish native release
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -123,13 +123,16 @@ jobs:
         shell: powershell
         run: .\build.ps1 -SkipStopAppProcesses -AppxVersion $env:APPX_VERSION
 
-      - name: Stage nightly asset
+      - name: Stage native release assets
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "output\$env:APPX_FILE" dist\BanditLauncherNative-nightly.appx -Force
           $hash = Get-FileHash dist\BanditLauncherNative-nightly.appx -Algorithm SHA256
           "$($hash.Hash.ToLowerInvariant())  BanditLauncherNative-nightly.appx" | Set-Content -Path dist\BanditLauncherNative-nightly.sha256 -Encoding ascii
+          $signature = Get-AuthenticodeSignature dist\BanditLauncherNative-nightly.appx
+          if (-not $signature.SignerCertificate) { throw "APPX signing certificate missing" }
+          Export-Certificate -Cert $signature.SignerCertificate -FilePath dist\BanditLauncherNative-nightly.cer -Force | Out-Null
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -138,4 +141,25 @@ jobs:
           path: |
             dist/BanditLauncherNative-nightly.appx
             dist/BanditLauncherNative-nightly.sha256
+            dist/BanditLauncherNative-nightly.cer
           if-no-files-found: error
+
+      - name: Move nightly-native tag
+        shell: powershell
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly-native $env:GITHUB_SHA
+          git push --force origin refs/tags/nightly-native
+
+      - name: Publish nightly-native release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .\scripts\publish-release.ps1 `
+            -Channel nightly-native `
+            -Sha $env:GITHUB_SHA `
+            -AppxVersion $env:APPX_VERSION `
+            -RunUrl "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" `
+            -Asset dist\BanditLauncherNative-nightly.appx, dist\BanditLauncherNative-nightly.sha256, dist\BanditLauncherNative-nightly.cer

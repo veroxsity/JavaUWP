@@ -43,6 +43,8 @@ Pre release packages are built from this repository. If you are building or test
 
 Automated **nightly** packages are published to the [nightly release](https://github.com/veroxsity/JavaUWP/releases/tag/nightly) when relevant source changes land on `main`. These are testing builds, not a final public release.
 
+Native mouse packages from `main-native` are published to the separate [nightly-native release](https://github.com/veroxsity/JavaUWP/releases/tag/nightly-native). Download the APPX and its matching public certificate from the same release.
+
 
 **Important:** Redistribution of generated APPX packages, including nightly builds, is not permitted without prior written permission. Videos, streams, screenshots, reviews, benchmarks, and tutorials are allowed under the creator rules in [LICENSE](LICENSE) and [docs/LEGAL.md](docs/LEGAL.md).
 

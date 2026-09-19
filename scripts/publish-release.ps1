@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("nightly", "stable")][string]$Channel = "nightly",
+    [ValidateSet("nightly", "nightly-native", "stable")][string]$Channel = "nightly",
     [string]$Tag,
     [Parameter(Mandatory = $true)][string]$Sha,
     [string]$AppxVersion,
@@ -13,6 +13,7 @@ $ErrorActionPreference = "Stop"
 if (-not $Tag) { $Tag = $Channel }
 
 $shortSha = if ($Sha.Length -ge 7) { $Sha.Substring(0, 7) } else { $Sha }
+$runLine = if ($RunUrl) { "Workflow run: $RunUrl" } else { "Build: local" }
 
 $licenceNote = "Redistribution of the APPX package is not permitted without prior written permission, as described in the project license. Videos, streams, tutorials, and install guides are allowed when they follow the creator content rules in the license, including crediting and linking back to veroxsity / BanditVault."
 
@@ -21,6 +22,10 @@ if ($Channel -eq "stable") {
     $headline = "Stable release build from $shortSha."
     $channelNote = "Stable releases are the supported builds."
     $prerelease = $false
+} elseif ($Channel -eq "nightly-native") {
+    $headline = "Native mouse build from $shortSha."
+    $channelNote = "Native mouse was tested on Xbox by the project owner. This separate package has its own LocalState. Use the matching public certificate from this release."
+    $prerelease = $true
 } else {
     $headline = "Automated nightly build from $shortSha."
     $channelNote = "Nightly releases are highly experimental builds for testing current development work. They are not full game releases, and support is not provided for nightly builds."
@@ -37,7 +42,7 @@ $channelNote
 $licenceNote
 
 Commit: $Sha
-Workflow run: $RunUrl
+$runLine
 "@
 
 $notesFile = Join-Path ([System.IO.Path]::GetTempPath()) "release-notes-$([guid]::NewGuid().ToString('N')).md"

@@ -19,7 +19,7 @@ Bandit Launcher requires a valid copy of Minecraft: Java Edition. The launcher d
 If you have Minecraft through Game Pass, you need to create an account on minecraft.net and set a player name.
 
 ## How do I use my mouse?
-Plug a USB mouse into the Xbox. This branch packages Bandit Launcher as `Microsoft.MicrosoftEdge.BanditLauncher` so the Xbox shell can pass mouse input to it. The exact package name still needs an on-console check. The native package installs separately from the normal `BanditVault.Launcher` build and starts with its own LocalState.
+Plug a USB mouse into the Xbox. This branch packages Bandit Launcher as `Microsoft.MicrosoftEdge.BanditLauncher` so the Xbox shell can pass mouse input to it. The native mouse build has been tested on Xbox. It installs separately from the normal `BanditVault.Launcher` build and starts with its own LocalState.
 
 Use Settings in the launcher to adjust menu and game mouse sensitivity separately from 25% to 300%. The game setting scales mouse movement before Minecraft applies its own sensitivity slider. Settings are saved in this package's LocalState.
 

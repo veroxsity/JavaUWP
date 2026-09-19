@@ -10,7 +10,7 @@
 
 Bandit Launcher brings **Minecraft Java Edition** to **Xbox Developer Mode**. It is a UWP app that signs you in with your Microsoft account, verifies that you own Java Edition, downloads the official game files you need, and launches Minecraft with Fabric, Forge, or NeoForge inside the Xbox app sandbox.
 
-The `main-native` branch builds as `Microsoft.MicrosoftEdge.BanditLauncher` for native Xbox mouse input. It installs separately from the normal `BanditVault.Launcher` package and has its own LocalState. The exact identity and mouse path still need an on-console check.
+The `main-native` branch builds as `Microsoft.MicrosoftEdge.BanditLauncher` for native Xbox mouse input. It installs separately from the normal `BanditVault.Launcher` package and has its own LocalState. The native mouse build has been tested on Xbox.
 
 Join our discord [here](https://discord.gg/XTFYUKbG7g)
 

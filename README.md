@@ -10,6 +10,8 @@
 
 Bandit Launcher brings **Minecraft Java Edition** to **Xbox Developer Mode**. It is a UWP app that signs you in with your Microsoft account, verifies that you own Java Edition, downloads the official game files you need, and launches Minecraft with Fabric, Forge, or NeoForge inside the Xbox app sandbox.
 
+The `main-native` branch builds as `Microsoft.MicrosoftEdge.BanditLauncher` for native Xbox mouse input. It installs separately from the normal `BanditVault.Launcher` package and has its own LocalState. The exact identity and mouse path still need an on-console check.
+
 Join our discord [here](https://discord.gg/XTFYUKbG7g)
 
 This is a real pre release build. The launcher is playable, supports multiple Minecraft versions and loaders, can install compatible mods and modpacks from Modrinth, and includes active fixes for Xbox input, graphics, Java, and filesystem behavior.
@@ -115,7 +117,8 @@ Other catalog entries (additional Forge versions, older vanilla targets, and fut
 
 - Custom GLFW shim for UWP windowing, input, gamepad state, and EGL.
 - Mesa based graphics path for Xbox Series consoles.
-- Optional mouse relay: use a phone or PC as a mouse over the local network, in the launcher menus and in game.
+- Native USB mouse input path in launcher menus and in game on Xbox Dev Mode.
+- Controller snap and free cursor modes can still be switched in menus.
 - GameInput based controller support through the GLFW shim.
 - Bundled Bandit controller layer for every supported Fabric target from `1.16.5` through `1.21.11`, `1.20.1` Forge, and `1.21.1` NeoForge.
 - Shared controller settings at `config/bandit-controller.properties` (deadzones, look speed, toggle crouch/sprint).
@@ -290,14 +293,12 @@ To preview or apply cleanup:
 | --- | --- |
 | `MC.Xbox/` | UWP host app: sign in, launcher UI, downloads, profiles, mods, and JVM launch. |
 | `glfw_shim/` | Replacement `glfw.dll` for UWP windowing, input, gamepad state, and EGL. |
-| `mouse_support/` | Standalone `mouse_support.dll` that owns relay mouse input; linked into the GLFW shim and loaded by the launcher. |
 | `compat_mod/` | Fabric compatibility mod for Minecraft, mod, filesystem, and graphics fixes. |
 | `controller_mod/` | Shared controller core plus Fabric and Forge Xbox controller mods built under `runtime/version-mods/`. |
 | `patch/` | Patched Fabric Loader and securejarhandler classes used by the build. |
 | `scripts/` | Setup, cleanup, asset, patch, manifest, and build helpers. |
 | `config/` | Launch target catalog used by the launcher and build. |
 | `mesa-runtime/` | Mesa UWP runtime DLLs used by local builds. |
-| `tools/mouse-relay/` | Bandit Mouse Relay companion apps (Windows and Android) that send mouse input to the console over UDP. |
 | `build.ps1` | Main APPX build script. |
 | `docs/` | Build, architecture, patching, and legal notes. |
 

@@ -5,7 +5,7 @@ This page covers a clean local build from the repo root.
 The build produces a signed UWP package at:
 
 ```text
-output\BanditLauncher_<appx-version>.appx
+output\BanditLauncherNative_<appx-version>.appx
 ```
 
 ## Requirements
@@ -193,7 +193,6 @@ files:
 
 ```text
 MC.Xbox.exe
-mouse_support.dll
 jre\
 natives\
 graphics\
@@ -352,17 +351,17 @@ The build script:
 
 1. Generates `runtime_config.h` for the selected versions.
 2. Builds `MC.Xbox.exe`.
-3. Builds `mouse_support.dll`, then the UWP GLFW shim linked against it.
+3. Builds the UWP GLFW shim.
 4. Builds the compatibility mod.
 5. Patches the local Fabric Loader JAR and builds the securejarhandler UWP patch.
 6. Assembles `staging\package`.
 7. Copies the version catalog.
-8. Copies patched Fabric Loader jars, patched TinyRemapper for legacy Fabric, the securejarhandler patch, bundled mods, log config, natives, `mouse_support.dll`, Mesa/MobileGlues graphics DLLs, and the JREs.
+8. Copies patched Fabric Loader jars, patched TinyRemapper for legacy Fabric, the securejarhandler patch, bundled mods, log config, natives, Mesa/MobileGlues graphics DLLs, and the JREs.
 9. Generates `download_manifest.tsv` for the default official Minecraft/Fabric runtime downloads.
 10. Generates `runtime\manifests\<target-id>.tsv` for cataloged Fabric, Forge, and NeoForge targets.
 11. Builds per target compatibility mod jars and Fabric, Forge, and NeoForge controller mod jars under `runtime\version-mods`.
 12. Generates UWP tile and splash assets from `MC.Xbox\Assets\Java_UWP_Icon.png`.
-13. Creates and signs `output\BanditLauncher_<appx-version>.appx`.
+13. Creates and signs `output\BanditLauncherNative_<appx-version>.appx`.
 14. Deletes `staging\package` unless `-KeepStaging` is set.
 
 ## Clean outputs
@@ -408,7 +407,7 @@ To include all ignored files, including downloaded cache files:
 - First launch downloads every required official file after sign in. A later launch should verify and skip files that are already downloaded.
 - Runtime download failure: check `LocalState\logs\current\mc_launch.log` for the manifest path, URL, HTTP status, or SHA1 mismatch.
 - Modrinth browse/install failure: check `LocalState\logs\current\mc_launch.log` for `Modrinth search`, `Modrinth versions`, HTTP status, download, or SHA1 verification messages.
-- Package signing failure: delete the ignored local `.pfx` under `staging\certs` and rerun `build.ps1`, or set `APPX_CERT_SUBJECT`.
+- Package signing failure: check that the signing certificate subject matches the manifest publisher. The native build uses `MC_DevMode_Edge_BanditLauncher.pfx` under the ignored certificate directory.
 - If you can't find your appdata folder, type `%appdata%` into your address bar in your file explorer.
 
 ## Appendix: manual cache setup

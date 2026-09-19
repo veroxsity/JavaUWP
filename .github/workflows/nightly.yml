@@ -1,16 +1,15 @@
-name: Nightly build
+name: Native branch build
 
 on:
   push:
     branches:
-      - main
+      - main-native
     paths:
       - ".github/workflows/nightly.yml"
       - "MC.Xbox/**"
       - "glfw_shim/**"
       - "compat_mod/**"
       - "controller_mod/**"
-      - "mouse_support/**"
       - "patch/**"
       - "scripts/**"
       - "log_configs/**"
@@ -20,15 +19,15 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: nightly-build
+  group: main-native-nightly-build
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build and publish nightly
+    name: Build native package
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -108,53 +107,17 @@ jobs:
         shell: powershell
         run: .\scripts\setup.ps1
 
-      - name: Resolve nightly package version
+      - name: Resolve package version
         shell: powershell
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           [xml]$manifest = Get-Content MC.Xbox\Package.appxmanifest
           $parts = ([string]$manifest.Package.Identity.Version) -split '\.'
-          if ($parts.Count -ne 4) {
-            throw "Package.appxmanifest Identity Version must have four numeric fields."
-          }
-
-          $base = "$($parts[0]).$($parts[1]).$($parts[2])"
-          $revision = 1
-          $repo = $env:GITHUB_REPOSITORY
-          $apiBase = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { "https://api.github.com" }
-          $headers = @{
-            Authorization = "Bearer $env:GH_TOKEN"
-            Accept = "application/vnd.github+json"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-
-          try {
-            $release = Invoke-RestMethod -Method Get -Uri "$apiBase/repos/$repo/releases/tags/nightly" -Headers $headers
-            if ($release.body -match 'Package version:\s+(\d+)\.(\d+)\.(\d+)\.(\d+)') {
-              $previousBase = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
-              if ($previousBase -eq $base) {
-                $revision = [int]$Matches[4] + 1
-              }
-            }
-          } catch {
-            $statusCode = $null
-            if ($_.Exception.Response) {
-              $statusCode = [int]$_.Exception.Response.StatusCode
-            }
-            if ($statusCode -ne 404) {
-              throw
-            }
-          }
-
-          if ($revision -gt 65535) {
-            throw "Nightly APPX revision exceeded 65535 for base $base."
-          }
-
-          $version = "$base.$revision"
+          if ($parts.Count -ne 4) { throw "Invalid package version" }
+          $revision = [int]$env:GITHUB_RUN_NUMBER
+          if ($revision -gt 65535) { throw "APPX revision exceeded 65535" }
+          $version = "$($parts[0]).$($parts[1]).$($parts[2]).$revision"
           "APPX_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "APPX_FILE=BanditLauncher_$version.appx" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Nightly APPX version: $version"
+          "APPX_FILE=BanditLauncherNative_$version.appx" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build APPX
         shell: powershell
@@ -164,35 +127,15 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "output\$env:APPX_FILE" dist\BanditLauncher-nightly.appx -Force
-          $hash = Get-FileHash dist\BanditLauncher-nightly.appx -Algorithm SHA256
-          "$($hash.Hash.ToLowerInvariant())  BanditLauncher-nightly.appx" | Set-Content -Path dist\BanditLauncher-nightly.sha256 -Encoding ascii
+          Copy-Item "output\$env:APPX_FILE" dist\BanditLauncherNative-nightly.appx -Force
+          $hash = Get-FileHash dist\BanditLauncherNative-nightly.appx -Algorithm SHA256
+          "$($hash.Hash.ToLowerInvariant())  BanditLauncherNative-nightly.appx" | Set-Content -Path dist\BanditLauncherNative-nightly.sha256 -Encoding ascii
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BanditLauncher-nightly
+          name: BanditLauncherNative-nightly
           path: |
-            dist/BanditLauncher-nightly.appx
-            dist/BanditLauncher-nightly.sha256
+            dist/BanditLauncherNative-nightly.appx
+            dist/BanditLauncherNative-nightly.sha256
           if-no-files-found: error
-
-      - name: Move nightly tag
-        shell: powershell
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f nightly $env:GITHUB_SHA
-          git push --force origin refs/tags/nightly
-
-      - name: Publish nightly release
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          .\scripts\publish-release.ps1 `
-            -Channel nightly `
-            -Sha $env:GITHUB_SHA `
-            -AppxVersion $env:APPX_VERSION `
-            -RunUrl "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" `
-            -Asset dist\BanditLauncher-nightly.appx, dist\BanditLauncher-nightly.sha256

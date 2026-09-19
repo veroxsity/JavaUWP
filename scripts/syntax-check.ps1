@@ -32,7 +32,7 @@ try {
         /std:c++17 /EHsc $CommonClFlags /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 `
         /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME `
         /DWINAPI_FAMILY=WINAPI_FAMILY_APP `
-        /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry /I..\mouse_support
+        /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry
     if ($LASTEXITCODE -ne 0) { throw "syntax check failed" }
 }
 finally {

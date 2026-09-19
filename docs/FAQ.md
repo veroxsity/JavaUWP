@@ -7,7 +7,7 @@ Bandit Launcher does not provide any way to hack the XBOX. All code runs nativel
 ## What data does the launcher collect?
 Signing in gives the launcher your Minecraft username, account UUID and an access token, which it needs to start the game. Those stay on the console. The only thing kept between sessions is your Microsoft refresh token, stored in the Windows Credential Locker so you don't have to sign in every time.
 
-Crash and usage reporting is off until you switch it on. When it is on it sends version numbers, a mod set hash, a crash fingerprint and a stack trace, never your account details and never your log files. The full breakdown, including what the Remote Files and mouse relay servers expose on your network, is in [PRIVACY.md](PRIVACY.md).
+Crash and usage reporting is off until you switch it on. When it is on it sends version numbers, a mod set hash, a crash fingerprint and a stack trace, never your account details and never your log files. The full breakdown, including what Remote Files exposes on your network, is in [PRIVACY.md](PRIVACY.md).
 
 ## How do I turn crash reporting off?
 Answer Never when the launcher asks, or change it later in the launcher. You can also reset your install ID from there, which generates a new random one and clears anything still waiting to send.
@@ -19,13 +19,10 @@ Bandit Launcher requires a valid copy of Minecraft: Java Edition. The launcher d
 If you have Minecraft through Game Pass, you need to create an account on minecraft.net and set a player name.
 
 ## How do I use my mouse?
-On the (nightly page)[https://github.com/veroxsity/JavaUWP/tags], under mouse-relay-nightly, you can install an .exe if you want to use your Windows PC as a mouse, an APK if you want to use an Android, and an IPA if you want to use IPhone (which requires sideloading). You cannot plug your mouse directly into the XBOX, as Microsoft only allows you to use it on the Developer Mode Home.
-
-## Is the mouse relay laggy?
-The mouse relay does not lag unless you have a bad computer or *really* bad wifi. In other words, if it does lag, look into better wifi or a better device to use the relay.
+Plug a USB mouse into the Xbox. This branch packages Bandit Launcher as `Microsoft.MicrosoftEdge.BanditLauncher` so the Xbox shell can pass mouse input to it. The exact package name still needs an on-console check. The native package installs separately from the normal `BanditVault.Launcher` build and starts with its own LocalState.
 
 ## How does multiplayer work?
-You don't need a Game Pass subscription or anything else to play multiplayer. You can hop on any server you wish (ideally with mouse relay and a keyboard).
+You don't need a Game Pass subscription or anything else to play multiplayer. You can hop on any server you wish.
 
 ## I tried to add Controlify (or another controller mod) to my instance, and it didn't work. What happened?
 Before adding a different controller mod, click on the profile you're modifying and turn Bandit Controller off. That will prevent your desired controller mod from deleting itself when the game launches.

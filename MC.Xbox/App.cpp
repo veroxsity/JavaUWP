@@ -29,7 +29,7 @@
 #include "profiles.h"
 #include "auth_screen.h"
 #include "launcher_ui.h"
-#include "web_relay_server.h"
+#include "launcher_mouse.h"
 #include "app_globals.h"
 #include "loader.h"
 #include "runtime_manager.h"
@@ -166,6 +166,52 @@ static void RegisterLifecycleHandlers(ICoreApplication* coreApp) {
     }
 }
 
+using CoreWindowPointerHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CPointerEventArgs_t;
+static ComPtr<CoreWindowPointerHandler> g_pointerHandler;
+static EventRegistrationToken g_pointerMovedToken{};
+static EventRegistrationToken g_pointerPressedToken{};
+static EventRegistrationToken g_pointerReleasedToken{};
+static EventRegistrationToken g_pointerWheelToken{};
+
+static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
+    if (!window) return;
+    g_pointerHandler = Callback<CoreWindowPointerHandler>(
+        [](ICoreWindow* sender, IPointerEventArgs* args) -> HRESULT {
+            if (!sender || !args) return S_OK;
+            ComPtr<ABI::Windows::UI::Input::IPointerPoint> point;
+            if (FAILED(args->get_CurrentPoint(point.GetAddressOf())) || !point) return S_OK;
+            ABI::Windows::Foundation::Point position{};
+            ABI::Windows::Foundation::Rect bounds{};
+            point->get_Position(&position);
+            sender->get_Bounds(&bounds);
+            LauncherMouseNativeMove(position.X, position.Y, bounds.Width, bounds.Height);
+
+            ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
+            if (SUCCEEDED(point->get_Properties(props.GetAddressOf())) && props) {
+                boolean left = false;
+                props->get_IsLeftButtonPressed(&left);
+                LauncherMouseNativeLeftButton(left != 0);
+                INT32 wheel = 0;
+                props->get_MouseWheelDelta(&wheel);
+                if (wheel != 0) {
+                    LauncherMouseNativeWheel(wheel);
+                }
+            }
+            return S_OK;
+        });
+    HRESULT hr = window->add_PointerMoved(g_pointerHandler.Get(), &g_pointerMovedToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerMoved failed hr=0x%08X", hr);
+    hr = window->add_PointerPressed(g_pointerHandler.Get(), &g_pointerPressedToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerPressed failed hr=0x%08X", hr);
+    hr = window->add_PointerReleased(g_pointerHandler.Get(), &g_pointerReleasedToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerReleased failed hr=0x%08X", hr);
+    hr = window->add_PointerWheelChanged(g_pointerHandler.Get(), &g_pointerWheelToken);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerWheelChanged failed hr=0x%08X", hr);
+    hr = window->put_PointerCursor(nullptr);
+    if (FAILED(hr)) WriteLogF(L"CoreWindow put_PointerCursor(null) failed hr=0x%08X", hr);
+    WriteLog(L"CoreWindow pointer handlers installed");
+}
+
 static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
     if (!window || g_coreWindowLifecycleHooksInstalled) return;
 
@@ -223,6 +269,8 @@ static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
     if (FAILED(hr)) {
         WriteLogF(L"CoreWindow add_Activated failed hr=0x%08X", hr);
     }
+
+    RegisterCoreWindowPointerHandlers(window);
 
     g_coreWindowLifecycleHooksInstalled = true;
     WriteLog(L"CoreWindow lifecycle handlers installed");
@@ -876,34 +924,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
     RoInitialize(RO_INIT_MULTITHREADED);
 
-    typedef void (*MouseSupportVoidProc)();
-    MouseSupportVoidProc mouseSupportShutdown = nullptr;
-    HMODULE mouseSupportModule = LoadPackagedLibrary(L"mouse_support.dll", 0);
-    if (mouseSupportModule) {
-        MouseSupportVoidProc mouseSupportInit =
-            reinterpret_cast<MouseSupportVoidProc>(GetProcAddress(mouseSupportModule, "MouseSupport_Init"));
-        mouseSupportShutdown =
-            reinterpret_cast<MouseSupportVoidProc>(GetProcAddress(mouseSupportModule, "MouseSupport_Shutdown"));
-        if (mouseSupportInit) {
-            mouseSupportInit();
-            WriteLog(L"mouse_support.dll initialized at launcher startup");
-        }
-    } else {
-        WriteLogF(L"mouse_support.dll not loaded err=%lu", GetLastError());
-    }
-
-    StartWebRelayServer();
-
     ComPtr<ICoreApplication> coreApp;
     GetActivationFactory(
         HStringReference(RuntimeClass_Windows_ApplicationModel_Core_CoreApplication).Get(),
         &coreApp);
     RegisterLifecycleHandlers(coreApp.Get());
     coreApp->Run(Make<AppSource>().Get());
-    if (mouseSupportShutdown) {
-        mouseSupportShutdown();
-    }
-    StopWebRelayServer();
     RoUninitialize();
     return 0;
 }

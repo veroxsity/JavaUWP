@@ -169,9 +169,9 @@ address is written to the container log is a failed login to the private admin p
 not something the launcher ever touches. Cloudflare sits in front of the tunnel and keeps its
 own edge logs under its own policy.
 
-## Remote Files and the mouse relay
+## Remote Files
 
-Both open HTTP servers on your local network. They are built for a home network you trust.
+Remote Files opens an HTTP server on your local network. It is built for a home network you trust.
 
 Remote Files listens on port 27632 on every network interface and serves the launcher's own
 data under LocalState: profiles, worlds, mods, logs and crash reports. Access is gated by a
@@ -179,14 +179,7 @@ PIN, and that PIN appears in the URL. It is plain HTTP with no TLS, so anyone on
 network who has the URL can read and write that data, and anyone able to watch traffic on that
 network can read it in transit. It stays off unless you start it.
 
-The mouse relay page listens on port 6090 on every network interface with no authentication,
-and forwards pointer input to the launcher. It carries cursor movement and button presses, not
-files and not account data. Anyone on your network can open it and move your cursor.
-
-The companion relay apps for Windows, Android and iOS send pointer data over UDP on the local
-network. They do not touch your account.
-
-Do not expose either port to the internet.
+Do not expose this port to the internet.
 
 ## What the launcher downloads
 
@@ -203,7 +196,7 @@ Do not expose either port to the internet.
 - Reset your install ID at any time to break the link between your console and rows already
   sent.
 - Sign out to remove the stored refresh token.
-- Leave Remote Files and the mouse relay stopped.
+- Leave Remote Files stopped.
 - Delete `LocalState\telemetry` to clear consent, install ID, queue and cached feed together.
 - Email the address below with your install ID to have its rows removed from the server.
 

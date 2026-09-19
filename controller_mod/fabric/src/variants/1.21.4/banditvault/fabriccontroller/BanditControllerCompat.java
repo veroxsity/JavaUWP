@@ -54,14 +54,14 @@ public final class BanditControllerCompat {
     private static boolean crouchToggled;
     private static boolean sprintToggled;
     private static Object lastCursorScreen;
-    private static Object lastRelayCursorScreen;
-    private static double lastRelayCursorX = Double.NaN;
-    private static double lastRelayCursorY = Double.NaN;
-    private static boolean relayOwnsCursor;
+    private static Object lastMouseCursorScreen;
+    private static double lastMouseCursorX = Double.NaN;
+    private static double lastMouseCursorY = Double.NaN;
+    private static boolean mouseOwnsCursor;
     private static boolean snapStickLatched;
     private static CursorMode cursorMode = CursorMode.SNAP;
 
-    private static final double RELAY_CURSOR_MOVE_EPSILON = 0.5;
+    private static final double MOUSE_CURSOR_MOVE_EPSILON = 0.5;
     private static final double CONTROLLER_CURSOR_TAKEOVER_THRESHOLD = 0.20;
 
     private enum CursorMode {
@@ -90,7 +90,7 @@ public final class BanditControllerCompat {
                 releaseGameplayKeys(client, client.field_1755 == null);
                 crouchToggled = false;
                 sprintToggled = false;
-                relayOwnsCursor = false;
+                mouseOwnsCursor = false;
                 active = false;
             }
             return;
@@ -113,7 +113,7 @@ public final class BanditControllerCompat {
             tickScreen(client, client.field_1755);
         } else {
             BanditControllerKeyboard.close();
-            relayOwnsCursor = false;
+            mouseOwnsCursor = false;
             tickGameplay(client);
         }
 
@@ -154,8 +154,8 @@ public final class BanditControllerCompat {
         if (!active || screen == null || context == null || client == null || client.field_1755 != screen) {
             return;
         }
-        if (!relayOwnsCursor) renderControllerGuide(screen, context, client);
-        if (relayOwnsCursor || cursorX < 0.0 || cursorY < 0.0) return;
+        if (!mouseOwnsCursor) renderControllerGuide(screen, context, client);
+        if (mouseOwnsCursor || cursorX < 0.0 || cursorY < 0.0) return;
 
         int x = (int)Math.round(cursorX);
         int y = (int)Math.round(cursorY);
@@ -197,9 +197,9 @@ public final class BanditControllerCompat {
         if (!active || screen == null || client == null || client.field_1755 != screen) {
             return;
         }
-        observeRelayCursor(screen);
-        if (relayOwnsCursor) {
-            screen.method_16014(lastRelayCursorX, lastRelayCursorY);
+        observeMouseCursor(screen);
+        if (mouseOwnsCursor) {
+            screen.method_16014(lastMouseCursorX, lastMouseCursorY);
             return;
         }
         if (cursorMode == CursorMode.FREE) {
@@ -241,7 +241,7 @@ public final class BanditControllerCompat {
 
     public static int screenMouseX(class_437 screen, int fallback) {
         class_310 client = class_310.method_1551();
-        if (!active || relayOwnsCursor || cursorX < 0.0 || client == null || client.field_1755 != screen) {
+        if (!active || mouseOwnsCursor || cursorX < 0.0 || client == null || client.field_1755 != screen) {
             return fallback;
         }
         return (int)Math.round(cursorX);
@@ -249,7 +249,7 @@ public final class BanditControllerCompat {
 
     public static int screenMouseY(class_437 screen, int fallback) {
         class_310 client = class_310.method_1551();
-        if (!active || relayOwnsCursor || cursorY < 0.0 || client == null || client.field_1755 != screen) {
+        if (!active || mouseOwnsCursor || cursorY < 0.0 || client == null || client.field_1755 != screen) {
             return fallback;
         }
         return (int)Math.round(cursorY);
@@ -390,7 +390,7 @@ public final class BanditControllerCompat {
         ensureScreenCursor(screen);
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
 
-        if (cursorMode == CursorMode.SNAP && !relayOwnsCursor) {
+        if (cursorMode == CursorMode.SNAP && !mouseOwnsCursor) {
             applySnapTarget(screen, MENU_NAVIGATION.synchronize(screen, cursorX, cursorY));
         }
 
@@ -482,7 +482,7 @@ public final class BanditControllerCompat {
             cursorX = Math.max(1, screen.field_22789 / 2);
             cursorY = Math.max(1, screen.field_22790 / 2);
             snapStickLatched = false;
-            resetRelayCursorBaseline();
+            resetMouseCursorBaseline();
             MENU_NAVIGATION.reset(screen);
             if (cursorMode == CursorMode.SNAP) {
                 applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
@@ -527,8 +527,8 @@ public final class BanditControllerCompat {
     }
 
     private static void takeControllerCursor() {
-        relayOwnsCursor = false;
-        resetRelayCursorBaseline();
+        mouseOwnsCursor = false;
+        resetMouseCursorBaseline();
     }
 
     static boolean creativeSearchKeyboardAllowed() {
@@ -558,10 +558,10 @@ public final class BanditControllerCompat {
         }
     }
 
-    private static void resetRelayCursorBaseline() {
-        lastRelayCursorScreen = null;
-        lastRelayCursorX = Double.NaN;
-        lastRelayCursorY = Double.NaN;
+    private static void resetMouseCursorBaseline() {
+        lastMouseCursorScreen = null;
+        lastMouseCursorX = Double.NaN;
+        lastMouseCursorY = Double.NaN;
     }
 
     private static void updateScreenCursor(class_310 client, class_437 screen, boolean frameTimed) {
@@ -572,7 +572,7 @@ public final class BanditControllerCompat {
         BanditControllerSettings settings = BanditControllerSettings.get();
         float rawX = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
         float rawY = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        if (relayOwnsCursor) {
+        if (mouseOwnsCursor) {
             double takeoverMagnitude = Math.max(Math.abs(rawX), Math.abs(rawY));
             if (takeoverMagnitude < CONTROLLER_CURSOR_TAKEOVER_THRESHOLD) {
                 lastScreenCursorNanos = System.nanoTime();
@@ -606,7 +606,7 @@ public final class BanditControllerCompat {
         }
     }
 
-    private static void observeRelayCursor(class_437 screen) {
+    private static void observeMouseCursor(class_437 screen) {
         class_310 client = class_310.method_1551();
         if (client == null || client.field_1729 == null) {
             return;
@@ -618,22 +618,22 @@ public final class BanditControllerCompat {
             mouseX = mouseX * screen.field_22789 / Math.max(1.0, window.method_4480());
             mouseY = mouseY * screen.field_22790 / Math.max(1.0, window.method_4507());
         }
-        if (screen != lastRelayCursorScreen || Double.isNaN(lastRelayCursorX) || Double.isNaN(lastRelayCursorY)) {
-            lastRelayCursorScreen = screen;
-            lastRelayCursorX = mouseX;
-            lastRelayCursorY = mouseY;
+        if (screen != lastMouseCursorScreen || Double.isNaN(lastMouseCursorX) || Double.isNaN(lastMouseCursorY)) {
+            lastMouseCursorScreen = screen;
+            lastMouseCursorX = mouseX;
+            lastMouseCursorY = mouseY;
             return;
         }
 
-        if (Math.abs(mouseX - lastRelayCursorX) > RELAY_CURSOR_MOVE_EPSILON ||
-            Math.abs(mouseY - lastRelayCursorY) > RELAY_CURSOR_MOVE_EPSILON) {
-            if (!relayOwnsCursor) {
+        if (Math.abs(mouseX - lastMouseCursorX) > MOUSE_CURSOR_MOVE_EPSILON ||
+            Math.abs(mouseY - lastMouseCursorY) > MOUSE_CURSOR_MOVE_EPSILON) {
+            if (!mouseOwnsCursor) {
                 screen.method_48267();
             }
-            relayOwnsCursor = true;
+            mouseOwnsCursor = true;
         }
-        lastRelayCursorX = mouseX;
-        lastRelayCursorY = mouseY;
+        lastMouseCursorX = mouseX;
+        lastMouseCursorY = mouseY;
     }
 
     private static void applyLook(class_746 player, float rx, float ry, float seconds, BanditControllerSettings settings) {

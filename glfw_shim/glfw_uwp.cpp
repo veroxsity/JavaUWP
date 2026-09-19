@@ -33,7 +33,6 @@
 #include <windows.devices.input.h>
 #include <windows.ui.input.h>
 #include <windows.applicationmodel.datatransfer.h>
-#include "mouse_support_api.h"
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace Microsoft::WRL;
@@ -447,8 +446,6 @@ enum PointerDispatchKind {
     PointerDispatchExit,
     PointerDispatchCaptureLost
 };
-static constexpr double kProtocolWidth = 1920.0;
-static constexpr double kProtocolHeight = 1080.0;
 
 using CoreWindowPointerHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CPointerEventArgs_t;
 using MouseDeviceMovedHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CDevices__CInput__CMouseDevice_Windows__CDevices__CInput__CMouseEventArgs_t;
@@ -462,10 +459,7 @@ static int g_cursorMode = GLFW_CURSOR_DISABLED;
 static bool g_cursor_inside = false;
 static double g_cursor_x = 960.0;
 static double g_cursor_y = 540.0;
-static int g_gameinput_log_count = 0;
-static bool g_haveGameInputMouseState = false;
 static int g_height = 1080;
-static GameInputMouseState g_lastGameInputMouseState = {};
 static double g_menu_abs_x = 960.0;
 static double g_menu_abs_y = 540.0;
 static ComPtr<ABI::Windows::Devices::Input::IMouseDevice> g_mouseDevice;
@@ -473,7 +467,6 @@ static bool g_mouseDeviceHooksInstalled = false;
 static ComPtr<MouseDeviceMovedHandler> g_mouseMovedHandler;
 static EventRegistrationToken g_mouseMovedToken = {};
 static int g_mouse_log_count = 0;
-static int g_menu_abs_log_count = 0;
 static unsigned char g_mouse_state[8] = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerCaptureLostHandler;
 static EventRegistrationToken g_pointerCaptureLostToken = {};
@@ -491,8 +484,6 @@ static EventRegistrationToken g_pointerReleasedToken = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerWheelHandler;
 static EventRegistrationToken g_pointerWheelToken = {};
 static bool g_raw_mouse_motion = false;
-static bool g_mouse_active_latched = false;
-static const DWORD kMouseCompanionTimeoutMs = 3000;
 static const ULONGLONG kDisplayScaleCacheMs = 500;
 static int g_width = 1920;
 static volatile LONG g_processing_events = 0;
@@ -503,7 +494,7 @@ static bool g_controller_bridge_enabled = false;
 
 enum CursorInputOwner : LONG {
     CursorInputOwnerNone = 0,
-    CursorInputOwnerRelay = 1,
+    CursorInputOwnerMouse = 1,
     CursorInputOwnerController = 2,
 };
 static volatile LONG g_cursor_input_owner = CursorInputOwnerNone;
@@ -516,29 +507,16 @@ static void DispatchCursorPos(double x, double y);
 static double ClampDouble(double value, double minValue, double maxValue);
 static double CursorMaxX();
 static double CursorMaxY();
-static double ProtocolToWindowX(double x);
-static double ProtocolToWindowY(double y);
-static double WindowToProtocolX(double x);
-static double WindowToProtocolY(double y);
-static void SendCursorOverlayState();
-static void SendMouseRelayCursorSync(double x, double y);
+static double MenuInputToWindowX(double x);
+static double MenuInputToWindowY(double y);
 static void DispatchMouseDelta(double dx, double dy);
-static void DispatchMouseAbsolute(double x, double y);
-static void DispatchMouseWindowAbsolute(double x, double y);
-static void FireRemoteMouseButtonCallback(int button, int action);
-static void SetRemoteMouseButtonState(int button, int action);
 static void SetMouseButtonState(int button, int action, bool fireCallback);
 static bool AnyMouseButtonDown();
-static void DrainRemoteMouseInput();
-static void PushMouseHostState();
-static bool MouseCompanionActive();
-static void FlushMouseButtonsForDeactivate();
 static int SyntheticScancodeForKey(int key);
 static void SetControllerKeyState(int key, bool down);
 static void ReleaseControllerKeys();
 static void SetControllerMouseButtonState(int button, bool down);
 static void ReleaseControllerMouseButtons();
-static int ClampInt64ToInt(int64_t value);
 static bool SyncMouseButtonsFromProperties(ABI::Windows::UI::Input::IPointerPointProperties* props, bool fireCallbacks);
 static bool ButtonActionFromUpdateKind(
     ABI::Windows::UI::Input::PointerUpdateKind kind,
@@ -551,9 +529,6 @@ static bool ReadPointerEvent(
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties>* propsOut);
 static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind);
 static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs* args);
-static void PollCoreWindowPointerPosition();
-static void SyncGameInputMouseButtons(GameInputMouseButtons buttons);
-static void PollGameInputMouse();
 static float ApplyDeadzone(float value, float deadzone);
 static bool IsGamepadButtonDown(const GameInputGamepadState& state, GameInputGamepadButtons button);
 static void UpdateControllerBridge(const GameInputGamepadState& state);
@@ -1487,8 +1462,8 @@ static void SetCursorInputOwner(CursorInputOwner owner) {
     const LONG previous = InterlockedExchange(&g_cursor_input_owner, owner);
     if (previous == owner) return;
 
-    const char* name = owner == CursorInputOwnerRelay
-        ? "relay"
+    const char* name = owner == CursorInputOwnerMouse
+        ? "mouse"
         : (owner == CursorInputOwnerController ? "controller" : "none");
     ShimLog("Cursor input owner: %s", name);
 }
@@ -1596,10 +1571,9 @@ static bool PollGameInputGamepad(bool fireCallbacks) {
     }
 
     ConvertGameInputGamepadState(state);
-    if (g_cursorMode != GLFW_CURSOR_DISABLED && CurrentCursorInputOwner() == CursorInputOwnerRelay) {
+    if (g_cursorMode != GLFW_CURSOR_DISABLED && CurrentCursorInputOwner() == CursorInputOwnerMouse) {
         if (GamepadHasMenuCursorIntent(state)) {
             SetCursorInputOwner(CursorInputOwnerController);
-            SendCursorOverlayState();
         }
     }
     if (fireCallbacks) {
@@ -1821,10 +1795,6 @@ static bool AcquireCoreWindow() {
     InstallKeyboardHooks();
     InstallPointerHooks();
     InstallMouseDeviceHooks();
-    if (!MouseSupport_IsRunning()) {
-        MouseSupport_Init();
-    }
-    PushMouseHostState();
     return true;
 }
 
@@ -2209,7 +2179,7 @@ static double CurrentPointerScaleY() {
 static void DispatchCursorEnter(bool entered) {
     if (g_cursor_inside == entered) return;
     g_cursor_inside = entered;
-    if (g_cursorenter_cb && MouseCompanionActive()) {
+    if (g_cursorenter_cb && CurrentCursorInputOwner() == CursorInputOwnerMouse) {
         g_cursorenter_cb((GLFWwindow*)&g_fake_window, entered ? GLFW_TRUE : GLFW_FALSE);
     }
 }
@@ -2232,13 +2202,12 @@ static void DispatchCursorPosInternal(double x, double y, bool updateOverlayPosi
 
 
     if (g_cursorMode != GLFW_CURSOR_DISABLED && updateOverlayPosition) {
-        g_menu_abs_x = g_cursor_x;
-        g_menu_abs_y = g_cursor_y;
-        SendCursorOverlayState();
+        g_menu_abs_x = MenuInputToWindowX(g_cursor_x);
+        g_menu_abs_y = MenuInputToWindowY(g_cursor_y);
     }
 
     DispatchCursorEnter(true);
-    if (g_cursorpos_cb && MouseCompanionActive()) {
+    if (g_cursorpos_cb && CurrentCursorInputOwner() == CursorInputOwnerMouse) {
         g_cursorpos_cb((GLFWwindow*)&g_fake_window, g_cursor_x, g_cursor_y);
     }
 }
@@ -2273,36 +2242,13 @@ static double CursorMaxX() {
 static double CursorMaxY() {
     return g_window_height > 1 ? (double)(g_window_height - 1) : 0.0;
 }
-static double ProtocolToWindowX(double x) {
-    return g_window_width > 0 ? x * ((double)g_window_width / kProtocolWidth) : x;
-}
-static double ProtocolToWindowY(double y) {
-    return g_window_height > 0 ? y * ((double)g_window_height / kProtocolHeight) : y;
-}
-static double WindowToProtocolX(double x) {
-    return g_window_width > 0 ? x * (kProtocolWidth / (double)g_window_width) : x;
-}
-static double WindowToProtocolY(double y) {
-    return g_window_height > 0 ? y * (kProtocolHeight / (double)g_window_height) : y;
-}
-static void SendCursorOverlayState() {
-    const int visible = (g_cursorMode == GLFW_CURSOR_NORMAL &&
-        CurrentCursorInputOwner() == CursorInputOwnerRelay) ? 1 : 0;
-    MouseSupport_UpdateOverlay(g_menu_abs_x, g_menu_abs_y, visible);
-}
-static void SendMouseRelayCursorSync(double x, double y) {
-    MouseSupport_SendCursorSync(x, y);
-}
-static void SendMouseRelayWindowCursorSync(double x, double y) {
-    MouseSupport_SendWindowCursorSync(x, y);
-}
 static void DispatchMouseDelta(double dx, double dy) {
     if (dx == 0.0 && dy == 0.0) return;
 
     if (!g_cursorDisabled) {
         g_menu_abs_x = ClampDouble(g_menu_abs_x + dx, 0.0, CursorMaxX());
         g_menu_abs_y = ClampDouble(g_menu_abs_y + dy, 0.0, CursorMaxY());
-        DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), true);
+        DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), false);
     } else {
         DispatchCursorPos(g_cursor_x + dx, g_cursor_y + dy);
     }
@@ -2313,58 +2259,14 @@ static void DispatchMouseDelta(double dx, double dy) {
             dx, dy, g_cursor_x, g_cursor_y, g_cursorMode);
     }
 }
-static void DispatchMouseAbsolute(double x, double y) {
-    g_menu_abs_x = ClampDouble(ProtocolToWindowX(x), 0.0, CursorMaxX());
-    g_menu_abs_y = ClampDouble(ProtocolToWindowY(y), 0.0, CursorMaxY());
-    const double inputX = WindowToMenuInputX(g_menu_abs_x);
-    const double inputY = WindowToMenuInputY(g_menu_abs_y);
-    DispatchCursorPosInternal(inputX, inputY, false);
-    SendCursorOverlayState();
-    if (g_menu_abs_log_count < 12) {
-        ++g_menu_abs_log_count;
-        ShimLog("RemoteMouse ABS protocol=%.1f,%.1f -> window=%.1f,%.1f input=%.1f,%.1f (win %dx%d menu %dx%d)",
-            x, y, g_menu_abs_x, g_menu_abs_y,
-            inputX, inputY,
-            g_window_width, g_window_height, g_menu_window_width, g_menu_window_height);
-    }
-}
-static void DispatchMouseWindowAbsolute(double x, double y) {
-    g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
-    g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
-    const double inputX = WindowToMenuInputX(g_menu_abs_x);
-    const double inputY = WindowToMenuInputY(g_menu_abs_y);
-    DispatchCursorPosInternal(inputX, inputY, false);
-    SendCursorOverlayState();
-    if (g_menu_abs_log_count < 12) {
-        ++g_menu_abs_log_count;
-        ShimLog("RemoteMouse ABSW window=%.1f,%.1f -> input=%.1f,%.1f (win %dx%d menu %dx%d)",
-            g_menu_abs_x, g_menu_abs_y,
-            inputX, inputY,
-            g_window_width, g_window_height, g_menu_window_width, g_menu_window_height);
-    }
-}
-static void FireRemoteMouseButtonCallback(int button, int action) {
-    if (g_mousebutton_cb && MouseCompanionActive()) {
-        const int mods = CurrentGlfwMods();
-        g_mousebutton_cb((GLFWwindow*)&g_fake_window, button, action, mods);
-    }
-}
-static void SetRemoteMouseButtonState(int button, int action) {
-    if (button < 0 || button >= (int)sizeof(g_mouse_state)) return;
-    const unsigned char state = action == GLFW_RELEASE ? GLFW_RELEASE : GLFW_PRESS;
-    if (g_mouse_state[button] == state) return;
-
-    g_mouse_state[button] = state;
-    FireRemoteMouseButtonCallback(button, action);
-}
 static void SetMouseButtonState(int button, int action, bool fireCallback) {
     if (button < 0 || button >= (int)sizeof(g_mouse_state)) return;
     const unsigned char state = action == GLFW_RELEASE ? GLFW_RELEASE : GLFW_PRESS;
     if (g_mouse_state[button] == state) return;
 
     g_mouse_state[button] = state;
-    if (fireCallback) {
-        FireRemoteMouseButtonCallback(button, state);
+    if (fireCallback && g_mousebutton_cb) {
+        g_mousebutton_cb((GLFWwindow*)&g_fake_window, button, state, CurrentGlfwMods());
     }
 }
 static bool AnyMouseButtonDown() {
@@ -2372,63 +2274,6 @@ static bool AnyMouseButtonDown() {
         if (g_mouse_state[i]) return true;
     }
     return false;
-}
-static bool MouseCompanionActive() {
-    const unsigned int last = MouseSupport_LastActivityTickMs();
-    if (last == 0) return false;
-    return (DWORD)(GetTickCount() - (DWORD)last) <= kMouseCompanionTimeoutMs;
-}
-static void FlushMouseButtonsForDeactivate() {
-    for (int i = 0; i < (int)sizeof(g_mouse_state); ++i) {
-        if (g_mouse_state[i]) {
-            g_mouse_state[i] = GLFW_RELEASE;
-            if (g_mousebutton_cb) {
-                g_mousebutton_cb((GLFWwindow*)&g_fake_window, i, GLFW_RELEASE, CurrentGlfwMods());
-            }
-        }
-    }
-}
-static void PushMouseHostState() {
-    MouseSupportHostState state;
-    state.windowWidth = g_window_width;
-    state.windowHeight = g_window_height;
-    state.menuWidth = g_menu_window_width;
-    state.menuHeight = g_menu_window_height;
-    state.cursorMode = g_cursorMode;
-    state.menuCursorX = g_menu_abs_x;
-    state.menuCursorY = g_menu_abs_y;
-    MouseSupport_SetHostState(&state);
-}
-static void DrainRemoteMouseInput() {
-    MouseSupportFrame frame;
-    if (!MouseSupport_PollFrame(&frame)) return;
-
-    bool activity = false;
-    if (frame.hasAbsolute) {
-        if (frame.absoluteWindow) {
-            DispatchMouseWindowAbsolute(frame.absX, frame.absY);
-        } else {
-            DispatchMouseAbsolute(frame.absX, frame.absY);
-        }
-        activity = true;
-    } else if (frame.dx != 0.0 || frame.dy != 0.0) {
-        DispatchMouseDelta(frame.dx, frame.dy);
-        activity = true;
-    }
-
-    if (frame.wheel != 0.0 && g_scroll_cb && MouseCompanionActive()) {
-        g_scroll_cb((GLFWwindow*)&g_fake_window, 0.0, frame.wheel);
-        activity = true;
-    }
-
-    for (int i = 0; i < frame.buttonCount; ++i) {
-        SetRemoteMouseButtonState(frame.buttons[i].button, frame.buttons[i].action);
-        activity = true;
-    }
-
-    if (activity) {
-        SetCursorInputOwner(CursorInputOwnerRelay);
-    }
 }
 static int SyntheticScancodeForKey(int key) {
     switch (key) {
@@ -2489,11 +2334,6 @@ static void ReleaseControllerMouseButtons() {
             SetControllerMouseButtonState(i, false);
         }
     }
-}
-static int ClampInt64ToInt(int64_t value) {
-    if (value > INT_MAX) return INT_MAX;
-    if (value < INT_MIN) return INT_MIN;
-    return (int)value;
 }
 static bool SyncMouseButtonsFromProperties(ABI::Windows::UI::Input::IPointerPointProperties* props, bool fireCallbacks) {
     if (!props) return false;
@@ -2576,13 +2416,13 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
         return;
     }
 
+    SetCursorInputOwner(CursorInputOwnerMouse);
+
     double x = g_cursor_x;
     double y = g_cursor_y;
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
-    if (hasPoint) {
-        DispatchCursorPos(x, y);
-    } else if (kind == PointerDispatchEnter) {
+    if (!hasPoint && kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
 
@@ -2599,7 +2439,7 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
             }
         }
 
-        if (kind == PointerDispatchWheel && g_scroll_cb && MouseCompanionActive()) {
+        if (kind == PointerDispatchWheel && g_scroll_cb) {
             INT32 wheelDelta = 0;
             boolean horizontal = false;
             props->get_IsHorizontalMouseWheel(&horizontal);
@@ -2636,110 +2476,16 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
-    DispatchMouseDelta(delta.X, delta.Y);
-}
-static void PollCoreWindowPointerPosition() {
-    if (!g_coreWindow || g_cursorDisabled ||
-        MouseSupport_LastActivityTickMs() != 0) {
+    SetCursorInputOwner(CursorInputOwnerMouse);
+    if (g_cursorDisabled) {
+        DispatchMouseDelta(delta.X, delta.Y);
         return;
     }
-
-    Point position = {};
-    if (FAILED(g_coreWindow->get_PointerPosition(&position))) return;
-
-    const double x = (double)position.X * CurrentPointerScaleX();
-    const double y = (double)position.Y * CurrentPointerScaleY();
-    if (x == g_cursor_x && y == g_cursor_y) return;
-
-    g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
-    g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
-    DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), true);
-    if (g_mouse_log_count < 24) {
-        ++g_mouse_log_count;
-        ShimLog("Pointer position poll cursor=%.1f,%.1f", g_cursor_x, g_cursor_y);
-    }
-}
-static unsigned int g_lastSyncedGameInputButtons = 0;
-static void SyncGameInputMouseButtons(GameInputMouseButtons buttons) {
-
-    const unsigned int now = (unsigned int)buttons;
-    const unsigned int changed = now ^ g_lastSyncedGameInputButtons;
-    g_lastSyncedGameInputButtons = now;
-    if (!changed) return;
-
-    if (changed & GameInputMouseLeftButton)
-        SetMouseButtonState(GLFW_MOUSE_BUTTON_LEFT,
-            (now & GameInputMouseLeftButton) ? GLFW_PRESS : GLFW_RELEASE, true);
-    if (changed & GameInputMouseRightButton)
-        SetMouseButtonState(GLFW_MOUSE_BUTTON_RIGHT,
-            (now & GameInputMouseRightButton) ? GLFW_PRESS : GLFW_RELEASE, true);
-    if (changed & GameInputMouseMiddleButton)
-        SetMouseButtonState(GLFW_MOUSE_BUTTON_MIDDLE,
-            (now & GameInputMouseMiddleButton) ? GLFW_PRESS : GLFW_RELEASE, true);
-    if (changed & GameInputMouseButton4)
-        SetMouseButtonState(GLFW_MOUSE_BUTTON_4,
-            (now & GameInputMouseButton4) ? GLFW_PRESS : GLFW_RELEASE, true);
-    if (changed & GameInputMouseButton5)
-        SetMouseButtonState(GLFW_MOUSE_BUTTON_5,
-            (now & GameInputMouseButton5) ? GLFW_PRESS : GLFW_RELEASE, true);
-}
-static void PollGameInputMouse() {
-    if (!EnsureGameInput()) return;
-
-    ComPtr<IGameInputReading> reading;
-    HRESULT hr = g_gameInput->GetCurrentReading(GameInputKindMouse, nullptr, reading.GetAddressOf());
-    if (FAILED(hr) || !reading) {
-        if (g_gameinput_log_count < 8) {
-            ++g_gameinput_log_count;
-            ShimLog("GameInput mouse reading unavailable hr=0x%08X", hr);
-        }
-        return;
-    }
-
-    GameInputMouseState state = {};
-    if (!reading->GetMouseState(&state)) {
-        if (g_gameinput_log_count < 8) {
-            ++g_gameinput_log_count;
-            ShimLog("GameInput GetMouseState returned false kind=0x%X", reading->GetInputKind());
-        }
-        return;
-    }
-
-    SyncGameInputMouseButtons(state.buttons);
-
-    if (!g_haveGameInputMouseState) {
-        g_lastGameInputMouseState = state;
-        g_haveGameInputMouseState = true;
-        if (g_gameinput_log_count < 16) {
-            ++g_gameinput_log_count;
-            ShimLog("GameInput mouse ready kind=0x%X buttons=0x%X pos=%lld,%lld wheel=%lld,%lld",
-                reading->GetInputKind(), (unsigned)state.buttons,
-                (long long)state.positionX, (long long)state.positionY,
-                (long long)state.wheelX, (long long)state.wheelY);
-        }
-        return;
-    }
-
-    const int64_t dx = state.positionX - g_lastGameInputMouseState.positionX;
-    const int64_t dy = state.positionY - g_lastGameInputMouseState.positionY;
-    const int64_t wheelX = state.wheelX - g_lastGameInputMouseState.wheelX;
-    const int64_t wheelY = state.wheelY - g_lastGameInputMouseState.wheelY;
-    g_lastGameInputMouseState = state;
-
-    if (dx || dy) {
-        DispatchMouseDelta(ClampInt64ToInt(dx), ClampInt64ToInt(dy));
-    }
-    if ((wheelX || wheelY) && g_scroll_cb && MouseCompanionActive()) {
-        g_scroll_cb((GLFWwindow*)&g_fake_window, (double)wheelX, (double)wheelY);
-    }
-
-    if (g_gameinput_log_count < 32 && (dx || dy || wheelX || wheelY || state.buttons)) {
-        ++g_gameinput_log_count;
-        ShimLog("GameInput mouse delta dx=%lld dy=%lld wheel=%lld,%lld buttons=0x%X cursor=%.1f,%.1f",
-            (long long)dx, (long long)dy,
-            (long long)wheelX, (long long)wheelY,
-            (unsigned)state.buttons, g_cursor_x, g_cursor_y);
-    }
+    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + (double)delta.X, 0.0, CursorMaxX());
+    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + (double)delta.Y, 0.0, CursorMaxY());
+    g_menu_abs_x = windowX;
+    g_menu_abs_y = windowY;
+    DispatchCursorPosInternal(WindowToMenuInputX(windowX), WindowToMenuInputY(windowY), false);
 }
 static float ApplyDeadzone(float value, float deadzone) {
     const float absValue = value < 0.0f ? -value : value;
@@ -3220,23 +2966,8 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
             ShimLog("Skipping ProcessEvents off dispatcher thread hr=0x%08X access=%d", accessHr, hasDispatcherAccess ? 1 : 0);
         }
     }
-    PushMouseHostState();
-    const bool mouseCompanionActive = MouseCompanionActive();
-    if (!mouseCompanionActive && g_mouse_active_latched) {
-
-        FlushMouseButtonsForDeactivate();
-    }
-    g_mouse_active_latched = mouseCompanionActive;
-
-    if (mouseCompanionActive) {
-        DrainRemoteMouseInput();
-        PollGameInputMouse();
-    }
     if (g_controller_bridge_enabled) {
         PollGameInputGamepad(true);
-    }
-    if (mouseCompanionActive && !g_gamepad_present) {
-        PollCoreWindowPointerPosition();
     }
     RefreshWindowMetrics(true);
 }
@@ -3279,19 +3010,11 @@ extern "C" __declspec(dllexport) void glfwSetInputMode(GLFWwindow*, int mode, in
 
     g_cursorMode = value;
     g_cursorDisabled = (value == GLFW_CURSOR_DISABLED);
-    PushMouseHostState();
     if (!g_cursorDisabled) {
-        g_menu_abs_x = ClampDouble(g_cursor_x, 0.0, CursorMaxX());
-        g_menu_abs_y = ClampDouble(g_cursor_y, 0.0, CursorMaxY());
-        DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+        g_menu_abs_x = ClampDouble(MenuInputToWindowX(g_cursor_x), 0.0, CursorMaxX());
+        g_menu_abs_y = ClampDouble(MenuInputToWindowY(g_cursor_y), 0.0, CursorMaxY());
+        DispatchCursorPosInternal(g_cursor_x, g_cursor_y, false);
     }
-    if (value == GLFW_CURSOR_NORMAL) {
-
-
-        SendMouseRelayCursorSync(WindowToProtocolX(g_menu_abs_x), WindowToProtocolY(g_menu_abs_y));
-        SendMouseRelayWindowCursorSync(g_menu_abs_x, g_menu_abs_y);
-    }
-    SendCursorOverlayState();
     ShimLog("Cursor mode %s", g_cursorDisabled ? "GAMEPLAY" : "MENU");
     if (!AcquireCoreWindow()) return;
 
@@ -3426,27 +3149,9 @@ extern "C" __declspec(dllexport) void glfwSetCursorPos(GLFWwindow*, double x, do
         return;
     }
 
-    if (CurrentCursorInputOwner() == CursorInputOwnerRelay) {
-        g_menu_abs_x = ClampDouble(MenuInputToWindowX(x), 0.0, CursorMaxX());
-        g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
-        DispatchCursorPosInternal(x, y, false);
-    } else {
-        g_menu_abs_x = ClampDouble(MenuInputToWindowX(x), 0.0, CursorMaxX());
-        g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
-        DispatchCursorPosInternal(x, y, true);
-    }
-    SendCursorOverlayState();
-
-    if (!AcquireCoreWindow()) return;
-    ComPtr<ICoreWindow2> coreWindow2;
-    if (SUCCEEDED(g_coreWindow.As(&coreWindow2)) && coreWindow2) {
-        Point position = {};
-        const double sx = CurrentPointerScaleX();
-        const double sy = CurrentPointerScaleY();
-        position.X = (FLOAT)(sx > 0.0 ? g_menu_abs_x / sx : g_menu_abs_x);
-        position.Y = (FLOAT)(sy > 0.0 ? g_menu_abs_y / sy : g_menu_abs_y);
-        coreWindow2->put_PointerPosition(position);
-    }
+    g_menu_abs_x = ClampDouble(MenuInputToWindowX(x), 0.0, CursorMaxX());
+    g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
+    DispatchCursorPosInternal(x, y, false);
 }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateCursor(const GLFWimage*, int, int) { return (GLFWcursor*)1; }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateStandardCursor(int) { return (GLFWcursor*)1; }
@@ -3938,9 +3643,8 @@ extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
         ++g_swap_log_count;
         ShimLog("glfwSwapBuffers #%d", g_swap_log_count);
     }
-    if (MouseCompanionActive() &&
-        g_cursorMode == GLFW_CURSOR_NORMAL &&
-        CurrentCursorInputOwner() == CursorInputOwnerRelay) {
+    if (g_cursorMode == GLFW_CURSOR_NORMAL &&
+        CurrentCursorInputOwner() == CursorInputOwnerMouse) {
         bandit_cursor::Draw();
     }
     if (wglb::Active()) {

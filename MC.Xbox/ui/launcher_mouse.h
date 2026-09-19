@@ -2,11 +2,8 @@
 
 class LauncherMouse {
 public:
-    LauncherMouse();
-    ~LauncherMouse();
-
-    bool Available() const { return available_; }
-    bool Visible() const { return available_ && connected_ && seeded_; }
+    bool Available() const { return visible_; }
+    bool Visible() const { return visible_; }
     float X() const { return x_; }
     float Y() const { return y_; }
 
@@ -15,23 +12,18 @@ public:
     float TakeWheel();
 
 private:
-    void PushHostState(float renderWidth, float renderHeight);
-
-    void* module_ = nullptr;
-    void* pollProc_ = nullptr;
-    void* activityProc_ = nullptr;
-    void* setHostProc_ = nullptr;
-    bool available_ = false;
-    bool connected_ = false;
-    bool seeded_ = false;
+    bool visible_ = false;
     float x_ = 0.0f;
     float y_ = 0.0f;
-    bool prevLeftDown_ = false;
     bool clickLatched_ = false;
     float wheel_ = 0.0f;
 };
 
 LauncherMouse& LauncherMouseInstance();
+
+void LauncherMouseNativeMove(float dipX, float dipY, float windowWidthDip, float windowHeightDip);
+void LauncherMouseNativeLeftButton(bool down);
+void LauncherMouseNativeWheel(int wheelDelta);
 
 namespace launchhit {
 constexpr int kNone = -1;

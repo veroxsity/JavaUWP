@@ -33,8 +33,7 @@ $ProjectConfig = [ordered]@{
     MetadataCacheDir         = "staging/cache/metadata"
     PackageContentDir        = "staging/package"
     CertificateDir           = "staging/certs"
-    CertificateFileName      = "MC_DevMode.pfx"
+    CertificateFileName      = "MC_DevMode_Edge_BanditLauncher.pfx"
     # throwaway password for a local dev-mode self-signed cert, the pfx itself is gitignored
     CertificatePassword      = if ($env:APPX_CERT_PASSWORD) { $env:APPX_CERT_PASSWORD } else { "devmode" }
-    DefaultCertificateSubject = "CN=BanditVault"
 }

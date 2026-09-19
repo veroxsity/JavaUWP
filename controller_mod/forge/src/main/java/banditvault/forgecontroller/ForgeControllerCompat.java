@@ -27,7 +27,7 @@ public final class ForgeControllerCompat {
     private static final int GAMEPAD_ID = GLFW.GLFW_JOYSTICK_1;
     private static final int LEFT_CLICK = 0;
     private static final int RIGHT_CLICK = 1;
-    private static final double RELAY_CURSOR_MOVE_EPSILON = 0.75;
+    private static final double MOUSE_CURSOR_MOVE_EPSILON = 0.75;
     private static final double CONTROLLER_CURSOR_TAKEOVER_THRESHOLD = 0.35;
 
     private static final GLFWGamepadState GLFW_STATE = GLFWGamepadState.create();
@@ -53,10 +53,10 @@ public final class ForgeControllerCompat {
     private static long renderFrameActiveNanos;
     private static boolean loggedLookApplied;
     private static Object lastCursorScreen;
-    private static Object lastRelayCursorScreen;
-    private static double lastRelayCursorX = Double.NaN;
-    private static double lastRelayCursorY = Double.NaN;
-    private static boolean relayOwnsCursor;
+    private static Object lastMouseCursorScreen;
+    private static double lastMouseCursorX = Double.NaN;
+    private static double lastMouseCursorY = Double.NaN;
+    private static boolean mouseOwnsCursor;
     private static double renderedCursorX = -1.0;
     private static double renderedCursorY = -1.0;
     private static long lastRenderedCursorNanos;
@@ -154,7 +154,7 @@ public final class ForgeControllerCompat {
         if (!active || screen == null || graphics == null) {
             return;
         }
-        if (relayOwnsCursor || renderedCursorX < 0.0 || renderedCursorY < 0.0) {
+        if (mouseOwnsCursor || renderedCursorX < 0.0 || renderedCursorY < 0.0) {
             return;
         }
         int x = (int) Math.round(renderedCursorX);
@@ -176,9 +176,9 @@ public final class ForgeControllerCompat {
         if (!active || screen == null || Minecraft.m_91087_() == null || Minecraft.m_91087_().f_91080_ != screen) {
             return;
         }
-        observeRelayCursor(screen);
-        if (relayOwnsCursor) {
-            invokeScreenMouseMoved(screen, lastRelayCursorX, lastRelayCursorY);
+        observeMouseCursor(screen);
+        if (mouseOwnsCursor) {
+            invokeScreenMouseMoved(screen, lastMouseCursorX, lastMouseCursorY);
             lastRenderedCursorNanos = System.nanoTime();
             return;
         }
@@ -193,14 +193,14 @@ public final class ForgeControllerCompat {
     }
 
     public static int screenMouseX(int fallback) {
-        if (!active || relayOwnsCursor || cursorX < 0.0) {
+        if (!active || mouseOwnsCursor || cursorX < 0.0) {
             return fallback;
         }
         return (int) Math.round(cursorX);
     }
 
     public static int screenMouseY(int fallback) {
-        if (!active || relayOwnsCursor || cursorY < 0.0) {
+        if (!active || mouseOwnsCursor || cursorY < 0.0) {
             return fallback;
         }
         return (int) Math.round(cursorY);
@@ -323,7 +323,7 @@ public final class ForgeControllerCompat {
         ensureScreenCursor(screen);
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
 
-        if (cursorMode == CursorMode.SNAP && !relayOwnsCursor) {
+        if (cursorMode == CursorMode.SNAP && !mouseOwnsCursor) {
             applySnapTarget(screen, MENU_NAVIGATION.synchronize(screen, cursorX, cursorY));
         }
 
@@ -479,8 +479,8 @@ public final class ForgeControllerCompat {
     }
 
     private static void takeControllerCursor() {
-        relayOwnsCursor = false;
-        resetRelayCursorBaseline();
+        mouseOwnsCursor = false;
+        resetMouseCursorBaseline();
     }
 
     private static void updateScreenCursor(Minecraft client, Screen screen, boolean frameTimed) {
@@ -491,7 +491,7 @@ public final class ForgeControllerCompat {
         ForgeControllerSettings settings = ForgeControllerSettings.get();
         float rawX = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
         float rawY = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        if (relayOwnsCursor) {
+        if (mouseOwnsCursor) {
             double takeoverMagnitude = Math.max(Math.abs(rawX), Math.abs(rawY));
             if (takeoverMagnitude < CONTROLLER_CURSOR_TAKEOVER_THRESHOLD) {
                 lastScreenCursorNanos = System.nanoTime();
@@ -525,7 +525,7 @@ public final class ForgeControllerCompat {
         }
     }
 
-    private static void observeRelayCursor(Screen screen) {
+    private static void observeMouseCursor(Screen screen) {
         Minecraft client = Minecraft.m_91087_();
         if (client == null || client.f_91067_ == null) {
             return;
@@ -536,28 +536,28 @@ public final class ForgeControllerCompat {
             mouseX = client.f_91067_.m_91589_() * screen.f_96543_ / Math.max(1.0, client.m_91268_().m_85441_());
             mouseY = client.f_91067_.m_91594_() * screen.f_96544_ / Math.max(1.0, client.m_91268_().m_85442_());
         }
-        if (screen != lastRelayCursorScreen || Double.isNaN(lastRelayCursorX) || Double.isNaN(lastRelayCursorY)) {
-            lastRelayCursorScreen = screen;
-            lastRelayCursorX = mouseX;
-            lastRelayCursorY = mouseY;
+        if (screen != lastMouseCursorScreen || Double.isNaN(lastMouseCursorX) || Double.isNaN(lastMouseCursorY)) {
+            lastMouseCursorScreen = screen;
+            lastMouseCursorX = mouseX;
+            lastMouseCursorY = mouseY;
             return;
         }
 
-        if (Math.abs(mouseX - lastRelayCursorX) > RELAY_CURSOR_MOVE_EPSILON ||
-            Math.abs(mouseY - lastRelayCursorY) > RELAY_CURSOR_MOVE_EPSILON) {
-            if (!relayOwnsCursor) {
+        if (Math.abs(mouseX - lastMouseCursorX) > MOUSE_CURSOR_MOVE_EPSILON ||
+            Math.abs(mouseY - lastMouseCursorY) > MOUSE_CURSOR_MOVE_EPSILON) {
+            if (!mouseOwnsCursor) {
                 ForgeMenuNavigation.clearFocus(screen);
             }
-            relayOwnsCursor = true;
+            mouseOwnsCursor = true;
         }
-        lastRelayCursorX = mouseX;
-        lastRelayCursorY = mouseY;
+        lastMouseCursorX = mouseX;
+        lastMouseCursorY = mouseY;
     }
 
-    private static void resetRelayCursorBaseline() {
-        lastRelayCursorScreen = null;
-        lastRelayCursorX = Double.NaN;
-        lastRelayCursorY = Double.NaN;
+    private static void resetMouseCursorBaseline() {
+        lastMouseCursorScreen = null;
+        lastMouseCursorX = Double.NaN;
+        lastMouseCursorY = Double.NaN;
     }
 
     private static void applyLook(LocalPlayer player, float rx, float ry, float seconds, ForgeControllerSettings settings) {

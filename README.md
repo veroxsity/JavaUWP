@@ -118,6 +118,7 @@ Other catalog entries (additional Forge versions, older vanilla targets, and fut
 - Custom GLFW shim for UWP windowing, input, gamepad state, and EGL.
 - Mesa based graphics path for Xbox Series consoles.
 - Native USB mouse input path in launcher menus and in game on Xbox Dev Mode.
+- Separate menu and game mouse sensitivity settings in the launcher.
 - Controller snap and free cursor modes can still be switched in menus.
 - GameInput based controller support through the GLFW shim.
 - Bundled Bandit controller layer for every supported Fabric target from `1.16.5` through `1.21.11`, `1.20.1` Forge, and `1.21.1` NeoForge.

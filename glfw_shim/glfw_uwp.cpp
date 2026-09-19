@@ -1,6 +1,3 @@
-// glfw_uwp.cpp - GLFW WinRT/EGL shim for Minecraft Java UWP (Xbox Series S)
-// Replaces glfw.dll inside lwjgl-glfw-3.3.3-natives-windows.jar.
-
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
@@ -25,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <climits>
+#include <cwchar>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -46,9 +44,6 @@ using namespace ABI::Windows::UI::Core;
 using namespace ABI::Windows::UI::Input;
 using namespace ABI::Windows::ApplicationModel::DataTransfer;
 
-// ---------------------------------------------------------------------------
-// Minimal GLFW 3.3.x types
-// ---------------------------------------------------------------------------
 typedef struct GLFWwindow_  GLFWwindow;
 typedef struct GLFWmonitor_ GLFWmonitor;
 typedef struct GLFWcursor_  GLFWcursor;
@@ -251,9 +246,6 @@ typedef struct { unsigned char buttons[15]; float axes[6]; } GLFWgamepadstate;
 #define GL_RENDERER 0x1F01
 #define GL_VERSION  0x1F02
 
-// ---------------------------------------------------------------------------
-// Minimal EGL types and constants
-// ---------------------------------------------------------------------------
 typedef void* EGLDisplay;
 typedef void* EGLSurface;
 typedef void* EGLContext;
@@ -315,9 +307,6 @@ typedef EGLBoolean (WINAPI* PFN_eglGetConfigAttrib)(EGLDisplay, EGLConfig, EGLin
 typedef const unsigned char* (APIENTRY* PFN_glGetString)(unsigned int);
 typedef void (*PFN_proc_init)(void);
 
-// ---------------------------------------------------------------------------
-// Global state
-// ---------------------------------------------------------------------------
 static constexpr wchar_t kEGLNativeWindowTypeProperty[] = L"EGLNativeWindowTypeProperty";
 static constexpr wchar_t kEGLRenderSurfaceSizeProperty[] = L"EGLRenderSurfaceSizeProperty";
 
@@ -549,9 +538,6 @@ struct FakeWindow {
 static FakeWindow g_fake_window;
 static GLFWvidmode g_vidmode = {1920,1080,8,8,8,60};
 
-// ---------------------------------------------------------------------------
-// Logging
-// ---------------------------------------------------------------------------
 static wchar_t g_log_path[MAX_PATH];
 
 static void ShimLog(const char* fmt, ...) {
@@ -950,9 +936,6 @@ static void DispatchCharEvent(unsigned int codepoint) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Native Xbox text input
-// ---------------------------------------------------------------------------
 static constexpr int BANDIT_KEYBOARD_MULTILINE = 1;
 static constexpr int BANDIT_KEYBOARD_SUBMIT = 1;
 static constexpr int BANDIT_KEYBOARD_CLOSED = 2;
@@ -1739,9 +1722,6 @@ static void InstallCoreWindowLifecycleHooks() {
     ShimLog("CoreWindow lifecycle hooks installed");
 }
 
-// ---------------------------------------------------------------------------
-// CoreWindow access
-// ---------------------------------------------------------------------------
 static bool AcquireCoreWindow() {
     if (g_coreWindow) return true;
 
@@ -2007,9 +1987,6 @@ static bool BuildNativeWindowPropertySet() {
 
 #include "wgl_backend.h"
 
-// ---------------------------------------------------------------------------
-// Graphics runtime loader
-// ---------------------------------------------------------------------------
 static bool LoadMesaEGL() {
     if (g_libEGL && g_opengl32) return true;
 
@@ -2126,9 +2103,6 @@ static bool CreateEglContext() {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// DLL entry
-// ---------------------------------------------------------------------------
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         wchar_t dir[MAX_PATH];
@@ -2146,9 +2120,6 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID) {
     return TRUE;
 }
 
-// ===========================================================================
-// GLFW API
-// ===========================================================================
 extern "C" __declspec(dllexport) int glfwInit(void) {
     ShimLog("glfwInit");
     if (g_initialised) return GLFW_TRUE;
@@ -2193,14 +2164,6 @@ static void DispatchCursorPosInternal(double x, double y, bool updateOverlayPosi
 
     g_cursor_x = x;
     g_cursor_y = y;
-
-
-
-
-
-
-
-
     if (g_cursorMode != GLFW_CURSOR_DISABLED && updateOverlayPosition) {
         g_menu_abs_x = MenuInputToWindowX(g_cursor_x);
         g_menu_abs_y = MenuInputToWindowY(g_cursor_y);
@@ -2241,6 +2204,15 @@ static double CursorMaxX() {
 }
 static double CursorMaxY() {
     return g_window_height > 1 ? (double)(g_window_height - 1) : 0.0;
+}
+static double MouseSpeedFromEnvironment(const wchar_t* name) {
+    wchar_t text[16]{};
+    const DWORD length = GetEnvironmentVariableW(name, text, 16);
+    if (length == 0 || length >= 16) return 1.0;
+    wchar_t* end = nullptr;
+    const long percent = wcstol(text, &end, 10);
+    if (end == text || *end != 0 || percent < 25 || percent > 300) return 1.0;
+    return static_cast<double>(percent) / 100.0;
 }
 static void DispatchMouseDelta(double dx, double dy) {
     if (dx == 0.0 && dy == 0.0) return;
@@ -2476,13 +2448,16 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
+    static const double menuSpeed = MouseSpeedFromEnvironment(L"MC_MOUSE_MENU_SPEED");
+    static const double gameSpeed = MouseSpeedFromEnvironment(L"MC_MOUSE_GAME_SPEED");
+    const double speed = g_cursorDisabled ? gameSpeed : menuSpeed;
     SetCursorInputOwner(CursorInputOwnerMouse);
     if (g_cursorDisabled) {
-        DispatchMouseDelta(delta.X, delta.Y);
+        DispatchMouseDelta(delta.X * speed, delta.Y * speed);
         return;
     }
-    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + (double)delta.X, 0.0, CursorMaxX());
-    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + (double)delta.Y, 0.0, CursorMaxY());
+    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + delta.X * speed, 0.0, CursorMaxX());
+    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + delta.Y * speed, 0.0, CursorMaxY());
     g_menu_abs_x = windowX;
     g_menu_abs_y = windowY;
     DispatchCursorPosInternal(WindowToMenuInputX(windowX), WindowToMenuInputY(windowY), false);
@@ -3331,9 +3306,6 @@ extern "C" __declspec(dllexport) GLFWwindow* glfwGetCurrentContext(void) {
     return current;
 }
 
-// mouse cursor overlay drawn in the swap path, so it lands above whatever
-// minecraft rendered on any version or loader. saves and restores every bit
-// of gl state it touches so the game pipeline is unchanged after it returns.
 namespace bandit_cursor {
 
 typedef unsigned int GLenum;

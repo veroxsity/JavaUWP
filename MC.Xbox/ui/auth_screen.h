@@ -739,61 +739,51 @@ public:
             DrawText(L"Settings", titleFormat_.Get(),
                 D2D1::RectF(back.right + 16.0f, top, right, top + 58.0f), white.Get());
 
-            const float rowH = 84.0f;
+            const float rowH = 64.0f;
             float rowY = top + 96.0f;
-
-            {
+            auto drawSettingsRow = [&](int index, const wchar_t* title, const wchar_t* detail, const wchar_t* value) {
                 const D2D1_RECT_F row = D2D1::RectF(left, rowY, right, rowY + rowH);
-                const bool sel = state.settingsSelected == 0;
-                if (sel) GlowSelect(row, 12.0f);
-                FillRound(row, sel ? accentSoft.Get() : surfaceFill.Get(), 12.0f);
-                StrokeRound(row, sel ? accent.Get() : softEdge.Get(), 12.0f, sel ? 3.0f : 1.0f);
-                DrawText(L"Send crash reports and usage stats", bodyMid_.Get(),
-                    D2D1::RectF(row.left + 22.0f, row.top + 10.0f, right - 160.0f, row.top + 44.0f),
-                    sel ? accent.Get() : white.Get());
-                DrawText(
-                    L"Crash reports and basic launch counts use the same setting.",
-                    smallFormat_.Get(),
-                    D2D1::RectF(row.left + 22.0f, row.top + 44.0f, right - 160.0f, row.bottom - 8.0f),
+                const bool selected = state.settingsSelected == index;
+                if (selected) GlowSelect(row, 12.0f);
+                FillRound(row, selected ? accentSoft.Get() : surfaceFill.Get(), 12.0f);
+                StrokeRound(row, selected ? accent.Get() : softEdge.Get(), 12.0f, selected ? 3.0f : 1.0f);
+                const float textRight = value ? right - 160.0f : right - 22.0f;
+                DrawText(title, bodyMid_.Get(),
+                    D2D1::RectF(row.left + 22.0f, row.top + 4.0f, textRight, row.top + 35.0f),
+                    selected ? accent.Get() : white.Get());
+                DrawText(detail, smallFormat_.Get(),
+                    D2D1::RectF(row.left + 22.0f, row.top + 34.0f, textRight, row.bottom - 4.0f),
                     muted.Get());
+                if (value) {
+                    const D2D1_RECT_F pill = D2D1::RectF(right - 132.0f, row.top + 10.0f, right - 22.0f, row.bottom - 10.0f);
+                    FillRound(pill, selected ? accent.Get() : panel.Get(), 10.0f);
+                    StrokeRound(pill, selected ? accent.Get() : softEdge.Get(), 10.0f, 1.5f);
+                    DrawText(value, bodyMid_.Get(), pill, selected ? black.Get() : muted.Get());
+                }
+                RegisterHit(launchhit::kSettingsRowBase + index, row);
+                rowY = row.bottom + 10.0f;
+            };
 
-                const D2D1_RECT_F pill = D2D1::RectF(right - 132.0f, row.top + 22.0f, right - 22.0f, row.bottom - 22.0f);
-                FillRound(pill, state.settingsReportingOn ? accent.Get() : panel.Get(), 10.0f);
-                StrokeRound(pill, state.settingsReportingOn ? accent.Get() : softEdge.Get(), 10.0f, 1.5f);
-                DrawText(state.settingsReportingOn ? L"On" : L"Off", bodyMid_.Get(), pill,
-                    state.settingsReportingOn ? black.Get() : muted.Get());
-
-                RegisterHit(launchhit::kSettingsRowBase + 0, row);
-                rowY = row.bottom + 18.0f;
-            }
-
-            {
-                const D2D1_RECT_F row = D2D1::RectF(left, rowY, right, rowY + rowH);
-                const bool sel = state.settingsSelected == 1;
-                if (sel) GlowSelect(row, 12.0f);
-                FillRound(row, sel ? accentSoft.Get() : surfaceFill.Get(), 12.0f);
-                StrokeRound(row, sel ? accent.Get() : softEdge.Get(), 12.0f, sel ? 3.0f : 1.0f);
-                DrawText(L"Reset the reporting id", bodyMid_.Get(),
-                    D2D1::RectF(row.left + 22.0f, row.top + 10.0f, right - 22.0f, row.top + 44.0f),
-                    sel ? accent.Get() : white.Get());
-                DrawText(state.settingsInstallId.c_str(), smallFormat_.Get(),
-                    D2D1::RectF(row.left + 22.0f, row.top + 44.0f, right - 22.0f, row.bottom - 8.0f),
-                    muted.Get());
-                RegisterHit(launchhit::kSettingsRowBase + 1, row);
-                rowY = row.bottom + 18.0f;
-            }
+            const std::wstring menuSpeed = std::to_wstring(state.settingsMenuMouseSpeed) + L"%";
+            const std::wstring gameSpeed = std::to_wstring(state.settingsGameMouseSpeed) + L"%";
+            drawSettingsRow(0, L"Menu mouse sensitivity", L"Launcher and Minecraft menus. Left/right to adjust.", menuSpeed.c_str());
+            drawSettingsRow(1, L"Game mouse sensitivity", L"Mouse look in game. Minecraft sensitivity still applies.", gameSpeed.c_str());
+            drawSettingsRow(2, L"Send crash reports and usage stats",
+                L"Crash reports and basic launch counts use the same setting.",
+                state.settingsReportingOn ? L"On" : L"Off");
+            drawSettingsRow(3, L"Reset the reporting id", state.settingsInstallId.c_str(), nullptr);
 
             DrawText(
                 state.settingsConfigured
                     ? L"Reports use a random id and include launcher and Minecraft versions, loader details, launch stage, memory totals and a mod list hash. Mod jar names and project ids can be sent when a crash needs them. A crash trace can include exception text and Java class names. The launcher does not add your account, gamertag, worlds or access token. Common user and app storage paths are scrubbed. The id stays the same until it is reset."
                     : L"No reporting server is configured on this install, so nothing can be sent either way.",
-                smallFormat_.Get(), D2D1::RectF(left, rowY + 6.0f, right, rowY + 110.0f), muted.Get());
+                smallFormat_.Get(), D2D1::RectF(left, rowY + 2.0f, right, frame.bottom - 96.0f), muted.Get());
 
             if (!state.settingsNote.empty()) {
                 DrawText(state.settingsNote.c_str(), smallFormat_.Get(),
                     D2D1::RectF(left, frame.bottom - 92.0f, right, frame.bottom - 56.0f), accent.Get());
             }
-            DrawText(L"Press B or select Back to return to the launcher.", smallFormat_.Get(),
+            DrawText(L"Left/right adjusts sensitivity. B returns to the launcher.", smallFormat_.Get(),
                 D2D1::RectF(left, frame.bottom - 50.0f, right, frame.bottom - 18.0f), muted.Get());
 
             finishDraw();

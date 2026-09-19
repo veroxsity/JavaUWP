@@ -17,6 +17,7 @@
 #include <windows.applicationmodel.h>
 #include <windows.ui.core.h>
 #include <windows.foundation.h>
+#include <windows.devices.input.h>
 
 #include <winrt/base.h>
 #include <winrt/Windows.Graphics.Display.h>
@@ -172,6 +173,10 @@ static EventRegistrationToken g_pointerMovedToken{};
 static EventRegistrationToken g_pointerPressedToken{};
 static EventRegistrationToken g_pointerReleasedToken{};
 static EventRegistrationToken g_pointerWheelToken{};
+using MouseDeviceMovedHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CDevices__CInput__CMouseDevice_Windows__CDevices__CInput__CMouseEventArgs_t;
+static ComPtr<ABI::Windows::Devices::Input::IMouseDevice> g_nativeMouseDevice;
+static ComPtr<MouseDeviceMovedHandler> g_nativeMouseMovedHandler;
+static EventRegistrationToken g_nativeMouseMovedToken{};
 
 static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
     if (!window) return;
@@ -209,6 +214,30 @@ static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
     if (FAILED(hr)) WriteLogF(L"CoreWindow add_PointerWheelChanged failed hr=0x%08X", hr);
     hr = window->put_PointerCursor(nullptr);
     if (FAILED(hr)) WriteLogF(L"CoreWindow put_PointerCursor(null) failed hr=0x%08X", hr);
+
+    ComPtr<ABI::Windows::Devices::Input::IMouseDeviceStatics> mouseStatics;
+    hr = GetActivationFactory(
+        HStringReference(RuntimeClass_Windows_Devices_Input_MouseDevice).Get(),
+        mouseStatics.GetAddressOf());
+    if (SUCCEEDED(hr) && mouseStatics) {
+        hr = mouseStatics->GetForCurrentView(g_nativeMouseDevice.GetAddressOf());
+        if (SUCCEEDED(hr) && g_nativeMouseDevice) {
+            g_nativeMouseMovedHandler = Callback<MouseDeviceMovedHandler>(
+                [](ABI::Windows::Devices::Input::IMouseDevice*,
+                   ABI::Windows::Devices::Input::IMouseEventArgs* args) -> HRESULT {
+                    if (!args || !g_authWindow) return S_OK;
+                    ABI::Windows::Devices::Input::MouseDelta delta{};
+                    ABI::Windows::Foundation::Rect bounds{};
+                    if (SUCCEEDED(args->get_MouseDelta(&delta)) &&
+                        SUCCEEDED(g_authWindow->get_Bounds(&bounds))) {
+                        LauncherMouseNativeDelta(delta.X, delta.Y, bounds.Width, bounds.Height);
+                    }
+                    return S_OK;
+                });
+            hr = g_nativeMouseDevice->add_MouseMoved(g_nativeMouseMovedHandler.Get(), &g_nativeMouseMovedToken);
+        }
+    }
+    if (FAILED(hr)) WriteLogF(L"Native mouse moved handler unavailable hr=0x%08X", hr);
     WriteLog(L"CoreWindow pointer handlers installed");
 }
 
@@ -497,6 +526,7 @@ public:
         SetCurrentDirectoryW(exeDir.c_str());
         SetEnvironmentVariableW(L"MC_RUNTIME_DIR", exeDir.c_str());
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
+        ApplyMouseSensitivity(LoadMouseSensitivity());
         telemetry::ReportHardCrash(exeDir);
         telemetry::FlushQueueAsync();
         const std::wstring graphicsRuntime = DetectGraphicsRuntimeName();

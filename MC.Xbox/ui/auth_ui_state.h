@@ -88,6 +88,8 @@ struct AuthUiState {
 
     bool showSettings = false;
     int settingsSelected = 0;
+    int settingsMenuMouseSpeed = 100;
+    int settingsGameMouseSpeed = 100;
     bool settingsReportingOn = false;
     bool settingsConfigured = false;
     std::wstring settingsInstallId;

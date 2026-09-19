@@ -415,7 +415,7 @@ static void ShowCrashScreen(ICoreWindow* window, AuthScreenRenderer* renderer, A
 }
 
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 2;
+    constexpr int kSettingsRows = 4;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -425,12 +425,17 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     state.showSettings = true;
     state.settingsSelected = 0;
     state.settingsNote.clear();
+    const MouseSensitivity sensitivity = LoadMouseSensitivity();
+    state.settingsMenuMouseSpeed = sensitivity.menu;
+    state.settingsGameMouseSpeed = sensitivity.game;
     state.settingsConfigured = telemetry::Configured();
     state.settingsReportingOn = telemetry::ConsentGranted();
     state.settingsInstallId = telemetry::InstallIdText();
 
     bool upWas = false;
     bool downWas = false;
+    bool leftWas = false;
+    bool rightWas = false;
     bool selectWas = false;
     bool backWas = false;
 
@@ -444,7 +449,7 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
         if (mouse.Visible() && mouse.TakeClick()) {
             const int hit = renderer->HitTest(mouse.X(), mouse.Y());
             if (hit == launchhit::kBack) clickedBack = true;
-            if (hit >= launchhit::kSettingsRowBase && hit < launchhit::kSettingsRowBase + 2) {
+            if (hit >= launchhit::kSettingsRowBase && hit < launchhit::kSettingsRowBase + kSettingsRows) {
                 clicked = hit - launchhit::kSettingsRowBase;
             }
         }
@@ -458,6 +463,16 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
             ABI::Windows::System::VirtualKey_Down,
             ABI::Windows::System::VirtualKey_GamepadDPadDown,
             ABI::Windows::System::VirtualKey_GamepadLeftThumbstickDown
+        });
+        const bool leftDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Left,
+            ABI::Windows::System::VirtualKey_GamepadDPadLeft,
+            ABI::Windows::System::VirtualKey_GamepadLeftThumbstickLeft
+        });
+        const bool rightDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Right,
+            ABI::Windows::System::VirtualKey_GamepadDPadRight,
+            ABI::Windows::System::VirtualKey_GamepadLeftThumbstickRight
         });
         const bool selectDown = AnyVirtualKeyDown(window, {
             ABI::Windows::System::VirtualKey_Enter,
@@ -479,7 +494,24 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
         if ((backDown && !backWas) || clickedBack) break;
 
         const int pressed = clicked >= 0 ? clicked : ((selectDown && !selectWas) ? state.settingsSelected : -1);
-        if (pressed == 0) {
+        const int speedRow = clicked >= 0 ? clicked : state.settingsSelected;
+        const int speedStep = leftDown && !leftWas ? -1 :
+            (rightDown && !rightWas ? 1 : (pressed == speedRow ? 1 : 0));
+        if (speedRow < 2 && speedStep != 0) {
+            MouseSensitivity next{state.settingsMenuMouseSpeed, state.settingsGameMouseSpeed};
+            int& percent = speedRow == 0 ? next.menu : next.game;
+            percent += speedStep * 25;
+            if (percent > 300) percent = 25;
+            if (percent < 25) percent = 300;
+            if (SaveMouseSensitivity(next)) {
+                state.settingsMenuMouseSpeed = next.menu;
+                state.settingsGameMouseSpeed = next.game;
+                ApplyMouseSensitivity(next);
+                state.settingsNote = L"Mouse sensitivity saved.";
+            } else {
+                state.settingsNote = L"Mouse sensitivity could not be saved.";
+            }
+        } else if (pressed == 2) {
             const bool turnOn = !state.settingsReportingOn;
             if (telemetry::SetConsent(turnOn ? telemetry::ConsentState::Always : telemetry::ConsentState::Never)) {
                 state.settingsReportingOn = turnOn;
@@ -495,7 +527,7 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                     ? L"Reporting could not be turned on."
                     : L"Reporting could not be turned off.";
             }
-        } else if (pressed == 1) {
+        } else if (pressed == 3) {
             if (telemetry::ResetInstallId()) {
                 state.settingsInstallId = telemetry::InstallIdText();
                 state.settingsNote = L"A new reporting id was created.";
@@ -506,6 +538,8 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
 
         upWas = upDown;
         downWas = downDown;
+        leftWas = leftDown;
+        rightWas = rightDown;
         selectWas = selectDown;
         backWas = backDown;
         std::this_thread::sleep_for(std::chrono::milliseconds(16));

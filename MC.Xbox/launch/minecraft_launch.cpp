@@ -1224,7 +1224,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
             L"#\n"
             L"# These are appended after the launcher's own options, so anything set here\n"
             L"# overrides the built in value. The built ins are:\n"
-            L"#   -Xmx3G -Xms3G -XX:MaxDirectMemorySize=512M\n"
+            L"#   -Xmx3G -Xms512M -XX:MaxDirectMemorySize=512M\n"
             L"#   -XX:+UseG1GC -XX:+PerfDisableSharedMem\n"
             L"#   -XX:MaxGCPauseMillis=50 -XX:G1NewSizePercent=20\n"
             L"#   -XX:G1ReservePercent=20 -XX:G1HeapRegionSize=32M\n"

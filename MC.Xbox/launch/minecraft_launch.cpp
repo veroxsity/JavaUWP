@@ -1092,7 +1092,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.reserve(64);
     // 5120 MB app budget on series s dev mode, so a 3G heap that never resizes fits
     vmOptionStorage.push_back("-Xmx3G");
-    vmOptionStorage.push_back("-Xms3G");
+    vmOptionStorage.push_back("-Xms512M");
     vmOptionStorage.push_back("-XX:MaxDirectMemorySize=512M");
 
     // ignoreUnrecognized is JNI_FALSE, so a typo in jvm_args.txt would stop it booting

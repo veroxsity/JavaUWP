@@ -1092,7 +1092,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.reserve(64);
     // 5120 MB app budget on series s dev mode, so a 3G heap that never resizes fits
     vmOptionStorage.push_back("-Xmx3G");
-    vmOptionStorage.push_back("-Xms3G");
+    vmOptionStorage.push_back("-Xms512M");
     vmOptionStorage.push_back("-XX:MaxDirectMemorySize=512M");
 
     // ignoreUnrecognized is JNI_FALSE, so a typo in jvm_args.txt would stop it booting
@@ -1106,7 +1106,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     vmOptionStorage.push_back("-XX:G1HeapRegionSize=32M");
     // hsperfdata is mmapped and rewritten every collection, on console storage that is a frame hitch
     vmOptionStorage.push_back("-XX:+PerfDisableSharedMem");
-    WriteLog(L"JVM heap: -Xmx3G -Xms3G -XX:MaxDirectMemorySize=512M, G1 at 50ms pause target");
+    WriteLog(L"JVM heap: -Xmx3G -Xms512M -XX:MaxDirectMemorySize=512M, G1 at 50ms pause target");
     vmOptionStorage.push_back("--enable-native-access=ALL-UNNAMED");
     vmOptionStorage.push_back("--add-opens=jdk.zipfs/jdk.nio.zipfs=ALL-UNNAMED");
     const std::wstring selectedJavaBasePatchName =

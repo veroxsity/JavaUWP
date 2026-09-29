@@ -20,7 +20,9 @@
 #include <windows.devices.input.h>
 
 #include <winrt/base.h>
+#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Display.h>
+#include <winrt/Windows.Media.Capture.h>
 
 #include "runtime_config.h"
 #include "launcher_common.h"
@@ -177,6 +179,32 @@ using MouseDeviceMovedHandler = ABI::Windows::Foundation::__FITypedEventHandler_
 static ComPtr<ABI::Windows::Devices::Input::IMouseDevice> g_nativeMouseDevice;
 static ComPtr<MouseDeviceMovedHandler> g_nativeMouseMovedHandler;
 static EventRegistrationToken g_nativeMouseMovedToken{};
+
+static winrt::Windows::Media::Capture::MediaCapture g_microphoneAccess{ nullptr };
+
+static void RequestMicrophoneAccess() {
+    try {
+        winrt::Windows::Media::Capture::MediaCaptureInitializationSettings settings;
+        settings.StreamingCaptureMode(winrt::Windows::Media::Capture::StreamingCaptureMode::Audio);
+        g_microphoneAccess = winrt::Windows::Media::Capture::MediaCapture();
+        auto request = g_microphoneAccess.InitializeAsync(settings);
+        request.Completed([](winrt::Windows::Foundation::IAsyncAction const& action,
+                             winrt::Windows::Foundation::AsyncStatus status) {
+            if (status == winrt::Windows::Foundation::AsyncStatus::Completed) {
+                WriteLog(L"Microphone access granted");
+            } else {
+                WriteLogF(L"Microphone access not granted status=%d hr=0x%08X",
+                    static_cast<int>(status), static_cast<unsigned>(action.ErrorCode().value));
+            }
+            if (g_microphoneAccess) {
+                g_microphoneAccess.Close();
+                g_microphoneAccess = nullptr;
+            }
+        });
+    } catch (winrt::hresult_error const& e) {
+        WriteLogF(L"Microphone access request failed hr=0x%08X", static_cast<unsigned>(e.code().value));
+    }
+}
 
 static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
     if (!window) return;
@@ -493,6 +521,7 @@ public:
         if (FAILED(activateHr)) {
             WriteLogF(L"SetWindow: CoreWindow.Activate failed hr=0x%08X", activateHr);
         }
+        RequestMicrophoneAccess();
         return S_OK;
     }
 

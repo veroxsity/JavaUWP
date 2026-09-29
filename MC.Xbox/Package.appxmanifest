@@ -45,6 +45,7 @@
     <rescap:Capability Name="runFullTrust"/>
     <rescap:Capability Name="broadFileSystemAccess"/>
     <rescap:Capability Name="expandedResources"/>
+    <DeviceCapability Name="microphone"/>
   </Capabilities>
 
 </Package>

@@ -11,7 +11,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -141,6 +144,18 @@ static void SendHttpResponse(SOCKET s, int status, const char* statusText, const
     SendAll(s, body.data(), body.size());
 }
 
+// 303 so a refresh of the page it lands on can never resubmit the form behind it
+static void SendHttpRedirect(SOCKET s, const std::string& location) {
+    std::ostringstream head;
+    head << "HTTP/1.1 303 See Other\r\n"
+        << "Location: " << location << "\r\n"
+        << "Content-Length: 0\r\n"
+        << "Cache-Control: no-store\r\n"
+        << "Connection: close\r\n\r\n";
+    const std::string h = head.str();
+    SendAll(s, h.data(), h.size());
+}
+
 static void SendHttpFile(SOCKET s, const std::wstring& path, const std::string& downloadName, const std::string& contentType) {
     WIN32_FILE_ATTRIBUTE_DATA fad = {};
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad) ||
@@ -263,6 +278,23 @@ private:
     std::thread thread_;
     std::wstring runtimeRoot_;
     std::string pin_;
+
+    // a pack installs off the server thread, which serves one request at a time and would
+    // otherwise freeze every page until the install ends
+    struct PackImport {
+        std::mutex lock;
+        bool running = false;
+        bool finished = false;
+        bool ok = false;
+        std::wstring packName;
+        std::wstring profileName;
+        std::wstring step;
+        unsigned long long stepDone = 0;
+        unsigned long long stepTotal = 0;
+        std::wstring message;
+    };
+    std::shared_ptr<PackImport> packImport_ = std::make_shared<PackImport>();
+
     int port_ = kPort;
 
     struct PinAttempts {
@@ -600,6 +632,10 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
             HandleDatapackUpload(s, headers, body);
         } else if (method == "POST" && path == "/upload-modpack") {
             HandleModpackUpload(s, headers, body);
+        } else if (method == "GET" && path == "/pack-import") {
+            SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8", Layout("Installing pack", PackImportPageHtml()));
+        } else if (method == "GET" && path == "/api/pack-import") {
+            SendHttpResponse(s, 200, "OK", "application/json; charset=utf-8", PackImportJson());
         } else if (method == "POST" && path == "/export-pack") {
             HandleExportPack(s, body);
         } else if (method == "GET" && path == "/set-curseforge-key") {
@@ -1076,6 +1112,14 @@ async function uploadManual(input){
             return;
         }
 
+        {
+            std::lock_guard<std::mutex> guard(packImport_->lock);
+            if (packImport_->running) {
+                SendHttpRedirect(s, UrlWithPin("/pack-import"));
+                return;
+            }
+        }
+
         const std::wstring importDir = runtimeRoot_ + L"\\imports";
         EnsureDirectoryTree(importDir);
         const std::wstring path = importDir + L"\\" + name;
@@ -1095,22 +1139,92 @@ async function uploadManual(input){
         }
 
         WriteLogF(L"Remote modpack upload saved: %s bytes=%zu", path.c_str(), data.size());
-        std::wstring installError;
-        std::wstring installNote;
-        const bool ok = InstallModpackFromFile(path, runtimeRoot_, active, installError, &installNote);
-        DeleteFileW(path.c_str());
-        if (!ok) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
-                Layout("Import failed", "<h1>Import failed</h1><p>" + HtmlEscape(installError.empty() ? L"Pack install failed" : installError) + "</p>"));
-            return;
+        {
+            std::lock_guard<std::mutex> guard(packImport_->lock);
+            packImport_->running = true;
+            packImport_->finished = false;
+            packImport_->ok = false;
+            packImport_->packName = name;
+            packImport_->profileName = GetProfileById(runtimeRoot_, active).name;
+            packImport_->step = L"Reading the pack";
+            packImport_->stepDone = 0;
+            packImport_->stepTotal = 0;
+            packImport_->message.clear();
         }
 
-        const Profile profile = GetProfileById(runtimeRoot_, active);
-        SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
-            Layout("Import complete",
-                "<div class=\"top\"><h1>Import complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div>"
-                "<p>Installed <strong>" + HtmlEscape(name) + "</strong> into profile <strong>" + HtmlEscape(profile.name) + "</strong>.</p>" +
-                (installNote.empty() ? std::string() : "<p class=\"muted\">" + HtmlEscape(installNote) + "</p>")));
+        std::thread([status = packImport_, path, root = runtimeRoot_, active]() {
+            const ModpackProgressFactory progressFor = [status](const std::wstring& label, unsigned long long total) {
+                {
+                    std::lock_guard<std::mutex> guard(status->lock);
+                    status->step = label;
+                    status->stepDone = 0;
+                    status->stepTotal = total;
+                }
+                return std::function<void(unsigned long long)>([status](unsigned long long done) {
+                    std::lock_guard<std::mutex> guard(status->lock);
+                    status->stepDone = done;
+                });
+            };
+            std::wstring error;
+            std::wstring note;
+            const bool ok = InstallModpackFromFile(path, root, active, error, &note, progressFor);
+            DeleteFileW(path.c_str());
+
+            std::lock_guard<std::mutex> guard(status->lock);
+            status->running = false;
+            status->finished = true;
+            status->ok = ok;
+            status->message = ok ? note : (error.empty() ? std::wstring(L"Pack install failed") : error);
+        }).detach();
+
+        SendHttpRedirect(s, UrlWithPin("/pack-import"));
+    }
+
+    std::string PackImportJson() {
+        std::lock_guard<std::mutex> guard(packImport_->lock);
+        const PackImport& p = *packImport_;
+        std::ostringstream out;
+        out << "{\"running\":" << (p.running ? "true" : "false")
+            << ",\"finished\":" << (p.finished ? "true" : "false")
+            << ",\"ok\":" << (p.ok ? "true" : "false")
+            << ",\"pack\":\"" << ScriptJsonEscape(w2a(p.packName)) << "\""
+            << ",\"profile\":\"" << ScriptJsonEscape(w2a(p.profileName)) << "\""
+            << ",\"step\":\"" << ScriptJsonEscape(w2a(p.step)) << "\""
+            << ",\"done\":" << p.stepDone
+            << ",\"total\":" << p.stepTotal
+            << ",\"message\":\"" << ScriptJsonEscape(w2a(p.message)) << "\"}";
+        return out.str();
+    }
+
+    std::string PackImportPageHtml() {
+        return "<div class=\"top\"><h1 id=\"pi-title\">Installing pack</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div>"
+            "<p class=\"muted\" id=\"pi-what\"></p>"
+            "<p id=\"pi-step\" role=\"status\">Starting</p>"
+            "<progress id=\"pi-bar\" max=\"1\" style=\"width:100%\"></progress>"
+            "<p class=\"muted\" id=\"pi-msg\"></p>"
+            "<script>const PACK_STATUS_URL='/api/pack-import?pin=" + pin_ + "';</script>"
+            R"RFPI(<script>
+const el = id => document.getElementById(id);
+async function pollPackImport() {
+ let s;
+ try { s = await (await fetch(PACK_STATUS_URL, { cache: 'no-store' })).json(); }
+ catch (e) { setTimeout(pollPackImport, 2000); return; }
+ if (!s.running && !s.finished) { el('pi-title').textContent = 'No pack is installing'; el('pi-step').textContent = ''; el('pi-bar').hidden = true; return; }
+ el('pi-what').textContent = s.pack + ' into ' + s.profile;
+ if (s.running) {
+  el('pi-step').textContent = s.step;
+  const bar = el('pi-bar');
+  if (s.total > 0) { bar.max = s.total; bar.value = s.done; } else { bar.removeAttribute('value'); }
+  setTimeout(pollPackImport, 1000);
+  return;
+ }
+ el('pi-title').textContent = s.ok ? 'Import complete' : 'Import failed';
+ el('pi-step').textContent = s.ok ? 'Installed. Pick the profile on the console to play it.' : '';
+ el('pi-bar').hidden = true;
+ el('pi-msg').textContent = s.message;
+}
+pollPackImport();
+</script>)RFPI";
     }
 
     // only names on the pending list are taken, and they go to the folder the pack recorded

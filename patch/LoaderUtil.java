@@ -1,6 +1,6 @@
 /*
  * Vendored from Fabric Loader (https://github.com/FabricMC/fabric-loader).
- * Applied against Fabric Loader 0.19.3 and 0.14.25; the source release it was
+ * Applied against Fabric Loader 0.19.5 and 0.14.25; the source release it was
  * copied from is not recorded.
  * Licensed under the Apache License, Version 2.0.
  *

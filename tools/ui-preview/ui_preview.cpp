@@ -84,11 +84,11 @@ AuthUiState ModsPage(int tab) {
     state.selectedModsTab = tab;
     state.activeProfileName = L"Survival";
     state.modsTargets = {
-        Target(L"1.21.11", L"fabric", L"0.19.3"),
+        Target(L"1.21.11", L"fabric", L"0.19.5"),
         Target(L"1.21.11", L"neoforge", L"21.11.20"),
-        Target(L"1.21.1", L"fabric", L"0.19.3"),
+        Target(L"1.21.1", L"fabric", L"0.19.5"),
         Target(L"1.20.1", L"forge", L"47.4.0"),
-        Target(L"26.2", L"fabric", L"0.19.3"),
+        Target(L"26.2", L"fabric", L"0.19.5"),
     };
     state.modsBrowseTargetId = state.modsTargets.front().targetId;
     state.modsCards = CardsFor(tab);
@@ -127,7 +127,7 @@ AuthUiState Crash(bool details, bool consent) {
         L"\tat net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.getPostMixinClassByteArray(KnotClassDelegate.java:427)\n"
         L"\tat net.fabricmc.loader.impl.launch.knot.KnotClassDelegate.tryLoadClass(KnotClassDelegate.java:323)\n"
         L"Caused by: org.spongepowered.asm.mixin.throwables.MixinApplyError\n";
-    state.crashConsentPayload = L"fingerprint 3f9a1c22b8e04d71\nphase mod_load\nloader fabric 0.19.3\n" + state.crashTrace;
+    state.crashConsentPayload = L"fingerprint 3f9a1c22b8e04d71\nphase mod_load\nloader fabric 0.19.5\n" + state.crashTrace;
     state.crashDetailsOpen = details;
     state.crashAskConsent = consent;
     state.crashButtonCount = consent ? 3 : 2;
@@ -157,11 +157,11 @@ std::vector<Scene> Scenes() {
     scenes.push_back({ L"signin-launch-log", [] {
         AuthUiState state = Screen();
         state.status = L"Starting Minecraft";
-        state.detail = L"1.21.11 Fabric 0.19.3, profile Survival";
+        state.detail = L"1.21.11 Fabric 0.19.5, profile Survival";
         state.showLaunchLog = true;
         state.animation = 0.3f;
         state.launchLogText =
-            L"[19:47:13] JNI_CreateJavaVM ok\n[19:47:14] Loading Minecraft 1.21.11 with Fabric Loader 0.19.3\n"
+            L"[19:47:13] JNI_CreateJavaVM ok\n[19:47:14] Loading Minecraft 1.21.11 with Fabric Loader 0.19.5\n"
             L"[19:47:16] Loading 14 mods\n[19:47:21] Mixins applied\n[19:47:24] Backend library: LWJGL version 3.3.3";
         return state;
     } });
@@ -207,7 +207,7 @@ std::vector<Scene> Scenes() {
         state.modsProfileOpen = true;
         state.modsProfileId = L"survival";
         state.modsProfileName = L"Survival";
-        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.3";
+        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.5";
         state.modsProfileMods = {
             L"sodium-fabric-0.6.13+mc1.21.11.jar", L"iris-fabric-1.8.12+mc1.21.11.jar", L"modmenu-15.0.0.jar",
             L"fabric-api-0.130.0+1.21.11.jar", L"lithium-fabric-0.15.1+mc1.21.11.jar", L"entityculling-fabric-1.8.2-mc1.21.11.jar",

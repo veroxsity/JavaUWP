@@ -483,8 +483,12 @@ function Resolve-FabricClientJar {
     # remapped jar. Mods for those targets compile straight against the client jar.
     $remapped = Join-Path $GameDir ".fabric\remappedJars\minecraft-$MinecraftVersion-$LoaderVersion\client-intermediary.jar"
     if (Test-Path $remapped) { return $remapped }
+    if (-not (Test-FabricTargetHasIntermediary -GameDir $GameDir -MinecraftVersion $MinecraftVersion -LoaderVersion $LoaderVersion)) {
+        return (Join-Path $GameDir "versions\$MinecraftVersion\$MinecraftVersion.jar")
+    }
 
-    return (Join-Path $GameDir "versions\$MinecraftVersion\$MinecraftVersion.jar")
+    # missing on purpose so callers run setup.ps1, the plain client jar only has obfuscated names
+    return $remapped
 }
 
 function Resolve-VSTools {

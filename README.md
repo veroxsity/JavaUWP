@@ -24,7 +24,7 @@ You should be comfortable with:
 - Waiting through a first launch download of official Minecraft files.
 - Early software that may change between builds.
 
-**Xbox Series S and Series X** are the only supported consoles. Xbox One was dropped and is planned to return later as its own separate target.
+**Xbox Series S and Series X** are the only supported consoles. An Xbox One edition is in the works, but it may take time for it to be here.
 
 ## Requirements
 

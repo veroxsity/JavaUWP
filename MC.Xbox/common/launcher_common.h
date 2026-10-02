@@ -34,6 +34,7 @@ bool ReadBinaryFileLimited(
 std::wstring TrimWhitespace(std::wstring value);
 std::wstring ToLowerW(std::wstring value);
 std::string ToLowerAscii(std::string value);
+bool EndsWithInsensitive(const std::wstring& value, const std::wstring& suffix);
 bool WriteAllBytes(const std::wstring& path, const void* data, size_t size);
 int CompareVersionNumbers(const std::string& lhs, const std::string& rhs);
 

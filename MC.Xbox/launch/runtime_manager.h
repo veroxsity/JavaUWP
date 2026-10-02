@@ -98,3 +98,11 @@ bool DownloadUrlToFile(
     const std::wstring& url,
     const std::wstring& destination,
     const std::function<void(unsigned long long)>& progressCallback);
+
+// only sent to hosts matching headerHostSuffix, so a redirect cannot leak an api key onward
+bool DownloadUrlToFileWithHeaders(
+    const std::wstring& url,
+    const std::wstring& destination,
+    const std::function<void(unsigned long long)>& progressCallback,
+    const std::wstring& extraHeaders,
+    const std::wstring& headerHostSuffix);

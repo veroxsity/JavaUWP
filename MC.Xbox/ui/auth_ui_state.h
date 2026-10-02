@@ -28,6 +28,8 @@ struct AuthUiState {
     bool showModsPage = false;
     int selectedMenuIndex = 0;
     int selectedModsTab = 0;
+    ModSource modsSource = ModSource::Modrinth;
+    int modsHoverSource = -1;
     int selectedModIndex = 0;
     int modsFocus = 0;
     int modsScrollRow = 0;
@@ -94,4 +96,6 @@ struct AuthUiState {
     bool settingsConfigured = false;
     std::wstring settingsInstallId;
     std::wstring settingsNote;
+    ModSource settingsModSource = ModSource::Modrinth;
+    std::wstring settingsCurseForgeKeyHint;
 };

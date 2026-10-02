@@ -83,8 +83,8 @@ void CollectFrames(const std::vector<std::string>& lines, size_t from, std::vect
 }
 
 // later log output proves the exception did not end the run
-bool TraceRunsToEndOfLog(const std::vector<std::string>& lines, size_t headerAt) {
-    for (size_t i = headerAt + 1; i < lines.size(); ++i) {
+bool TraceRunsTo(const std::vector<std::string>& lines, size_t headerAt, size_t stopAt) {
+    for (size_t i = headerAt + 1; i < stopAt && i < lines.size(); ++i) {
         const std::string trimmed = Trim(lines[i]);
         if (trimmed.empty()) continue;
         if (IsFrameLine(lines[i])) continue;
@@ -232,6 +232,7 @@ ParsedCrash ParseLatestLog(const std::string& text) {
 
     const std::vector<std::string> lines = SplitLines(text);
     size_t headerAt = std::string::npos;
+    size_t tailAt = lines.size();
     std::string cls;
     std::string message;
 
@@ -260,7 +261,7 @@ ParsedCrash ParseLatestLog(const std::string& text) {
         break;
     }
     if (headerAt == std::string::npos) return ParsedCrash();
-    if (!TraceRunsToEndOfLog(lines, headerAt)) return ParsedCrash();
+    if (!TraceRunsTo(lines, headerAt, tailAt)) return ParsedCrash();
 
     CollectFrames(lines, headerAt + 1, parsed.frames);
 
@@ -277,6 +278,45 @@ ParsedCrash ParseLatestLog(const std::string& text) {
     }
 
     return parsed;
+}
+
+// a run of full compactions freeing nothing at the cap means the heap is gone, and the
+// JVM grinds there instead of throwing, so nothing else in the pipeline sees it
+bool DetectHeapExhaustion(const std::string& gcLog, int& pinnedMb, int& capMb) {
+    pinnedMb = 0;
+    capMb = 0;
+    if (gcLog.empty()) return false;
+
+    const std::vector<std::string> lines = SplitLines(gcLog);
+    int streak = 0;
+    for (size_t i = lines.size(); i-- > 0;) {
+        const std::string& line = lines[i];
+        if (line.find("Pause Full") == std::string::npos) continue;
+
+        const size_t arrow = line.find("M->");
+        if (arrow == std::string::npos) continue;
+        size_t beforeStart = arrow;
+        while (beforeStart > 0 && isdigit(static_cast<unsigned char>(lines[i][beforeStart - 1]))) --beforeStart;
+        const size_t afterStart = arrow + 3;
+        const size_t paren = line.find('(', afterStart);
+        const size_t close = paren == std::string::npos ? std::string::npos : line.find("M)", paren);
+        if (paren == std::string::npos || close == std::string::npos) continue;
+
+        const int before = atoi(line.c_str() + beforeStart);
+        const int after = atoi(line.c_str() + afterStart);
+        const int cap = atoi(line.c_str() + paren + 1);
+        if (cap <= 0 || after <= 0) continue;
+
+        // freed under 2 percent of the cap, and sitting within 5 percent of it
+        const bool freedNothing = (before - after) * 50 < cap;
+        const bool atTheCap = after * 100 >= cap * 95;
+        if (!freedNothing || !atTheCap) break;
+
+        pinnedMb = after;
+        capMb = cap;
+        if (++streak >= 5) return true;
+    }
+    return false;
 }
 
 std::string DetectPhase(const std::string& mcLaunchLog) {

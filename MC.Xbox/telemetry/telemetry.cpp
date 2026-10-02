@@ -646,8 +646,17 @@ void ReportSoftCrash(const std::wstring& runtimeRoot) {
         if (!g_launchId.empty() && g_javaCrashLaunchId == g_launchId) crash = g_javaCrash;
     }
     if (!crash.valid()) {
-        crash = crashfp::Build("unknown_soft_crash", "unknown_soft_crash", "", {});
-        WriteLog(L"telemetry soft crash had no usable java exception, reporting as unknown");
+        const std::string gcLog = ReadFileUtf8(LogsCurrentDir(runtimeRoot) + L"\\gc.log");
+        int pinnedMb = 0, capMb = 0;
+        if (crashparse::DetectHeapExhaustion(gcLog, pinnedMb, capMb)) {
+            const std::string detail =
+                "heap pinned at " + std::to_string(pinnedMb) + "M of " + std::to_string(capMb) + "M";
+            crash = crashfp::Build("heap_exhausted", "heap_exhausted", detail, {});
+            WriteLogF(L"telemetry soft crash was heap exhaustion, %s", a2w(detail.c_str()).c_str());
+        } else {
+            crash = crashfp::Build("unknown_soft_crash", "unknown_soft_crash", "", {});
+            WriteLog(L"telemetry soft crash had no usable java exception, reporting as unknown");
+        }
     }
     if (!crash.valid()) return;
 

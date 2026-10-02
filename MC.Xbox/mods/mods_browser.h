@@ -5,11 +5,11 @@
 #include <windows.ui.core.h>
 
 #include "auth_ui_state.h"
+#include "mods_page.h"
 #include "profiles.h"
 
 class AuthScreenRenderer;
 
-LaunchTarget CurrentModsTarget(const AuthUiState& state);
 int PurgeBlockedModsFromDir(const std::wstring& runtimeRoot, const std::wstring& modsDir);
 bool IsBlockedModFileName(const std::wstring& fileName);
 

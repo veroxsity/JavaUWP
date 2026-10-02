@@ -300,6 +300,11 @@ std::wstring ToLowerW(std::wstring value) {
     return value;
 }
 
+bool EndsWithInsensitive(const std::wstring& value, const std::wstring& suffix) {
+    if (suffix.size() > value.size()) return false;
+    return _wcsicmp(value.c_str() + (value.size() - suffix.size()), suffix.c_str()) == 0;
+}
+
 std::string ToLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
     return value;

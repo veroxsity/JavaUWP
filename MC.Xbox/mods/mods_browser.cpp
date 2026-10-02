@@ -3,11 +3,13 @@
 #include "modpack_io.h"
 #include "auth_screen.h"
 #include "compat_feed.h"
+#include "curseforge.h"
 #include "runtime_manager.h"
 #include "http_client.h"
 #include "launcher_common.h"
 #include "launcher_mouse.h"
 #include "launcher_ui.h"
+#include "mod_source.h"
 #include "mod_types.h"
 #include "mods_ui_globals.h"
 #include "profiles.h"
@@ -99,8 +101,29 @@ static std::wstring ModIconCachePath(const std::wstring& runtimeRoot, const std:
     return runtimeRoot + L"\\mod-icons\\" + SafeFileName(projectId) + L".img";
 }
 
-static std::wstring BuildModrinthSearchUrl(const char* index, int limit, int offset, const std::wstring& query, const char* projectType, const std::string& gameVersion, const std::string& loaderId) {
-    std::string facets = std::string("[[\"project_type:") + projectType + "\"]";
+static const char* ModrinthProjectType(ContentKind kind) {
+    switch (kind) {
+    case ContentKind::Modpack: return "modpack";
+    case ContentKind::ResourcePack: return "resourcepack";
+    case ContentKind::Shader: return "shader";
+    case ContentKind::Mod: break;
+    }
+    return "mod";
+}
+
+// modrinth tags resource packs with the minecraft loader. shaders filter on iris, oculus reads the same packs
+static std::string ModrinthLoaderFor(ContentKind kind, const std::string& targetLoaderId) {
+    switch (kind) {
+    case ContentKind::ResourcePack: return "minecraft";
+    case ContentKind::Shader: return "iris";
+    case ContentKind::Mod:
+    case ContentKind::Modpack: break;
+    }
+    return targetLoaderId;
+}
+
+static std::wstring BuildModrinthSearchUrl(const char* index, int limit, int offset, const std::wstring& query, ContentKind kind, const std::string& gameVersion, const std::string& loaderId) {
+    std::string facets = std::string("[[\"project_type:") + ModrinthProjectType(kind) + "\"]";
     if (!loaderId.empty()) facets += ",[\"categories:" + loaderId + "\"]";
     facets += ",[\"versions:" + gameVersion + "\"]";
     facets += ",[\"client_side:required\",\"client_side:optional\"]]";
@@ -342,12 +365,15 @@ static int RemoveProfileModAndUnusedDependencies(const std::wstring& runtimeRoot
 
 static const int kModPageSize = 50;
 
-static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index, const std::wstring& query, int offset, int limit, std::vector<ModCard>& out, int& totalHits, std::wstring& error, const char* projectType, const std::string& gameVersion, const std::string& loaderId) {
+// fabric api, curseforge project 306612
+static const wchar_t* kCurseForgeFabricApiId = L"306612";
+
+static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index, const std::wstring& query, int offset, int limit, std::vector<ModCard>& out, int& totalHits, std::wstring& error, ContentKind kind, const std::string& gameVersion, const std::string& targetLoaderId) {
     using namespace winrt::Windows::Data::Json;
     error.clear();
-    const bool modpack = projectType && std::strcmp(projectType, "modpack") == 0;
 
-    const std::wstring url = BuildModrinthSearchUrl(index, limit, offset, query, projectType, gameVersion, loaderId);
+    const std::string loaderId = ModrinthLoaderFor(kind, targetLoaderId);
+    const std::wstring url = BuildModrinthSearchUrl(index, limit, offset, query, kind, gameVersion, loaderId);
     WriteLogF(L"Modrinth search url=%s", url.c_str());
     const HttpResult response = HttpGetString(url.c_str());
     if (!response.success()) {
@@ -371,7 +397,7 @@ static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index
             JsonObject hit = value.GetObject();
 
             ModCard card;
-            card.isModpack = modpack;
+            card.kind = kind;
             card.projectId = JsonStringOrEmpty(hit, L"project_id");
             card.slug = JsonStringOrEmpty(hit, L"slug");
             card.title = JsonStringOrEmpty(hit, L"title");
@@ -379,9 +405,13 @@ static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index
             const std::wstring iconUrl = JsonStringOrEmpty(hit, L"icon_url");
             if (card.title.empty()) card.title = card.slug.empty() ? card.projectId : card.slug;
             if (card.description.empty()) {
-                std::wstring loaderName = loaderId.empty() ? std::wstring(L"Vanilla") : a2w(loaderId.c_str());
-                if (!loaderName.empty()) loaderName[0] = static_cast<wchar_t>(towupper(loaderName[0]));
-                card.description = loaderName + (modpack ? L" modpack for Minecraft " : L" mod for Minecraft ") + a2w(gameVersion.c_str());
+                std::wstring what = ContentLabel(kind);
+                if (kind == ContentKind::Mod || kind == ContentKind::Modpack) {
+                    std::wstring loaderName = loaderId.empty() ? std::wstring(L"Vanilla") : a2w(loaderId.c_str());
+                    loaderName[0] = static_cast<wchar_t>(towupper(loaderName[0]));
+                    what = loaderName + L" " + ContentNoun(kind, false);
+                }
+                card.description = what + L" for Minecraft " + a2w(gameVersion.c_str());
             }
             card.status = std::to_wstring(JsonIntOrZero(hit, L"downloads")) + L" downloads";
             if (!iconUrl.empty()) {
@@ -397,6 +427,39 @@ static bool FetchModrinthMods(const std::wstring& runtimeRoot, const char* index
         return false;
     }
 
+    return true;
+}
+
+static bool FetchTabPage(
+    const AuthUiState& state,
+    const std::wstring& runtimeRoot,
+    int offset,
+    std::vector<ModCard>& out,
+    int& totalHits,
+    std::wstring& error) {
+    const ModsTabInfo& tab = ModsTabAt(state.selectedModsTab);
+    const LaunchTarget target = CurrentModsTarget(state);
+    const std::string gameVersion = w2a(target.minecraftVersion);
+    const std::wstring& query = state.modsSearchQuery;
+
+    if (state.modsSource != ModSource::CurseForge) {
+        const char* index = !query.empty() ? "relevance" : (tab.sortByDownloads ? "downloads" : "newest");
+        return FetchModrinthMods(runtimeRoot, index, query, offset, kModPageSize, out, totalHits,
+            error, tab.kind, gameVersion, ModrinthLoaderId(target.loader));
+    }
+
+    // curseforge has no relevance sort, downloads is the closest
+    const bool byDownloads = tab.sortByDownloads || !query.empty();
+    const size_t before = out.size();
+    if (!curseforge::Search(query, offset, kModPageSize, tab.kind, byDownloads, gameVersion,
+            target.loader, out, totalHits, error)) {
+        return false;
+    }
+    for (size_t i = before; i < out.size(); ++i) {
+        if (out[i].iconUrl.empty()) continue;
+        out[i].iconPath = ModIconCachePath(runtimeRoot,
+            L"cf-" + (out[i].projectId.empty() ? out[i].slug : out[i].projectId));
+    }
     return true;
 }
 
@@ -867,6 +930,142 @@ static bool InstallModrinthProjectRecursive(
     }
 }
 
+static std::wstring CurseForgeProjectName(const std::wstring& modId) {
+    long long id = 0;
+    try {
+        id = std::stoll(modId);
+    } catch (...) {
+        return modId;
+    }
+    std::vector<curseforge::ModInfo> infos;
+    std::wstring error;
+    if (!curseforge::ResolveModInfo({ id }, infos, error) || infos.empty() || infos.front().name.empty()) {
+        return modId;
+    }
+    return infos.front().name;
+}
+
+static bool InstallCurseForgeProjectRecursive(
+    const std::wstring& modId,
+    const std::wstring& runtimeRoot,
+    const std::wstring& userModsDir,
+    std::set<std::wstring>& visited,
+    std::vector<std::wstring>& installed,
+    const ModCard* topMeta,
+    std::wstring& error,
+    const std::string& gameVersion,
+    const std::wstring& loaderName,
+    const std::string& loaderVersion,
+    const std::wstring& rootProjectId,
+    bool installingDependency) {
+    if (modId.empty()) {
+        error = L"Missing CurseForge project id";
+        return false;
+    }
+    if (visited.find(modId) != visited.end()) return true;
+    visited.insert(modId);
+
+    // dependencies arrive as bare ids
+    const std::wstring title = topMeta ? topMeta->title : CurseForgeProjectName(modId);
+
+    curseforge::FileRef file;
+    if (!curseforge::ResolveLatestFile(modId, gameVersion, loaderName, file, error)) {
+        return false;
+    }
+
+    if (file.distributionBlocked) {
+        error = title +
+            L" cannot be downloaded by third party launchers. Get it from curseforge.com and upload the jar in Remote Files.";
+        WriteLogF(L"CurseForge project %s has distribution disabled", modId.c_str());
+        return false;
+    }
+
+    if (const BlockedMod* blocked = FindBlockedModFile(file.fileName)) {
+        error = L"Blocked incompatible mod: " + file.fileName;
+        WriteLogF(L"%s (%s)", error.c_str(), blocked->reason);
+        return false;
+    }
+
+    EnsureDirectoryTree(userModsDir);
+    const std::wstring installedFileName = SafeFileName(file.fileName);
+    const std::wstring destination = userModsDir + L"\\" + installedFileName;
+    const std::wstring qualifiedId = modsource::QualifyProjectId(ModSource::CurseForge, modId);
+
+    if (!file.sha1.empty() && FileMatchesSha1(destination, file.sha1)) {
+        std::wstring reason;
+        if (ModJarMatchesFabricLoader(destination, loaderVersion, reason)) {
+            WriteLogF(L"Mod already installed: %s", destination.c_str());
+            RecordProfileModInstall(userModsDir, installedFileName, qualifiedId,
+                title, installingDependency, rootProjectId);
+            return true;
+        }
+        WriteLogF(L"Installed CurseForge file is not compatible with target loader: %s (%s)",
+            destination.c_str(), reason.c_str());
+    }
+
+    const std::wstring tempPath = destination + L".download";
+    DeleteFileW(tempPath.c_str());
+    WriteLogF(L"Downloading CurseForge file %s", file.fileName.c_str());
+    SetInstallStatus(L"Checking " + file.fileName);
+    if (!curseforge::DownloadFile(file, tempPath, MakeInstallProgress(L"Checking " + file.fileName, file.fileSize))) {
+        DeleteFileW(tempPath.c_str());
+        error = L"Mod download failed: " + file.fileName;
+        return false;
+    }
+
+    if (!file.sha1.empty() && !FileMatchesSha1(tempPath, file.sha1)) {
+        DeleteFileW(tempPath.c_str());
+        error = L"Mod verification failed: " + file.fileName;
+        return false;
+    }
+
+    std::wstring incompatReason;
+    if (!ModJarMatchesFabricLoader(tempPath, loaderVersion, incompatReason)) {
+        DeleteFileW(tempPath.c_str());
+        error = file.fileName + L" " + incompatReason;
+        WriteLogF(L"Skipping CurseForge file for target loader %s: %s",
+            a2w(loaderVersion.c_str()).c_str(), error.c_str());
+        return false;
+    }
+
+    // curseforge often leaves fabric api out of dependencies. newer mods name it fabric-api, older ones fabric
+    if (ToLowerW(loaderName) == L"fabric" && modId != kCurseForgeFabricApiId &&
+        (FabricModDependsOn(tempPath, L"fabric-api") || FabricModDependsOn(tempPath, L"fabric"))) {
+        WriteLogF(L"Mod %s requires Fabric API; ensuring Fabric API dependency", file.fileName.c_str());
+        if (!InstallCurseForgeProjectRecursive(kCurseForgeFabricApiId, runtimeRoot, userModsDir, visited,
+                installed, nullptr, error, gameVersion, loaderName, loaderVersion, rootProjectId, true)) {
+            DeleteFileW(tempPath.c_str());
+            return false;
+        }
+    }
+
+    for (const long long dependency : file.requiredDependencies) {
+        if (!InstallCurseForgeProjectRecursive(std::to_wstring(dependency), runtimeRoot, userModsDir,
+                visited, installed, nullptr, error, gameVersion, loaderName, loaderVersion, rootProjectId, true)) {
+            DeleteFileW(tempPath.c_str());
+            return false;
+        }
+    }
+
+    DeleteFileW(destination.c_str());
+    if (!MoveFileExW(tempPath.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(tempPath.c_str());
+        error = L"Could not install mod: " + file.fileName;
+        WriteLogF(L"MoveFileEx failed for mod %s err=%u", destination.c_str(), GetLastError());
+        return false;
+    }
+
+    installed.push_back(installedFileName);
+    if (topMeta) {
+        ModCard meta = *topMeta;
+        WriteModMeta(runtimeRoot, installedFileName, meta);
+    }
+    RecordProfileModInstall(userModsDir, installedFileName, qualifiedId,
+        title, installingDependency, rootProjectId);
+    WriteLogF(L"Installed CurseForge mod %s", destination.c_str());
+    return true;
+}
+
 static bool InstallModrinthProject(
     const ModCard& card,
     const std::wstring& runtimeRoot,
@@ -881,8 +1080,28 @@ static bool InstallModrinthProject(
     return InstallModrinthProjectRecursive(id, runtimeRoot, userModsDir, visited, installed, &card, error, gameVersion, loaderId, loaderVersion, id, false);
 }
 
+static bool InstallModProject(
+    const ModCard& card,
+    const std::wstring& runtimeRoot,
+    const std::wstring& userModsDir,
+    std::vector<std::wstring>& installed,
+    std::wstring& error,
+    const std::string& gameVersion,
+    const std::string& loaderId,
+    const std::wstring& loaderName,
+    const std::string& loaderVersion) {
+    if (card.source != ModSource::CurseForge) {
+        return InstallModrinthProject(card, runtimeRoot, userModsDir, installed, error,
+            gameVersion, loaderId, loaderVersion);
+    }
+    std::set<std::wstring> visited;
+    const std::wstring id = !card.projectId.empty() ? card.projectId : card.slug;
+    return InstallCurseForgeProjectRecursive(id, runtimeRoot, userModsDir, visited, installed,
+        &card, error, gameVersion, loaderName, loaderVersion, id, false);
+}
 
-static bool ResolveModpackMrpack(const std::wstring& idOrSlug, std::wstring& url, std::wstring& filename, std::string& sha1, unsigned long long& size, std::wstring& error, const std::string& gameVersion, const std::string& loaderId) {
+
+static bool ResolveModrinthProjectFile(const std::wstring& idOrSlug, const wchar_t* noun, std::wstring& url, std::wstring& filename, std::string& sha1, unsigned long long& size, std::wstring& error, const std::string& gameVersion, const std::string& loaderId) {
     using namespace winrt::Windows::Data::Json;
     const std::string project = w2a(idOrSlug);
     const std::string versions = FormUrlEncode("[\"" + gameVersion + "\"]");
@@ -894,13 +1113,13 @@ static bool ResolveModpackMrpack(const std::wstring& idOrSlug, std::wstring& url
         L"&include_changelog=false";
     const HttpResult response = HttpGetString(vurl.c_str());
     if (!response.success()) {
-        error = L"Modpack version lookup failed HTTP " + std::to_wstring(response.status);
+        error = std::wstring(L"Version lookup for this ") + noun + L" failed HTTP " + std::to_wstring(response.status);
         return false;
     }
     try {
         JsonArray arr = JsonArray::Parse(winrt::to_hstring(response.body));
         if (arr.Size() == 0) {
-            error = L"No " + (loaderId.empty() ? std::wstring(L"compatible") : a2w(loaderId.c_str())) + L" " + a2w(gameVersion.c_str()) + L" build of this pack";
+            error = L"No " + a2w(gameVersion.c_str()) + L" build of this " + noun;
             return false;
         }
         JsonObject version = nullptr;
@@ -911,14 +1130,14 @@ static bool ResolveModpackMrpack(const std::wstring& idOrSlug, std::wstring& url
             if (JsonStringOrEmpty(c, L"version_type") == L"release") { version = c; break; }
             if (!version) version = c;
         }
-        if (!version) { error = L"No installable pack version found"; return false; }
+        if (!version) { error = std::wstring(L"No installable ") + noun + L" version found"; return false; }
         if (!ExtractPrimaryModrinthFile(version, url, filename, sha1, size)) {
-            error = L"Pack version had no downloadable file";
+            error = std::wstring(L"The ") + noun + L" version had no downloadable file";
             return false;
         }
         return true;
     } catch (const winrt::hresult_error&) {
-        error = L"Could not parse pack version response";
+        error = std::wstring(L"Could not parse the ") + noun + L" version response";
         return false;
     }
 }
@@ -930,13 +1149,34 @@ static bool InstallModpack(const ModCard& card, const std::wstring& runtimeRoot,
     std::wstring mrUrl, mrName;
     std::string mrSha1;
     unsigned long long mrSize = 0;
-    if (!ResolveModpackMrpack(idOrSlug, mrUrl, mrName, mrSha1, mrSize, error, gameVersion, loaderId)) return false;
+    bool fromCurseForge = false;
+    curseforge::FileRef packFile;
+
+    if (card.source == ModSource::CurseForge) {
+        // pack files are not reliably tagged with a loader
+        if (!curseforge::ResolveLatestFile(idOrSlug, gameVersion, L"", packFile, error)) return false;
+        if (packFile.distributionBlocked) {
+            error = card.title + L" cannot be downloaded by third party launchers. Get it from curseforge.com and import the zip in Remote Files.";
+            return false;
+        }
+        fromCurseForge = true;
+        mrUrl = packFile.downloadUrl;
+        mrName = packFile.fileName;
+        mrSha1 = packFile.sha1;
+        mrSize = packFile.fileSize;
+    } else if (!ResolveModrinthProjectFile(idOrSlug, L"modpack", mrUrl, mrName, mrSha1, mrSize, error, gameVersion, loaderId)) {
+        return false;
+    }
 
     const std::wstring cacheDir = runtimeRoot + L"\\.modpack-cache";
     EnsureDirectoryTree(cacheDir);
     const std::wstring mrPath = cacheDir + L"\\" + SafeFileName(mrName);
     DeleteFileW(mrPath.c_str());
-    if (!DownloadUrlToFile(mrUrl, mrPath, MakeInstallProgress(L"Downloading " + card.title, mrSize))) { error = L"Pack download failed"; return false; }
+    const auto progress = MakeInstallProgress(L"Downloading " + card.title, mrSize);
+    const bool fetched = fromCurseForge
+        ? curseforge::DownloadFile(packFile, mrPath, progress)
+        : DownloadUrlToFile(mrUrl, mrPath, progress);
+    if (!fetched) { error = L"Pack download failed"; return false; }
     if (!mrSha1.empty() && !FileMatchesSha1(mrPath, mrSha1)) {
         DeleteFileW(mrPath.c_str());
         error = L"Pack verification failed";
@@ -944,9 +1184,96 @@ static bool InstallModpack(const ModCard& card, const std::wstring& runtimeRoot,
     }
 
     SetInstallStatus(L"Installing " + card.title + L"...");
-    const bool ok = InstallModpackFromFile(mrPath, runtimeRoot, profileId, error);
+    std::wstring skippedNote;
+    const bool ok = InstallModpackFromFile(mrPath, runtimeRoot, profileId, error, &skippedNote, MakeInstallProgress);
     DeleteFileW(mrPath.c_str());
+    if (ok && !skippedNote.empty()) error = skippedNote;
     return ok;
+}
+
+// a filename check, because install records only cover mods added through the browser
+static bool ProfileHasShaderLoader(const std::wstring& modsDir) {
+    WIN32_FIND_DATAW fd = {};
+    HANDLE h = FindFirstFileW((modsDir + L"\\*.jar").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool found = false;
+    do {
+        const std::wstring name = ToLowerW(fd.cFileName);
+        if (name.find(L"iris") != std::wstring::npos || name.find(L"oculus") != std::wstring::npos) {
+            found = true;
+            break;
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return found;
+}
+
+static bool InstallContentPack(
+    const ModCard& card,
+    const std::wstring& runtimeRoot,
+    const std::wstring& profileId,
+    const std::string& gameVersion,
+    bool& alreadyInstalled,
+    std::wstring& error) {
+    alreadyInstalled = false;
+    const std::wstring idOrSlug = !card.projectId.empty() ? card.projectId : card.slug;
+    const wchar_t* noun = ContentNoun(card.kind, false);
+    SetInstallStatus(L"Resolving " + card.title + L"...");
+
+    std::wstring url;
+    std::wstring fileName;
+    std::string sha1;
+    unsigned long long size = 0;
+    curseforge::FileRef cfFile;
+    const bool fromCurseForge = card.source == ModSource::CurseForge;
+    if (fromCurseForge) {
+        if (!curseforge::ResolveLatestFile(idOrSlug, gameVersion, L"", cfFile, error)) return false;
+        if (cfFile.distributionBlocked) {
+            error = card.title + L" cannot be downloaded by third party launchers. Get it from curseforge.com and put it in " +
+                ContentFolder(card.kind) + L" with Remote Files.";
+            return false;
+        }
+        fileName = cfFile.fileName;
+        sha1 = cfFile.sha1;
+        size = cfFile.fileSize;
+    } else if (!ResolveModrinthProjectFile(idOrSlug, noun, url, fileName, sha1, size, error, gameVersion,
+            ModrinthLoaderFor(card.kind, std::string()))) {
+        return false;
+    }
+
+    const std::wstring folder = ProfileGameDir(runtimeRoot, profileId) + L"\\" + ContentFolder(card.kind);
+    EnsureDirectoryTree(folder);
+    const std::wstring destination = folder + L"\\" + SafeFileName(fileName);
+    if (!sha1.empty() && FileMatchesSha1(destination, sha1)) {
+        alreadyInstalled = true;
+        return true;
+    }
+
+    const std::wstring tempPath = destination + L".download";
+    DeleteFileW(tempPath.c_str());
+    const auto progress = MakeInstallProgress(L"Downloading " + card.title, size);
+    const bool fetched = fromCurseForge
+        ? curseforge::DownloadFile(cfFile, tempPath, progress)
+        : DownloadUrlToFile(url, tempPath, progress);
+    if (!fetched) {
+        DeleteFileW(tempPath.c_str());
+        error = L"Download failed: " + fileName;
+        return false;
+    }
+    if (!sha1.empty() && !FileMatchesSha1(tempPath, sha1)) {
+        DeleteFileW(tempPath.c_str());
+        error = L"Verification failed: " + fileName;
+        return false;
+    }
+    DeleteFileW(destination.c_str());
+    if (!MoveFileExW(tempPath.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        WriteLogF(L"MoveFileEx failed for %s %s err=%u", noun, destination.c_str(), GetLastError());
+        DeleteFileW(tempPath.c_str());
+        error = L"Could not save " + fileName;
+        return false;
+    }
+    WriteLogF(L"Installed %s %s", noun, destination.c_str());
+    return true;
 }
 
 static void CleanInlineMd(const std::wstring& s, std::wstring& out,
@@ -1090,11 +1417,16 @@ static std::vector<std::pair<UINT32, UINT32>> g_detailHead;
 static unsigned StartDetailFetch(const ModCard& card) {
     const unsigned id = ++g_detailReqId;
     const std::wstring idOrSlug = !card.projectId.empty() ? card.projectId : card.slug;
+    const ModSource source = card.source;
     g_detailFetching.store(true);
-    std::thread([id, idOrSlug]() {
+    std::thread([id, idOrSlug, source]() {
         std::wstring body, meta;
         std::vector<std::pair<UINT32, UINT32>> bold, head;
-        FetchProjectDetail(idOrSlug, body, meta, bold, head);
+        if (source == ModSource::CurseForge) {
+            curseforge::FetchDetail(idOrSlug, body, meta, bold, head);
+        } else {
+            FetchProjectDetail(idOrSlug, body, meta, bold, head);
+        }
         std::lock_guard<std::mutex> lk(g_detailMutex);
         if (id == g_detailReqId.load()) {
             g_detailBody = body;
@@ -1112,7 +1444,7 @@ static void ApplyCompatFlag(AuthUiState& state, const ModCard& card) {
     state.modsCompatWarn = false;
     state.modsCompatAcked = false;
     state.modsCompatNote.clear();
-    if (card.isModpack) return;
+    if (card.kind != ContentKind::Mod) return;
 
     const LaunchTarget target = CurrentModsTarget(state);
     const compat::Flag flag = compat::Lookup(
@@ -1141,13 +1473,14 @@ static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot
         const std::string loaderVersion = w2a(targetCopy.loaderVersion);
         std::wstring err;
         bool ok;
-        if (copy.isModpack) {
+        if (copy.kind == ContentKind::Modpack) {
             const std::wstring pid = CreateProfile(rootCopy, copy.title, targetCopy);
             WriteLogF(L"Installing modpack '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), pid.c_str());
             ok = InstallModpack(copy, rootCopy, pid, err, gameVersion, loaderId);
             if (ok) {
                 SetActiveProfileId(rootCopy, pid);
-                SetInstallStatus(L"Installed profile " + copy.title);
+                // on success err carries the note about files that need fetching by hand
+                SetInstallStatus(L"Installed profile " + copy.title + (err.empty() ? std::wstring() : L". " + err));
             } else {
                 DeleteProfilePermanent(rootCopy, pid);
                 SetInstallStatus(err.empty() ? L"Modpack install failed" : err);
@@ -1165,13 +1498,27 @@ static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot
                         targetCopy.targetId.c_str(), activeTarget.targetId.c_str());
                     SetInstallStatus(L"Active profile is " + TargetProfileText(activeTarget) +
                         L". Select or create a " + TargetShortText(targetCopy) + L" profile to install these.");
-                } else {
+                } else if (copy.kind == ContentKind::Mod) {
                     std::vector<std::wstring> installed;
                     WriteLogF(L"Installing mod '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
-                    ok = InstallModrinthProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err, gameVersion, loaderId, loaderVersion);
+                    ok = InstallModProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err, gameVersion, loaderId, targetCopy.loader, loaderVersion);
                     SetInstallStatus(ok
                         ? (installed.empty() ? L"Already installed" : L"Installed " + std::to_wstring(installed.size()) + L" file(s)")
                         : (err.empty() ? L"Install failed" : err));
+                } else {
+                    bool alreadyInstalled = false;
+                    WriteLogF(L"Installing %s '%s' target=%s into profile %s", ContentNoun(copy.kind, false),
+                        copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
+                    ok = InstallContentPack(copy, rootCopy, active, gameVersion, alreadyInstalled, err);
+                    if (!ok) {
+                        SetInstallStatus(err.empty() ? L"Install failed" : err);
+                    } else if (copy.kind == ContentKind::Shader && !ProfileHasShaderLoader(ProfileModsDir(rootCopy, active))) {
+                        SetInstallStatus(L"Installed " + copy.title + L". Shaders need Iris or Oculus in this profile, add one from Popular.");
+                    } else {
+                        SetInstallStatus((alreadyInstalled ? L"Already installed " : L"Installed ") + copy.title +
+                            L". Turn it on in game from " +
+                            (copy.kind == ContentKind::Shader ? L"Options, Video Settings, Shader Packs." : L"Options, Resource Packs."));
+                    }
                 }
             }
         }
@@ -1340,13 +1687,6 @@ static bool FetchRecommendedMods(const std::wstring& runtimeRoot, const LaunchTa
     return true;
 }
 
-static int ModsTargetIndex(const AuthUiState& state) {
-    for (size_t i = 0; i < state.modsTargets.size(); ++i) {
-        if (state.modsTargets[i].targetId == state.modsBrowseTargetId) return static_cast<int>(i);
-    }
-    return -1;
-}
-
 static void ScrollModsTargetIntoView(AuthUiState& state) {
     const int total = static_cast<int>(state.modsTargets.size());
     const int visible = (std::min)(total, kModsTargetRowsVisible);
@@ -1360,12 +1700,6 @@ static void ScrollModsTargetIntoView(AuthUiState& state) {
     if (scroll > total - visible) scroll = total - visible;
     if (scroll < 0) scroll = 0;
     state.modsTargetScroll = scroll;
-}
-
-LaunchTarget CurrentModsTarget(const AuthUiState& state) {
-    const int idx = ModsTargetIndex(state);
-    if (idx >= 0 && idx < static_cast<int>(state.modsTargets.size())) return state.modsTargets[static_cast<size_t>(idx)];
-    return DefaultLaunchTarget();
 }
 
 static void EnsureModsTargetState(AuthUiState& state, const std::wstring& runtimeRoot) {
@@ -1401,7 +1735,7 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
 
     const std::wstring query = state.modsSearchQuery;
 
-    if (state.selectedModsTab == 0) {
+    if (state.selectedModsTab == modstab::kProfiles) {
         EnsureProfilesInitialized(runtimeRoot);
         const std::wstring active = GetActiveProfileId(runtimeRoot);
         const std::wstring deletedBackup = LatestProfileBackup(runtimeRoot, L"deleted");
@@ -1451,7 +1785,7 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
         return;
     }
 
-    if (state.selectedModsTab == 3) {
+    if (state.selectedModsTab == modstab::kRecommended) {
         std::vector<ModCard> all;
         std::wstring error;
         const LaunchTarget modsTarget = CurrentModsTarget(state);
@@ -1482,17 +1816,13 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
         return;
     }
 
-    const char* projectType = state.selectedModsTab == 4 ? "modpack" : "mod";
-    const char* index = !query.empty()
-        ? "relevance"
-        : ((state.selectedModsTab == 1 || state.selectedModsTab == 4) ? "downloads" : "newest");
-    const LaunchTarget modsTarget = CurrentModsTarget(state);
-    const std::string gameVersion = w2a(modsTarget.minecraftVersion);
-    const std::string loaderId = ModrinthLoaderId(modsTarget.loader);
+    const ModsTabInfo& tab = ModsTabAt(state.selectedModsTab);
     std::wstring error;
     int total = 0;
-    if (!FetchModrinthMods(runtimeRoot, index, query, 0, kModPageSize, state.modsCards, total, error, projectType, gameVersion, loaderId)) {
-        state.status = error.empty() ? L"Could not load Modrinth" : error;
+    if (!FetchTabPage(state, runtimeRoot, 0, state.modsCards, total, error)) {
+        state.status = error.empty()
+            ? (std::wstring(L"Could not load ") + modsource::DisplayName(state.modsSource))
+            : error;
         state.isError = true;
         return;
     }
@@ -1501,7 +1831,7 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, con
     state.modsExhausted = static_cast<int>(state.modsCards.size()) >= total;
     QueueModIcons(state.modsCards);
     state.status = state.modsCards.empty()
-        ? (state.selectedModsTab == 4 ? L"No modpacks found" : L"No mods found")
+        ? std::wstring(L"No ") + ContentNoun(tab.kind, true) + L" found"
         : std::to_wstring(state.modsCards.size()) + L" of " + std::to_wstring(total);
 }
 
@@ -1838,22 +2168,14 @@ void ShowModsPage(
     };
 
     auto loadMore = [&]() {
-        const bool browseTab = state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4;
-        if (state.modsExhausted || !browseTab) return;
-        const char* projectType = state.selectedModsTab == 4 ? "modpack" : "mod";
-        const char* index = !state.modsSearchQuery.empty()
-            ? "relevance"
-            : ((state.selectedModsTab == 1 || state.selectedModsTab == 4) ? "downloads" : "newest");
+        if (state.modsExhausted || !ModsTabAt(state.selectedModsTab).searchesSource) return;
         const int before = static_cast<int>(state.modsCards.size());
         state.status = L"Loading more...";
         RenderAuth(renderer, state);
 
-        const LaunchTarget moreTarget = CurrentModsTarget(state);
-        const std::string moreGameVersion = w2a(moreTarget.minecraftVersion);
-        const std::string moreLoaderId = ModrinthLoaderId(moreTarget.loader);
         int total = state.modsTotalHits;
         std::wstring error;
-        if (!FetchModrinthMods(runtimeRoot, index, state.modsSearchQuery, before, kModPageSize, state.modsCards, total, error, projectType, moreGameVersion, moreLoaderId)) {
+        if (!FetchTabPage(state, runtimeRoot, before, state.modsCards, total, error)) {
             state.modsExhausted = true;
             return;
         }
@@ -1864,6 +2186,24 @@ void ShowModsPage(
         state.status = std::to_wstring(after) + L" of " + std::to_wstring(total);
     };
 
+    auto selectTab = [&](int tab) {
+        if (tab == state.selectedModsTab) return;
+        state.selectedModsTab = tab;
+        state.modsTargetOpen = false;
+        LoadModsTab(state, runtimeRoot, userModsDir);
+        loadedQuery = state.modsSearchQuery;
+    };
+
+    auto selectSource = [&](ModSource source) {
+        if (source == state.modsSource) return;
+        state.modsSource = source;
+        modsource::SetCurrent(source);
+        state.modsTargetOpen = false;
+        LoadModsTab(state, runtimeRoot, userModsDir);
+        loadedQuery = state.modsSearchQuery;
+    };
+
+    state.modsSource = modsource::Current();
     WriteLog(L"Mods page opened");
     int lastEnsuredSel = -1;
     while (true) {
@@ -1994,7 +2334,7 @@ void ShowModsPage(
             const std::wstring s = GetInstallStatus();
             state.status = !s.empty() ? s : (ok ? L"Installed" : L"Install failed");
             state.isError = !ok;
-            if (ok && state.selectedModsTab == 0) {
+            if (ok && state.selectedModsTab == modstab::kProfiles) {
                 LoadModsTab(state, runtimeRoot, userModsDir);
                 loadedQuery = state.modsSearchQuery;
             }
@@ -2003,6 +2343,7 @@ void ShowModsPage(
         bool clickActivate = false;
         float wheelDelta = 0.0f;
         state.modsHoverTab = -1;
+        state.modsHoverSource = -1;
         {
             LauncherMouse& launcherMouse = LauncherMouseInstance();
             if (launcherMouse.Visible()) {
@@ -2067,20 +2408,21 @@ void ShowModsPage(
                         state.isError = false;
                         return;
                     }
-                    if (hid >= launchhit::kTabBase && hid < launchhit::kTabBase + 5) {
+                    if (hid >= launchhit::kTabBase && hid < launchhit::kTabBase + modstab::kCount) {
                         const int tabIndex = hid - launchhit::kTabBase;
                         state.modsHoverTab = tabIndex;
                         if (apply) state.modsFocus = 0;
                         if (clicked) {
-                            if (tabIndex != state.selectedModsTab) {
-                                state.selectedModsTab = tabIndex;
-                                state.modsTargetOpen = false;
-                                LoadModsTab(state, runtimeRoot, userModsDir);
-                                loadedQuery = state.modsSearchQuery;
-                                state.selectedModIndex = 0;
-                                state.modsScrollRow = 0;
-                            }
+                            selectTab(tabIndex);
                             state.modsFocus = 0;
+                        }
+                    } else if (hid >= launchhit::kSourceBase && hid < launchhit::kSourceBase + 2) {
+                        const int sourceIndex = hid - launchhit::kSourceBase;
+                        state.modsHoverSource = sourceIndex;
+                        if (apply) state.modsFocus = 4;
+                        if (clicked) {
+                            selectSource(sourceIndex == 1 ? ModSource::CurseForge : ModSource::Modrinth);
+                            state.modsFocus = 4;
                         }
                     } else if (hid == launchhit::kTarget) {
                         if (apply) state.modsFocus = 3;
@@ -2306,24 +2648,28 @@ void ShowModsPage(
                 if (nextScroll < 0) nextScroll = 0;
                 if (nextScroll > maxScrollRow) nextScroll = maxScrollRow;
                 state.modsScrollRow = nextScroll;
-                if (wheelNotches < 0 && state.modsScrollRow >= maxScrollRow &&
-                    !state.modsExhausted &&
-                    (state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4)) {
+                if (wheelNotches < 0 && state.modsScrollRow >= maxScrollRow) {
                     loadMore();
                 }
             }
         }
 
-        if (state.modsFocus == 0) {
+        if (state.modsFocus == 4) {
+            if (leftDown && !leftWasDown) selectSource(ModSource::Modrinth);
+            if (rightDown && !rightWasDown) selectSource(ModSource::CurseForge);
+            if ((downDown && !downWasDown) || (selectDown && !selectWasDown)) {
+                state.modsFocus = 0;
+            }
+        } else if (state.modsFocus == 0) {
             if (upDown && !upWasDown) {
-                state.selectedModsTab = (state.selectedModsTab + 4) % 5;
-                LoadModsTab(state, runtimeRoot, userModsDir);
-                loadedQuery = state.modsSearchQuery;
+                if (state.selectedModsTab == modstab::kProfiles) {
+                    state.modsFocus = 4;
+                } else {
+                    selectTab(state.selectedModsTab - 1);
+                }
             }
             if (downDown && !downWasDown) {
-                state.selectedModsTab = (state.selectedModsTab + 1) % 5;
-                LoadModsTab(state, runtimeRoot, userModsDir);
-                loadedQuery = state.modsSearchQuery;
+                selectTab((state.selectedModsTab + 1) % modstab::kCount);
             }
             if ((rightDown && !rightWasDown) || (selectDown && !selectWasDown)) {
                 state.modsFocus = 3;
@@ -2425,8 +2771,7 @@ void ShowModsPage(
                 state.selectedModIndex = (std::max)(state.selectedModIndex - step, 0);
             }
 
-            if (!state.modsExhausted && (state.selectedModsTab == 1 || state.selectedModsTab == 2 || state.selectedModsTab == 4) && count > 0 &&
-                ((downDown && !downWasDown) || (pageDownDown && !pageDownWasDown))) {
+            if (count > 0 && ((downDown && !downWasDown) || (pageDownDown && !pageDownWasDown))) {
                 const int lastRow = (count - 1) / 2;
                 if (state.selectedModIndex / 2 >= lastRow) {
                     loadMore();
@@ -2438,7 +2783,7 @@ void ShowModsPage(
             }
             lastEnsuredSel = state.selectedModIndex;
 
-            if (state.selectedModsTab == 0 && xDown && !xWasDown &&
+            if (state.selectedModsTab == modstab::kProfiles && xDown && !xWasDown &&
                 state.selectedModIndex >= 0 && state.selectedModIndex < count) {
                 const ModCard& sel = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
                 if (sel.projectId == L"__profile__" && sel.filePath != kVanillaProfileId) {
@@ -2455,7 +2800,7 @@ void ShowModsPage(
 
             if (((selectDown && !selectWasDown) || clickActivate) && state.selectedModIndex >= 0 && state.selectedModIndex < count) {
                 ModCard selected = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
-                if (state.selectedModsTab == 0) {
+                if (state.selectedModsTab == modstab::kProfiles) {
                     if (selected.projectId == L"__restore_deleted__") {
                         std::wstring restored;
                         if (RestoreProfileBackup(runtimeRoot, LatestProfileBackup(runtimeRoot, L"deleted"), true, restored)) {

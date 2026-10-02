@@ -1182,6 +1182,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     if (VerboseLoggingEnabled()) {
         vmOptionStorage.push_back("-Dorg.lwjgl.util.Debug=true");
         vmOptionStorage.push_back("-Dorg.lwjgl.util.DebugLoader=true");
+        vmOptionStorage.push_back("-Djna.debug_load=true");
+        vmOptionStorage.push_back("-Djna.debug_load.jna=true");
     }
     vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractDirectory=" + w2a(fwd(lwjglTmpDir)));
     vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(lwjglGlfwDll)));
@@ -1280,7 +1282,12 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
                 continue;
             }
             vmOptionStorage.push_back(w2a(arg));
-            WriteLogF(L"jvm_args.txt applying: %s", arg.c_str());
+            if (IsJvmMemoryOption(arg)) {
+                // this file is applied last, so a stale line here silently beats the built in heap
+                WriteLogF(L"jvm_args.txt OVERRIDES the built in heap setting: %s", arg.c_str());
+            } else {
+                WriteLogF(L"jvm_args.txt applying: %s", arg.c_str());
+            }
             ++applied;
         }
         WriteLogF(L"jvm_args.txt applied %d option(s) from %s", applied, jvmArgsPath.c_str());

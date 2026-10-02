@@ -48,7 +48,7 @@ Native mouse packages from `main-native` are published to the separate [nightly-
 
 **Important:** Redistribution of generated APPX packages, including nightly builds, is not permitted without prior written permission. Videos, streams, screenshots, reviews, benchmarks, and tutorials are allowed under the creator rules in [LICENSE](LICENSE) and [docs/LEGAL.md](docs/LEGAL.md).
 
-Video guide: https://youtu.be/ATHiVaBenY8?si=pI26aQlDJtspbc4R
+Video guide: https://youtu.be/ATHiVaBenY8
 
 ## First Launch
 

@@ -2,6 +2,8 @@
 
 #include "http_client.h"
 #include "launcher_common.h"
+#include "manual_downloads.h"
+#include "mod_source.h"
 #include "modpack_io.h"
 #include "profiles.h"
 #include "world_io.h"
@@ -44,6 +46,7 @@ static std::string JsonEscape(const std::string& s) {
         case '\n': o += "\\n"; break;
         case '\r': o += "\\r"; break;
         case '\t': o += "\\t"; break;
+        case '<': o += "\\u003c"; break;
         default:
             if (static_cast<unsigned char>(c) < 0x20) {
                 char b[8];
@@ -434,12 +437,16 @@ private:
 
     bool Authorized(const std::string& query, const std::string& body) const {
         if (QueryValue(query, "pin") == pin_) return true;
-        return body.find("name=\"pin\"\r\n\r\n" + pin_) != std::string::npos;
+        // multipart uploads carry the pin as a part, plain forms as an urlencoded field
+        if (body.find("name=\"pin\"\r\n\r\n" + pin_) != std::string::npos) return true;
+        return !pin_.empty() && FormFieldValue(body, "pin") == pin_;
     }
 
     static bool SuppliedPin(const std::string& query, const std::string& body) {
         if (!QueryValue(query, "pin").empty()) return true;
-        return body.find("name=\"pin\"\r\n\r\n") != std::string::npos;
+        if (body.find("name=\"pin\"\r\n\r\n") != std::string::npos) return true;
+        if (body.compare(0, 4, "pin=") == 0) return true;
+        return body.find("&pin=") != std::string::npos;
     }
 
     static std::string FormatPeer(unsigned long peer) {
@@ -488,25 +495,39 @@ private:
         return buf;
     }
 
+    static const char* RemoteStyles() {
+        return R"RFSTYLE(
+:root{color-scheme:dark;--bg:#0b0c0e;--bar:#111316;--panel:#1a1c20;--hover:#22252a;--line:#23262b;--line-soft:#1d2024;--line-strong:#2e3238;--muted:#9ba1a6;--placeholder:#787f85;--text:#f2f4f5;--brand:#70c486;--brand-hover:#5fb176;--on-brand:#0b0c0e;--accent:#70c486;--accent-soft:rgba(112,196,134,.14);--danger:#e36a5c;--danger-bg:#241d1c;--danger-line:#553d39;--overlay:#0b0c0ef5;--shadow:0 10px 28px rgba(0,0,0,.55);--radius:4px;--space-sm:8px;--space-md:16px;--space-lg:24px;--space-xl:32px}:root[data-theme=light]{color-scheme:light;--bg:#f4f5f7;--bar:#ffffff;--panel:#ffffff;--hover:#eceef1;--line:#d9dde2;--line-soft:#e6e9ed;--line-strong:#c9cfd6;--muted:#5a626b;--placeholder:#8c939b;--text:#14171a;--brand:#2c7449;--brand-hover:#24603c;--on-brand:#ffffff;--accent:#1f6b3f;--accent-soft:rgba(44,116,73,.12);--danger:#b3261e;--danger-bg:#fdeceb;--danger-line:#f0c0bc;--overlay:#f4f5f7f5;--shadow:0 10px 28px rgba(16,24,32,.16)}:root[data-theme=xbox]{--bg:#0d100d;--bar:#131713;--panel:#191e19;--hover:#222922;--line:#2a322a;--line-soft:#1f251f;--line-strong:#354035;--muted:#a3ada3;--placeholder:#7d867d;--text:#eff3ee;--brand:#107c10;--brand-hover:#0e6b0e;--on-brand:#ffffff;--accent:#9bf00b;--accent-soft:rgba(155,240,11,.13);--danger:#ff8a80;--danger-bg:#2a1c1a;--danger-line:#5e3b36;--overlay:#0d100df5}:root[data-theme=playstation]{--bg:#0a0d14;--bar:#10141d;--panel:#161b26;--hover:#1e2433;--line:#262d3c;--line-soft:#1c2230;--line-strong:#323b4d;--muted:#9aa4b8;--placeholder:#757f92;--text:#f0f3f9;--brand:#0070d1;--brand-hover:#0060b4;--on-brand:#ffffff;--accent:#4d9fff;--accent-soft:rgba(0,112,209,.22);--danger:#ff7a6e;--danger-bg:#241d1f;--danger-line:#57393c;--overlay:#0a0d14f5}
+*{box-sizing:border-box}html{min-height:100%;scrollbar-gutter:stable}html:has(.app){scrollbar-gutter:auto}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 "Segoe UI",sans-serif}button,input,select,textarea{font:inherit}button,a,input,select,summary,textarea{-webkit-tap-highlight-color:transparent}button,a,summary{touch-action:manipulation}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}button,summary{cursor:pointer}button:disabled{cursor:wait;opacity:.55}:focus-visible{outline:2px solid var(--accent);outline-offset:3px}::selection{background:var(--brand);color:var(--on-brand)}[hidden]{display:none!important}
+h1,h2,h3,p{margin:0}h1,h2,h3{line-height:1.2}h1{font:600 28px/1.2 "Bahnschrift","Segoe UI",sans-serif;letter-spacing:-.5px}h2{font-size:20px;font-weight:600}h3{font-size:16px;font-weight:600}p{max-width:68ch}p+p{margin-top:12px}.muted,.section-note{color:var(--muted)}.eyebrow,.side-title,.grp{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}.eyebrow{margin-bottom:8px}code,.pin{font:13px/1.5 Consolas,monospace}.pin{letter-spacing:.12em;color:var(--text)}.sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.top{min-height:68px;padding:12px 28px;display:flex;align-items:center;gap:20px;border-bottom:1px solid var(--line);background:var(--bar)}.brand{display:flex;align-items:center;gap:12px;color:var(--text);flex-shrink:0}.brand:hover{text-decoration:none}.brand strong{font:600 18px "Bahnschrift","Segoe UI",sans-serif;letter-spacing:.5px}.brand-label{padding-left:16px;border-left:1px solid var(--line);color:var(--muted);font-size:13px}.top-actions,.hero-actions,.toolbar,.world-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.top-actions{margin-left:auto}.session{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}.pill{display:inline-flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
+button,.button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 14px;border:1px solid transparent;border-radius:var(--radius);background:var(--brand);color:var(--on-brand);font-weight:600;line-height:1.3;text-align:center;text-decoration:none}button:hover,.button:hover,.btn:hover{background:var(--brand-hover);text-decoration:none}.secondary,.btn{background:var(--panel);border-color:var(--line);color:var(--text);font-weight:400}.secondary:hover,.btn:hover{background:var(--hover)}.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand);font-weight:600}.primary:hover{background:var(--brand-hover)}.ghost{background:transparent;border-color:transparent;color:var(--muted)}.ghost:hover{background:var(--hover);color:var(--text)}.danger{color:var(--danger)}.button.danger{background:var(--danger-bg);border-color:var(--danger-line)}.themes{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.themes button{gap:10px;background:var(--panel);border:1px solid var(--line);color:var(--text);font-weight:500}.themes button:hover{background:var(--hover)}.themes button.on{border-color:var(--accent);background:var(--accent-soft)}.swatch{width:14px;height:14px;border-radius:3px;border:1px solid var(--line-strong);flex-shrink:0}.sw-dark{background:linear-gradient(135deg,#0b0c0e 50%,#70c486 50%)}.sw-light{background:linear-gradient(135deg,#f4f5f7 50%,#2c7449 50%)}.sw-xbox{background:linear-gradient(135deg,#0d100d 50%,#107c10 50%)}.sw-ps{background:linear-gradient(135deg,#0a0d14 50%,#0070d1 50%)}.sm{min-height:36px;padding:6px 10px;font-size:13px}
+input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:var(--radius)}input::placeholder{color:var(--placeholder)}input:not([type=checkbox]):not([type=hidden]),select{width:100%}input[type=file]{font-size:13px;padding:5px;overflow:hidden}input::file-selector-button{padding:7px 10px;margin-right:10px;border:0;border-radius:2px;background:var(--hover);color:var(--text);cursor:pointer}label{display:block;font-size:12px;font-weight:600;color:var(--muted)}.field{display:grid;gap:8px;min-width:0}.field+.field{margin-top:16px}.upload{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start}.checkline{display:flex;align-items:center;gap:8px;margin-top:16px;font-weight:400}.checkline input{min-height:20px;width:20px;accent-color:var(--brand)}form{margin:0;min-width:0}.field+.toolbar{margin-top:16px}
+.shell{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:calc(100vh - 68px)}.side{margin:0;border:0;border-right:1px solid var(--line);background:var(--bar);padding:24px 12px;min-width:0}.side>summary{display:none}.side:not([open])>.navbody{display:block}.side-title,.grp{padding:0 12px;margin:20px 0 6px}.side-title:first-child,.grp:first-child{margin-top:0}.nav,.rail{display:grid;gap:2px}.nav a,.rail a{display:flex;align-items:center;gap:12px;padding:8px 12px;min-height:34px;border-radius:var(--radius);color:var(--muted);font-size:13px}.nav a:hover,.rail a:hover{color:var(--text);background:var(--hover);text-decoration:none}.nav a.active,.rail a.active{color:var(--text);background:var(--accent-soft)}.nav a small,.rail a small{margin-left:auto;color:var(--muted);font-size:11px}
+.content{width:100%;max-width:1280px;padding:24px clamp(20px,3vw,48px) 24px;min-width:0}.page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:16px}.page-head>div{min-width:0}.page-head h1{overflow-wrap:anywhere}.profile-meta{display:flex;gap:8px 20px;flex-wrap:wrap;margin-top:12px;color:var(--muted);font-size:12px}.profile-meta span{overflow-wrap:anywhere}.tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);margin-bottom:24px}.tabs a{padding:12px 0;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;font-weight:600;white-space:nowrap}.tabs a:hover{color:var(--text);text-decoration:none}.tabs a.active{color:var(--text);border-color:var(--accent)}
+.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}.section-note{font-size:13px;margin-top:8px}.section-head>div{min-width:0}.world-list{border-top:1px solid var(--line)}.world-card{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px;padding:12px 0;border-bottom:1px solid var(--line)}.world-card>div:first-child{min-width:0}.world-card strong{font-size:15px;overflow-wrap:anywhere;font-weight:600}.world-card .muted{font-size:12px;margin-top:4px}.world-actions{flex-shrink:0}.world-card .world-actions .button,.world-card .world-actions button{font-size:12px;min-height:36px;padding:7px 12px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.grid>*{min-width:0}.panel{min-width:0;padding:24px 0;border-top:1px solid var(--line)}.panel h3{margin-bottom:16px}.panel p{font-size:13px;color:var(--muted);margin:12px 0}.panel .empty{padding:20px 0}.section>.panel{margin-top:24px}.disclosure{margin-top:16px;padding:0;background:var(--bar);border:1px solid var(--line);border-radius:6px}.disclosure>summary{display:flex;align-items:center;justify-content:space-between;gap:16px;list-style:none;padding:16px 20px;font-size:14px;font-weight:600}.disclosure>summary::-webkit-details-marker{display:none}.disclosure>summary:after{content:"+";color:var(--muted);font-size:20px;font-weight:400;line-height:1}.disclosure[open]>summary:after{content:"\2212"}.disclosure[open]>summary{border-bottom:1px solid var(--line)}.disclosure-body{padding:20px}.disclosure-body>p,.disclosure-body form>p{font-size:13px;color:var(--muted);margin-top:16px}.disclosure .grid{gap:20px}.disclosure .field{margin-top:0}.empty,.err{padding:48px 20px;text-align:center;color:var(--muted)}.err p{margin:0 auto 16px}.empty strong,.err strong{display:block;font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px}.notice{margin-bottom:24px;padding:12px 16px;border:1px solid var(--line);border-radius:var(--radius);color:var(--muted);font-size:13px}.settings{max-width:720px}.result{max-width:720px;margin:64px auto;padding:32px}.result:has(.shell),.result:has(.login){max-width:none;margin:0;padding:0}.result>p{margin-top:16px}.card{max-width:440px;padding:28px;background:var(--bar);border:1px solid var(--line);border-radius:8px}.card .field{margin:24px 0 16px}.card button{width:100%}.login{min-height:100dvh;display:grid;place-items:center;padding:24px}.login .card{width:100%}.login p{margin-top:12px;color:var(--muted)}.login input{font-size:24px;letter-spacing:.4em;text-align:center}
+)RFSTYLE"
+        R"RFSTYLE(.app{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}.app .top{flex-shrink:0}.app .shell{min-height:0;flex:1}.app .side{overflow-y:auto}.main{display:flex;flex-direction:column;min-width:0;min-height:0}.browser-head{padding:24px 32px 16px;display:flex;align-items:center;justify-content:space-between;gap:20px}.browser-head h1{font-size:24px}.browser-head .muted{font-size:12px;margin-top:6px}.profsel{display:flex;align-items:center;gap:10px;min-width:0;max-width:320px;margin-left:auto}.profsel select{width:230px}.title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0}.bar2{display:flex;align-items:center;gap:12px;padding:0 32px 16px;min-width:0}.bar2 #extra{margin-left:auto}.crumbs{display:flex;align-items:center;gap:4px;min-width:0;flex:1;flex-wrap:wrap;overflow-wrap:anywhere}.crumbs button{color:var(--muted);background:transparent;min-height:32px;padding:4px 8px;font-size:12px;font-weight:400;max-width:100%;overflow-wrap:anywhere;text-align:left}.crumbs button:last-child{color:var(--text)}.crumbs button:hover{background:var(--hover)}.crumbs button+button:before{content:"/";margin-right:6px;color:var(--muted)}.filter{width:200px;flex-shrink:0}.filter input{min-height:36px;font-size:12px}.access{font-size:11px;color:var(--muted);padding:4px 8px;background:var(--panel);border:1px solid var(--line);border-radius:3px;white-space:nowrap}.list{flex:1;overflow-y:auto;min-height:0;padding:0 32px 100px;scrollbar-gutter:stable}.list-head,.row{display:grid;grid-template-columns:minmax(0,1fr) 88px 140px 40px;align-items:center;gap:20px}.list-head{overflow-y:auto;scrollbar-gutter:stable;padding:12px 32px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:11px;color:var(--muted)}.row{min-height:56px;padding:8px 0;border-bottom:1px solid var(--line-soft);position:relative}.row:hover{background:var(--bar)}.nm{display:flex;align-items:center;gap:12px;min-width:0}.nm .t{display:block;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 0;background:transparent;font-size:13px;font-weight:400;border:0;color:var(--text)}.nm .t:hover{color:var(--accent)}.ic{width:20px;height:20px;flex-shrink:0;color:var(--muted)}.ic.dir{color:var(--accent)}.size,.mod{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}.size{text-align:right}.acts{position:relative}.acts>summary{display:grid;place-items:center;list-style:none;min-height:40px;width:40px;border-radius:var(--radius);color:var(--muted);font-size:20px;letter-spacing:1px}.acts>summary::-webkit-details-marker{display:none}.acts[open]>summary,.acts>summary:hover{background:var(--hover);color:var(--text)}.row:has(.acts[open]){z-index:5}.acts:not([open]) .action-menu{display:none}.action-menu{position:fixed;width:168px;padding:6px;background:var(--panel);border:1px solid var(--line-strong);border-radius:6px;box-shadow:var(--shadow);z-index:10}.action-menu button,.action-menu a{display:flex;justify-content:flex-start;width:100%;min-height:40px;padding:8px 12px;background:transparent;font-size:13px;font-weight:400;border:0;border-radius:3px;color:var(--text)}.action-menu button:hover,.action-menu a:hover{background:var(--hover);text-decoration:none}.action-menu .danger{color:var(--danger)}.list-footer{padding:10px 32px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;background:var(--bar)}
+.drop{position:fixed;inset:12px;background:var(--overlay);border:2px dashed var(--accent);border-radius:8px;display:none;align-items:center;justify-content:center;font-size:20px;color:var(--text);z-index:50;pointer-events:none}.drop.show{display:flex}.editor{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:40}.editor.show{display:flex}.ehead{display:flex;align-items:center;gap:12px;padding:16px 24px;border-bottom:1px solid var(--line);background:var(--bar);flex-wrap:wrap}.ehead .pa{font-size:13px;flex:1;min-width:140px;overflow-wrap:anywhere}.ehead .toolbar{margin-left:auto}#ta{flex:1;min-height:0;width:100%;border:0;outline:0;resize:none;background:var(--bg);color:var(--text);font:14px/1.65 Consolas,monospace;padding:24px;white-space:pre;tab-size:4}#ta:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}.editor-footer{display:flex;justify-content:space-between;gap:16px;padding:10px 24px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:12px 20px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);color:var(--text);opacity:0;pointer-events:none;z-index:60;font-size:13px;transition:opacity .15s}.toast.show{opacity:1}
+@media(min-width:761px){.side{position:sticky;top:0;align-self:start;min-height:calc(100vh - 68px)}.app .side{position:static;align-self:stretch;min-height:0}.profsel+.top-actions{margin-left:0}}
+@media(max-width:1100px){.content{padding:28px 24px}.grid{grid-template-columns:1fr}.world-card{align-items:flex-start;flex-wrap:wrap}.profsel{max-width:250px}.profsel select{width:180px}.browser-head,.bar2{padding-left:24px;padding-right:24px}.list,.list-head{padding-left:24px;padding-right:24px}.list-head,.row{grid-template-columns:minmax(0,1fr) 72px 120px 40px;gap:12px}}
+@media(max-width:760px){.top{min-height:64px;padding:12px 16px;gap:12px;flex-wrap:wrap}.brand-label{border:0;padding:0}.brand{gap:8px}.brand strong{font-size:16px}.top-actions{gap:6px}.session{font-size:11px}.shell{grid-template-columns:minmax(0,1fr);min-height:0}.side{padding:0;border-right:0;border-bottom:1px solid var(--line)}.side>summary{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;min-height:44px;font-size:13px;color:var(--muted);list-style:none}.side>summary:after{content:"+";font-size:18px}.side[open]>summary:after{content:"\2212"}.side:not([open])>.navbody{display:none}.navbody{padding:16px;max-height:40vh;overflow:auto}.nav,.rail{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.rail .grp,.rail #overview{grid-column:1/-1}.side-title,.grp{margin-top:16px}.content{padding:24px 16px 32px}.page-head{gap:16px;flex-direction:column;padding-bottom:16px}.page-head h1{font-size:24px}.tabs{gap:24px;margin-bottom:24px}.section-head{gap:12px;flex-wrap:wrap}.section-head .button{min-height:36px;font-size:12px}.world-card{padding:16px 0;gap:12px}.world-actions{flex-shrink:1}.grid{gap:16px}.disclosure>summary{padding:16px}.disclosure-body{padding:16px}.upload{grid-template-columns:minmax(0,1fr)}.upload button{justify-self:start}.profsel{order:3;width:100%;max-width:none;margin:0}.profsel select{width:100%;flex:1}.app .shell{display:flex;flex-direction:column}.app .side{flex-shrink:0;overflow:visible}.app .main{flex:1}.browser-head .eyebrow{display:none}.browser-head{padding:16px;align-items:flex-start;gap:12px;flex-wrap:wrap}.browser-head h1{font-size:22px}.browser-head .toolbar{gap:6px}.browser-head .filter{order:2;width:100%;flex:1 1 100%}.browser-head button{min-height:40px;padding:8px 12px;font-size:12px}.bar2{padding:0 16px 12px;gap:8px;flex-wrap:wrap}.crumbs{flex-basis:100%}.crumbs button{display:block;padding:8px;max-width:46vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.list-head{padding:10px 16px;grid-template-columns:1fr 40px}.list-head .size,.list-head .mod{display:none}.list{padding:0 16px 100px}.row{grid-template-columns:minmax(0,1fr) auto 40px;gap:0 12px;padding:10px 0;min-height:72px}.nm{grid-column:1 / 3}.row .size{grid-column:2;grid-row:2}.row .mod{grid-column:1;grid-row:2;padding-left:32px}.row .acts{grid-column:3;grid-row:1 / 3}.row .nm .t{min-height:32px;padding:4px 0}.list-footer{padding:10px 16px}.list-footer .drop-hint{display:none}.ehead{padding:12px 16px}.ehead .pa{flex-basis:100%}.ehead .toolbar{margin-left:0}#ta{padding:16px;font-size:13px}.editor-footer{padding:10px 16px}.result{margin:24px auto;padding:16px}.card{padding:24px}.login{padding:16px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+)RFSTYLE";
+    }
+
+    static std::string ThemeBootHtml() {
+        return R"RFBOOT(<script>try{var t=localStorage.getItem('rf-theme');if(t&&/^[a-z]+$/.test(t))document.documentElement.dataset.theme=t}catch(e){}</script>)RFBOOT";
+    }
+
     std::string Layout(const std::string& title, const std::string& body) {
         std::ostringstream html;
-        html << "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            << "<title>" << title << "</title><style>"
-            << ":root{color-scheme:dark;--bg:#0b0c0e;--panel:#17191d;--panel-2:#15171b;--card:#1a1c20;--line:rgba(255,255,255,.08);--muted:#9ba1a6;--text:#f2f4f5;--accent:#70c486;--danger:#e36a5c;}"
-            << "*{box-sizing:border-box}body{font:15px/1.5 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:28px}"
-            << "main{max-width:1240px;margin:0 auto}.top{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin:0 0 22px}"
-            << "h1{font-size:30px;line-height:1.1;margin:0 0 8px}h2{font-size:18px;margin:0 0 10px}h3{font-size:15px;margin:0 0 8px}.muted{color:var(--muted)}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}code{font:13px/1.4 Consolas,ui-monospace,monospace;color:#d5dade}"
-            << ".shell{display:grid;grid-template-columns:248px minmax(0,1fr);gap:18px;align-items:start}.side{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:14px;position:sticky;top:20px}.side-title{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.1em;margin:10px 0 8px}.side-title:first-child{margin-top:0}.nav{display:grid;gap:4px}.nav a{display:flex;justify-content:space-between;gap:10px;border-radius:8px;padding:9px 11px;color:var(--text);border:1px solid transparent;min-height:38px;align-items:center}.nav a:hover,.nav a.active{background:var(--card);border-color:var(--line);text-decoration:none}.nav small{color:var(--muted)}"
-            << ".content{display:grid;gap:16px}.hero{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:20px}.hero-row{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.hero-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.stats{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.stat,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:7px 12px;min-height:34px;background:var(--card);color:var(--text);white-space:nowrap}.stat span,.pill span{color:var(--muted)}.pin{font-family:Consolas,ui-monospace,monospace;letter-spacing:.12em}"
-            << ".section{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:18px}.section-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.section-note{margin:0;color:var(--muted);font-size:14px}"
-            << ".grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.panel{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:16px}.stack{display:grid;gap:14px}"
-            << ".world-list{display:grid;gap:10px}.world-card{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--card)}.world-card strong{display:block;margin-bottom:2px}.world-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}"
-            << ".tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.tile{display:block;border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--card)}.tile strong{display:block;margin-bottom:4px}.tile:hover{text-decoration:none;background:#202329}"
-            << ".toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}"
-            << "label{display:block;color:var(--muted);font-size:13px;margin:0 0 7px}.field{display:grid;gap:8px;margin-top:10px}input,select,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:#16181c;color:var(--text);max-width:100%}select{width:100%}button,.button{display:inline-block;background:var(--accent);color:#07130c;border:0;cursor:pointer;border-radius:8px;padding:10px 12px;font-weight:600}.button.secondary{background:#16181c;color:var(--text);border:1px solid var(--line);font-weight:500}.button.danger{background:#3a1d1d;color:#ffd5d0;border:1px solid #6d3434}.upload{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.checkline{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px;margin-top:8px}.checkline input{width:auto}.danger{color:var(--danger)}.empty{border:1px dashed rgba(255,255,255,.12);border-radius:10px;padding:16px;color:var(--muted);background:var(--card)}.card{max-width:420px;border:1px solid var(--line);border-radius:12px;padding:18px;background:var(--panel)}"
-            << "@media(max-width:900px){body{padding:16px}.shell{grid-template-columns:1fr}.side{position:static}.grid{grid-template-columns:1fr}.top,.hero-row,.world-card{display:block}.world-actions{margin-top:10px;justify-content:flex-start}.upload{grid-template-columns:1fr}}"
-            << "</style></head><body><main>"
-            << body << "</main></body></html>";
+        html << "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            << "<title>" << title << "</title><style>" << RemoteStyles()
+            << "</style>" << ThemeBootHtml() << "</head><body><div class=\"result\">" << body << "</div><script>"
+            << "var nav=document.querySelector('.side');if(nav){var wide=matchMedia('(min-width:761px)');"
+            << "function fitNav(){nav.open=wide.matches}fitNav();wide.addEventListener('change',fitNav)}"
+            << "</script></body></html>";
         return html.str();
     }
 
@@ -538,10 +559,11 @@ private:
 
         if (!Authorized(query, body)) {
             if (SuppliedPin(query, body)) NotePinFailure(peer);
-            std::string form = "<div class=\"top\"><div><h1>Bandit Remote Files</h1><p class=\"muted\">Enter the PIN shown on your Xbox to manage files on this device.</p></div></div>"
-                "<div class=\"card\"><form method=\"get\">"
-                "<div class=\"field\"><label for=\"pin\">PIN</label><input id=\"pin\" name=\"pin\" inputmode=\"numeric\" pattern=\"[0-9]{6}\" maxlength=\"6\" autofocus></div>"
-                "<button>Open file manager</button></form></div>";
+            std::string form = "<main class=\"login\"><div class=\"card\"><div class=\"eyebrow\">Bandit Remote Files</div>"
+                "<h1>Connect to your Xbox</h1><p>Enter the six-digit PIN shown in Remote Files on the launcher.</p>"
+                "<form method=\"get\"><div class=\"field\"><label for=\"pin\">Session PIN</label>"
+                "<input id=\"pin\" name=\"pin\" inputmode=\"numeric\" pattern=\"[0-9]{6}\" maxlength=\"6\" autocomplete=\"one-time-code\" required autofocus></div>"
+                "<button>Connect</button></form></div></main>";
             SendHttpResponse(s, 401, "Unauthorized", "text/html; charset=utf-8", Layout("Bandit Remote Files", form));
             return;
         }
@@ -579,6 +601,14 @@ private:
             HandleModpackUpload(s, headers, body);
         } else if (method == "POST" && path == "/export-pack") {
             HandleExportPack(s, body);
+        } else if (method == "GET" && path == "/set-curseforge-key") {
+            ServeCurseForgeKeyPage(s, query);
+        } else if (method == "POST" && path == "/set-curseforge-key") {
+            HandleSetCurseForgeKey(s, body);
+        } else if (method == "POST" && path == "/clear-manual-downloads") {
+            HandleClearManualDownloads(s, body);
+        } else if (method == "POST" && path == "/upload-manual-download") {
+            HandleManualDownloadUpload(s, query, headers, body);
         } else if (method == "POST" && path == "/export-world") {
             HandleExportWorld(s, body);
         } else if (method == "POST" && path == "/upload-world") {
@@ -614,34 +644,22 @@ private:
         return {};
     }
 
-    std::string SidebarHtml(const std::wstring& profileId, const char* activeScope = nullptr) const {
-        auto nav = [&](const char* scope, const std::wstring& label, const std::wstring& hint) {
-            const bool active = activeScope && scope == std::string(activeScope);
-            return std::string("<a") + (active ? " class=\"active\"" : "") + " href=\"" +
-                UrlWithPinProfile("/browse?scope=" + std::string(scope), profileId) + "\"><span>" +
-                HtmlEscape(label) + "</span><small>" + HtmlEscape(hint) + "</small></a>";
+    std::string SidebarHtml(const std::wstring& profileId) const {
+        auto nav = [&](const char* scope, const std::wstring& label) {
+            return "<a href=\"" + UrlWithPinProfile("/browse?scope=" + std::string(scope), profileId) +
+                "\">" + HtmlEscape(label) + "</a>";
         };
         std::ostringstream out;
-        out << "<aside class=\"side\">"
-            << "<div class=\"side-title\">Profile</div><nav class=\"nav\">"
-            << "<a href=\"" << UrlWithPinProfile("/", profileId) << "\"><span>Dashboard</span><small>home</small></a>"
-            << nav("profile", L"Game files", L"folder")
-            << nav("saves", L"Worlds", L"saves")
-            << nav("mods", L"Mods", L"jars")
-            << nav("resourcepacks", L"Resource packs", L"zip")
-            << "</nav><div class=\"side-title\">Diagnostics</div><nav class=\"nav\">"
-            << nav("logs", L"Current logs", L"now")
-            << nav("previous", L"Previous logs", L"last")
-            << nav("crash", L"Crash reports", L"zip")
-            << nav("runtime", L"Runtime cache", L"read")
-            << "</nav></aside>";
+        out << "<details class=\"side\" open><summary>Browse &amp; diagnostics</summary><div class=\"navbody\">"
+            << "<div class=\"side-title\">Workspace</div><nav class=\"nav\" aria-label=\"Workspace\">"
+            << "<a class=\"active\" aria-current=\"page\" href=\"" << UrlWithPinProfile("/", profileId) << "\">Overview</a>"
+            << nav("profile", L"Game files") << nav("saves", L"Worlds")
+            << nav("mods", L"Mods") << nav("resourcepacks", L"Resource packs")
+            << "</nav><div class=\"side-title\">Diagnostics</div><nav class=\"nav\" aria-label=\"Diagnostics\">"
+            << nav("logs", L"Current logs") << nav("previous", L"Previous logs")
+            << nav("crash", L"Crash reports") << nav("runtime", L"Runtime cache")
+            << "</nav></div></details>";
         return out.str();
-    }
-
-    std::string BrowseLink(const char* scope, const std::wstring& label, const std::wstring& profileId, const std::wstring& rel = L"") const {
-        std::string url = "/browse?scope=" + std::string(scope);
-        if (!rel.empty()) url += "&path=" + FormUrlEncode(w2a(rel));
-        return "<a class=\"tile\" href=\"" + UrlWithPinProfile(url, profileId) + "\"><strong>" + HtmlEscape(label) + "</strong><span class=\"muted\">Open folder</span></a>";
     }
 
     bool IsSafeRelativePath(const std::wstring& rel) const {
@@ -733,9 +751,9 @@ private:
 
     std::string ExportPackHtml(const std::wstring& profileId) {
         std::ostringstream out;
-        out << "<section class=\"panel\"><h3>Export profile pack</h3>";
+        out << "<details class=\"disclosure\"><summary>Export this profile as a modpack</summary><div class=\"disclosure-body\">";
         if (profileId == kVanillaProfileId) {
-            out << "<div class=\"empty\">Vanilla cannot be exported. Pick a mod profile above first.</div></section>";
+            out << "<div class=\"empty\">Vanilla cannot be exported. Pick a mod profile above first.</div></div></details>";
             return out.str();
         }
         const std::wstring exportPath = DefaultProfileExportPath(runtimeRoot_, profileId);
@@ -748,21 +766,157 @@ private:
         if (hasExport) {
             out << "<a class=\"button secondary\" href=\"/download?pin=" << pin_ << "&amp;profile=" << profQ << "&amp;file=export:profile\">Download</a>";
         }
-        out << "</div></section>";
+        out << "</div></div></details>";
         return out.str();
     }
 
     std::string ModpackImportHtml(const std::wstring& profileId) {
         std::ostringstream out;
-        out << "<section class=\"panel\"><h3>Import Modrinth pack</h3>"
+        out << "<details class=\"disclosure\"><summary>Import a modpack</summary><div class=\"disclosure-body\">"
             << "<form method=\"post\" action=\"/upload-modpack\" enctype=\"multipart/form-data\">"
             << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
             << "<input type=\"hidden\" name=\"profile\" value=\"" << HtmlEscape(profileId) << "\">"
-            << "<div class=\"field\"><label for=\"modpackfile\">Modrinth .mrpack</label>"
-            << "<div class=\"upload\"><input id=\"modpackfile\" type=\"file\" name=\"file\" accept=\".mrpack\"><button>Import pack</button></div></div>"
+            << "<div class=\"field\"><label for=\"modpackfile\">Modrinth .mrpack or CurseForge .zip</label>"
+            << "<div class=\"upload\"><input id=\"modpackfile\" type=\"file\" name=\"file\" accept=\".mrpack,.zip\" required><button>Import pack</button></div></div>"
             << "</form>"
-            << "<p class=\"muted\">Installs into the selected profile. Large packs can take several minutes.</p></section>";
+            << "<p class=\"muted\">Installs into the selected profile. Large packs can take several minutes. "
+            << "For CurseForge packs, add an API key in Settings.</p></div></details>";
         return out.str();
+    }
+
+    std::string ManualDownloadsHtml(const std::wstring& profileId) {
+        const std::vector<ManualDownload> pending = PendingManualDownloads(runtimeRoot_, profileId);
+        if (pending.empty()) return std::string();
+
+        std::ostringstream out;
+        out << "<section class=\"panel\"><h3>Manual downloads ("
+            << pending.size() << ")</h3>"
+            << "<p class=\"muted\">These files block third party launchers, so the Xbox cannot fetch them. "
+            << "Each Download link saves the file on this computer in one click. "
+            << "Then upload them all at once below and each goes into the right folder. "
+            << "A row disappears once its file lands in the profile.</p><div class=\"world-list\">";
+        for (const ManualDownload& item : pending) {
+            // url comes from the api or a tsv on disk, only https goes in an href next to the pin
+            const bool safeUrl = item.url.rfind(L"https://", 0) == 0;
+            const std::wstring href = safeUrl ? item.url : std::wstring(L"https://www.curseforge.com/minecraft");
+            out << "<div class=\"world-card\"><div><strong>" << HtmlEscape(item.modName) << "</strong>"
+                << "<div class=\"muted\">" << HtmlEscape(item.fileName) << " goes in " << HtmlEscape(item.folder)
+                << "</div></div><div class=\"world-actions\">"
+                << "<a class=\"button secondary\" href=\"" << HtmlEscape(href)
+                << "\" target=\"_blank\" rel=\"noopener noreferrer\">Download</a></div></div>";
+        }
+        out << "</div><div class=\"toolbar\" style=\"margin-top:12px\">"
+            << "<label class=\"button\" for=\"manualfiles\">Upload downloaded files</label>"
+            << "<input id=\"manualfiles\" type=\"file\" multiple hidden data-url=\""
+            << UrlWithPinProfile("/upload-manual-download", profileId) << "\" onchange=\"uploadManual(this)\">"
+            << "<span class=\"muted\" id=\"manualstatus\" role=\"status\"></span>"
+            << "<form method=\"post\" action=\"/clear-manual-downloads\">"
+            << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
+            << "<input type=\"hidden\" name=\"profile\" value=\"" << HtmlEscape(profileId) << "\">"
+            << "<button class=\"secondary\">Forget this list</button></form></div></section>"
+            << R"RFMD(<script>
+async function uploadManual(input){
+ const status=document.getElementById('manualstatus');
+ const files=Array.from(input.files);
+ let placed=0,skipped=[];
+ for(let i=0;i<files.length;i++){
+  status.textContent='Uploading '+(i+1)+' of '+files.length;
+  const form=new FormData();form.append('file',files[i]);
+  const res=await fetch(input.dataset.url,{method:'POST',body:form}).catch(()=>null);
+  if(res&&res.ok)placed++;else skipped.push(files[i].name);
+ }
+ status.textContent=placed+' placed'+(skipped.length?', not on the list: '+skipped.join(', '):'');
+ if(!skipped.length)location.reload();
+}
+</script>)RFMD";
+        return out.str();
+    }
+
+    void HandleClearManualDownloads(SOCKET s, const std::string& body) {
+        if (!Authorized("", body)) {
+            SendHttpResponse(s, 401, "Unauthorized", "text/html; charset=utf-8", Layout("Unauthorized", "<h1>Unauthorized</h1>"));
+            return;
+        }
+        const std::wstring profileId = a2w(FormFieldValue(body, "profile").c_str());
+        ClearManualDownloads(profileId);
+        SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
+            Layout("List cleared", "<h1>List cleared</h1><p><a href=\"" + UrlWithPin("/") + "\">Back to the dashboard</a></p>"));
+    }
+
+    std::string AppearanceHtml() {
+        return R"RFTHEME(<section class="panel"><h3>Theme</h3>
+<p class="muted">Saved in this browser, so your phone and your PC can be set differently.</p>
+<div class="themes" id="themes">
+<button type="button" data-theme="dark"><span class="swatch sw-dark"></span>Dark</button>
+<button type="button" data-theme="light"><span class="swatch sw-light"></span>Light</button>
+<button type="button" data-theme="xbox"><span class="swatch sw-xbox"></span>Xbox</button>
+<button type="button" data-theme="playstation"><span class="swatch sw-ps"></span>PlayStation</button>
+</div></section>
+<script>
+(function(){
+ var wrap=document.getElementById('themes');
+ function mark(){
+  var current=document.documentElement.dataset.theme||'dark';
+  [].forEach.call(wrap.querySelectorAll('button'),function(b){b.classList.toggle('on',b.dataset.theme===current)});
+ }
+ wrap.addEventListener('click',function(e){
+  var b=e.target.closest('button[data-theme]');
+  if(!b)return;
+  document.documentElement.dataset.theme=b.dataset.theme;
+  try{localStorage.setItem('rf-theme',b.dataset.theme)}catch(err){}
+  mark();
+ });
+ mark();
+})();
+</script>)RFTHEME";
+    }
+
+    std::string CurseForgeKeyHtml() {
+        std::ostringstream out;
+        const std::wstring hint = modsource::CurseForgeKeyHint();
+        out << "<section class=\"panel\"><h3>CurseForge API key</h3>"
+            << "<p class=\"muted\">CurseForge will not let a launcher ship its own key, so browsing and "
+            << "downloading from CurseForge needs one of yours. Make a free Core API key at "
+            << "<code>console.curseforge.com</code> and paste it here.</p>";
+        if (hint.empty()) {
+            out << "<p class=\"muted\">No key is set. CurseForge is unavailable until one is.</p>";
+        } else {
+            out << "<p class=\"muted\">A key is saved (" << HtmlEscape(hint) << ").</p>";
+        }
+        out << "<form id=\"cf-form\" method=\"post\" action=\"/set-curseforge-key\">"
+            << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
+            << "<div class=\"field\"><label for=\"cfkey\">API key</label>"
+            << "<input id=\"cfkey\" name=\"key\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"paste key\"></div>"
+            << "</form><div class=\"toolbar\" style=\"margin-top:16px\"><button form=\"cf-form\">Save key</button>"
+            << "<form method=\"post\" action=\"/set-curseforge-key\">"
+            << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
+            << "<input type=\"hidden\" name=\"key\" value=\"\">"
+            << "<button class=\"secondary\">Clear key</button></form></div></section>";
+        return out.str();
+    }
+
+    void ServeCurseForgeKeyPage(SOCKET s, const std::string& query) {
+        if (!Authorized(query, "")) {
+            SendHttpResponse(s, 401, "Unauthorized", "text/html; charset=utf-8", Layout("Unauthorized", "<h1>Unauthorized</h1>"));
+            return;
+        }
+        SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8", Layout("CurseForge API key", HomeHtml("section=settings&" + query)));
+    }
+
+    void HandleSetCurseForgeKey(SOCKET s, const std::string& body) {
+        if (!Authorized("", body)) {
+            SendHttpResponse(s, 401, "Unauthorized", "text/html; charset=utf-8", Layout("Unauthorized", "<h1>Unauthorized</h1>"));
+            return;
+        }
+        const std::string key = FormFieldValue(body, "key");
+        if (!modsource::SetCurseForgeKey(key)) {
+            SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
+                Layout("Key not saved", "<h1>Key not saved</h1><p>The key could not be written to storage.</p>"));
+            return;
+        }
+        const std::string title = key.empty() ? "Key cleared" : "Key saved";
+        SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
+            Layout(title, "<h1>" + title + "</h1><p><a href=\"" + UrlWithPin("/") + "\">Back to the dashboard</a></p>"));
     }
 
     void HandleExportWorld(SOCKET s, const std::string& body) {
@@ -905,10 +1059,9 @@ private:
             return;
         }
 
-        const std::wstring lower = ToLowerW(name);
-        if (lower.size() < 7 || lower.substr(lower.size() - 7) != L".mrpack") {
+        if (!EndsWithInsensitive(name, L".mrpack") && !EndsWithInsensitive(name, L".zip")) {
             SendHttpResponse(s, 400, "Bad Request", "text/html; charset=utf-8",
-                Layout("Import failed", "<h1>Import failed</h1><p>Upload a Modrinth .mrpack file.</p>"));
+                Layout("Import failed", "<h1>Import failed</h1><p>Upload a Modrinth .mrpack or a CurseForge .zip.</p>"));
             return;
         }
 
@@ -942,7 +1095,8 @@ private:
 
         WriteLogF(L"Remote modpack upload saved: %s bytes=%zu", path.c_str(), data.size());
         std::wstring installError;
-        const bool ok = InstallModpackFromFile(path, runtimeRoot_, active, installError);
+        std::wstring installNote;
+        const bool ok = InstallModpackFromFile(path, runtimeRoot_, active, installError, &installNote);
         DeleteFileW(path.c_str());
         if (!ok) {
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
@@ -954,7 +1108,46 @@ private:
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
             Layout("Import complete",
                 "<div class=\"top\"><h1>Import complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div>"
-                "<p>Installed <strong>" + HtmlEscape(name) + "</strong> into profile <strong>" + HtmlEscape(profile.name) + "</strong>.</p>"));
+                "<p>Installed <strong>" + HtmlEscape(name) + "</strong> into profile <strong>" + HtmlEscape(profile.name) + "</strong>.</p>" +
+                (installNote.empty() ? std::string() : "<p class=\"muted\">" + HtmlEscape(installNote) + "</p>")));
+    }
+
+    // only names on the pending list are taken, and they go to the folder the pack recorded
+    void HandleManualDownloadUpload(SOCKET s, const std::string& query, const std::map<std::string, std::string>& headers, const std::string& body) {
+        const std::wstring profileId = NormalizeProfileId(QueryValue(query, "profile"));
+        std::wstring name;
+        std::vector<unsigned char> data;
+        if (!ExtractMultipartFile(headers, body, name, data)) {
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "No file was received.");
+            return;
+        }
+
+        const std::vector<ManualDownload> pending = PendingManualDownloads(runtimeRoot_, profileId);
+        const auto match = std::find_if(pending.begin(), pending.end(), [&name](const ManualDownload& item) {
+            return _wcsicmp(SafeFileName(item.fileName).c_str(), name.c_str()) == 0;
+        });
+        if (match == pending.end()) {
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Not on this profile's list.");
+            return;
+        }
+
+        const std::wstring folder = ProfileGameDir(runtimeRoot_, profileId) + L"\\" + match->folder;
+        EnsureDirectoryTree(folder);
+        const std::wstring path = folder + L"\\" + SafeFileName(match->fileName);
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
+            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Could not save the file.");
+            return;
+        }
+        const bool wrote = fwrite(data.data(), 1, data.size(), f) == data.size();
+        fclose(f);
+        if (!wrote) {
+            DeleteFileW(path.c_str());
+            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Could not finish writing the file.");
+            return;
+        }
+        WriteLogF(L"Manual download uploaded: %s bytes=%zu", path.c_str(), data.size());
+        SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", w2a(match->folder));
     }
 
     std::string WorldsSectionHtml(const std::vector<std::wstring>& saves, const std::wstring& profileId) {
@@ -962,7 +1155,7 @@ private:
         const std::string profQ = FormUrlEncode(w2a(profileId));
         std::ostringstream out;
         out << "<section class=\"section\" id=\"worlds\"><div class=\"section-head\"><div><h2>Worlds</h2>"
-            << "<p class=\"section-note\">Export full saves as zip files for PC, or import a world zip into the selected profile.</p></div>"
+            << "<p class=\"section-note\">Download a save for PC, or bring a world onto your Xbox.</p></div>"
             << "<a class=\"button secondary\" href=\"" << UrlWithPinProfile("/browse?scope=saves", profileId) << "\">Browse saves</a></div>";
         if (saves.empty()) {
             out << "<div class=\"empty\">No worlds yet. Play Minecraft on the console to create one, then refresh this page.</div>";
@@ -972,7 +1165,7 @@ private:
                 const std::wstring exportPath = DefaultWorldExportPath(runtimeRoot_, save);
                 const bool hasExport = GetFileAttributesW(exportPath.c_str()) != INVALID_FILE_ATTRIBUTES;
                 out << "<div class=\"world-card\"><div><strong>" << HtmlEscape(save) << "</strong>"
-                    << "<div class=\"muted\">Full world folder as a PC-friendly zip</div></div><div class=\"world-actions\">"
+                    << "<div class=\"muted\">World save</div></div><div class=\"world-actions\">"
                     << "<form method=\"post\" action=\"/export-world\"><input type=\"hidden\" name=\"pin\" value=\"" << pin_
                     << "\"><input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\"><input type=\"hidden\" name=\"save\" value=\"" << HtmlEscape(save) << "\"><button class=\"secondary\">Build zip</button></form>";
                 if (hasExport) {
@@ -984,7 +1177,7 @@ private:
             }
             out << "</div>";
         }
-        out << "<div class=\"panel\" style=\"margin-top:14px\"><h3>Import world</h3>"
+        out << "<details class=\"disclosure\"><summary>Import a world</summary><div class=\"disclosure-body\">"
             << "<form method=\"post\" action=\"/upload-world\" enctype=\"multipart/form-data\">"
             << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
             << "<input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
@@ -994,8 +1187,8 @@ private:
             << "<div class=\"upload\"><input id=\"worldzip\" type=\"file\" name=\"file\" accept=\".zip\" required><button>Import world</button></div></div></div>"
             << "<label class=\"checkline\"><input type=\"checkbox\" name=\"replace\" value=\"1\"> Replace existing world with the same name</label>"
             << "<p class=\"muted\">Accepts a zip with <code>level.dat</code> at the root or inside one folder. Large worlds may take several minutes.</p>"
-            << "</form></div>"
-            << "<div class=\"panel\" style=\"margin-top:14px\"><h3>Upload datapack</h3>";
+            << "</form></div></details>"
+            << "<details class=\"disclosure\"><summary>Add a datapack</summary><div class=\"disclosure-body\">";
         if (saves.empty()) {
             out << "<div class=\"empty\">Create a world first to upload datapacks.</div>";
         } else {
@@ -1007,10 +1200,10 @@ private:
                 out << "<option value=\"" << HtmlEscape(save) << "\">" << HtmlEscape(save) << "</option>";
             }
             out << "</select></div><div class=\"field\"><label for=\"datapack\">Datapack .zip</label>"
-                << "<div class=\"upload\"><input id=\"datapack\" type=\"file\" name=\"file\" accept=\".zip\"><button>Upload datapack</button></div></div></div>"
+                << "<div class=\"upload\"><input id=\"datapack\" type=\"file\" name=\"file\" accept=\".zip\" required><button>Upload datapack</button></div></div></div>"
                 << "</form>";
         }
-        out << "</div></section>";
+        out << "</div></details></section>";
         return out.str();
     }
 
@@ -1022,9 +1215,12 @@ private:
         const std::vector<std::wstring> saves = ListProfileWorlds(runtimeRoot_, profileId);
         const std::vector<Profile> profiles = LoadProfiles(runtimeRoot_);
         const std::string profEsc = HtmlEscape(profileId);
+        std::string section = QueryValue(query, "section");
+        if (section != "mods" && section != "settings") section = "worlds";
 
         std::ostringstream sel;
-        sel << "<select onchange=\"location='/?pin=" << pin_ << "&profile='+encodeURIComponent(this.value)\">";
+        sel << "<select id=\"profile\" onchange=\"location='/?pin=" << pin_ << "&section=" << section
+            << "&profile='+encodeURIComponent(this.value)\">";
         for (const auto& p : profiles) {
             sel << "<option value=\"" << HtmlEscape(p.id) << "\"" << (p.id == profileId ? " selected" : "") << ">"
                 << HtmlEscape(p.name) << " (" << HtmlEscape(p.id) << ")</option>";
@@ -1032,43 +1228,49 @@ private:
         sel << "</select>";
 
         std::ostringstream out;
-        out << "<div class=\"top\"><div><h1>Bandit Remote Files</h1>"
-            << "<div class=\"muted\">Manage worlds, mods, packs, and logs for any profile on this Xbox.</div></div>"
-            << "<div class=\"hero-actions\"><span class=\"pill\"><span>PIN</span> <span class=\"pin\">" << pin_ << "</span></span>"
-            << "<a class=\"pill\" href=\"" << UrlWithPinProfile("/", profileId) << "\">Refresh</a></div></div>"
-            << "<div class=\"shell\">" << SidebarHtml(profileId) << "<div class=\"content\">"
-            << "<section class=\"hero\"><div class=\"hero-row\"><div><h2>" << HtmlEscape(prof.name) << "</h2><div class=\"muted\">"
-            << HtmlEscape(TargetProfileText(target)) << "</div></div><div class=\"hero-actions\">"
-            << "<label style=\"display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;margin:0\">Viewing " << sel.str() << "</label>"
-            << "<a class=\"button secondary\" href=\"" << UrlWithPinProfile("/browse?scope=profile", profileId) << "\">Browse game files</a></div></div>"
-            << "<div class=\"stats\"><div class=\"stat\"><span>Profile</span> " << profEsc << "</div>"
-            << "<div class=\"stat\"><span>Worlds</span> " << saves.size() << "</div>"
-            << "<div class=\"stat\"><span>Port</span> " << port_ << "</div></div></section>"
-            << WorldsSectionHtml(saves, profileId)
-            << "<section class=\"section\" id=\"mods\"><div class=\"section-head\"><div><h2>Mods and packs</h2>"
-            << "<p class=\"section-note\">Upload individual files or move whole mod setups with Modrinth packs.</p></div></div>"
-            << "<div class=\"grid\"><section class=\"panel\"><h3>Upload mod</h3>"
-            << "<form method=\"post\" action=\"/upload-mod\" enctype=\"multipart/form-data\">"
-            << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
-            << "<input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
-            << "<div class=\"field\"><label for=\"modfile\">Mod .jar</label><div class=\"upload\"><input id=\"modfile\" type=\"file\" name=\"file\" accept=\".jar\"><button>Upload mod</button></div></div>"
-            << "</form><p class=\"muted\">Saved to the selected profile mods folder.</p></section>"
-            << "<section class=\"panel\"><h3>Upload resource pack</h3>"
-            << "<form method=\"post\" action=\"/upload-resourcepack\" enctype=\"multipart/form-data\">"
-            << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
-            << "<input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
-            << "<div class=\"field\"><label for=\"packfile\">Resource pack .zip</label><div class=\"upload\"><input id=\"packfile\" type=\"file\" name=\"file\" accept=\".zip\"><button>Upload pack</button></div></div>"
-            << "</form></section>"
-            << ExportPackHtml(profileId)
-            << ModpackImportHtml(profileId)
-            << "</div></section>"
-            << "<section class=\"section\"><div class=\"section-head\"><div><h2>Browse folders</h2>"
-            << "<p class=\"section-note\">Inspect files directly when you need more than the quick actions above.</p></div></div><div class=\"tiles\">"
-            << BrowseLink("saves", L"Worlds", profileId)
-            << BrowseLink("mods", L"Mods", profileId)
-            << BrowseLink("resourcepacks", L"Resource packs", profileId)
-            << BrowseLink("profile", L"Game files", profileId)
-            << "</div></section></div></div>";
+        out << "<header class=\"top\"><a class=\"brand\" href=\"" << UrlWithPinProfile("/", profileId)
+            << "\"><strong>BANDIT</strong><span class=\"brand-label\">Remote Files</span></a>"
+            << "<div class=\"profsel\"><label for=\"profile\">Profile</label>" << sel.str() << "</div>"
+            << "<div class=\"top-actions\"><span class=\"session\">PIN <span class=\"pin\">" << pin_ << "</span></span>"
+            << "<a class=\"btn ghost sm\" href=\"" << UrlWithPinProfile("/?section=" + section, profileId) << "\">Refresh</a></div></header>"
+            << "<div class=\"shell\">" << SidebarHtml(profileId) << "<main class=\"content\">"
+            << "<header class=\"page-head\"><div><div class=\"eyebrow\">Profile workspace</div><h1>" << HtmlEscape(prof.name) << "</h1>"
+            << "<div class=\"profile-meta\"><span>" << HtmlEscape(TargetProfileText(target)) << "</span><span>" << saves.size()
+            << " worlds</span><span>" << profEsc << "</span></div></div></header><nav class=\"tabs\" aria-label=\"Profile tools\">";
+        auto tab = [&](const char* key, const char* label) {
+            out << "<a" << (section == key ? " class=\"active\" aria-current=\"page\"" : "") << " href=\""
+                << UrlWithPinProfile(std::string("/?section=") + key, profileId) << "\">" << label << "</a>";
+        };
+        tab("worlds", "Worlds");
+        tab("mods", "Mods &amp; packs");
+        tab("settings", "Settings");
+        out << "</nav>";
+        if (profileId == kVanillaProfileId) {
+            out << "<div class=\"notice\">Vanilla files are read only. Select a mod profile to make changes or import files.</div>";
+        }
+        if (section == "worlds") {
+            out << WorldsSectionHtml(saves, profileId);
+        } else if (section == "mods") {
+            out << "<section class=\"section\"><div class=\"section-head\"><div><h2>Mods &amp; packs</h2>"
+                << "<p class=\"section-note\">Add files to this profile or transfer a complete modpack.</p></div>"
+                << "<a class=\"button secondary\" href=\"" << UrlWithPinProfile("/browse?scope=mods", profileId) << "\">Browse mods</a></div>"
+                << "<div class=\"grid\"><section class=\"panel\"><h3>Add a mod</h3>"
+                << "<form method=\"post\" action=\"/upload-mod\" enctype=\"multipart/form-data\">"
+                << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\"><input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
+                << "<div class=\"field\"><label for=\"modfile\">Mod .jar</label><div class=\"upload\"><input id=\"modfile\" type=\"file\" name=\"file\" accept=\".jar\" required><button>Upload mod</button></div></div>"
+                << "</form><p>Saved to this profile's mods folder.</p></section>"
+                << "<section class=\"panel\"><h3>Add a resource pack</h3>"
+                << "<form method=\"post\" action=\"/upload-resourcepack\" enctype=\"multipart/form-data\">"
+                << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\"><input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
+                << "<div class=\"field\"><label for=\"packfile\">Resource pack .zip</label><div class=\"upload\"><input id=\"packfile\" type=\"file\" name=\"file\" accept=\".zip\" required><button class=\"secondary\">Upload pack</button></div></div>"
+                << "</form></section></div>" << ModpackImportHtml(profileId) << ExportPackHtml(profileId)
+                << ManualDownloadsHtml(profileId) << "</section>";
+        } else {
+            out << "<section class=\"settings\"><div class=\"section-head\"><div><h2>Settings</h2>"
+                << "<p class=\"section-note\">Appearance, and the connection used for CurseForge downloads.</p></div></div>"
+                << AppearanceHtml() << CurseForgeKeyHtml() << "</section>";
+        }
+        out << "</main></div>";
         return out.str();
     }
 
@@ -1280,235 +1482,205 @@ private:
         SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
     }
 
-    static const char* ExplorerHead() {
-        return R"RFSPA(<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bandit Remote Files</title><style>
-:root{--bg:#0b0c0e;--bar:#111316;--panel:#17191d;--card:#1a1c20;--line:rgba(255,255,255,.08);--muted:#9ba1a6;--text:#f2f4f5;--accent:#70c486;--danger:#e36a5c;--blue:#6db1e6}
-*{box-sizing:border-box}html,body{margin:0;height:100%}
-body{background:var(--bg);color:var(--text);font:14px/1.5 system-ui,Segoe UI,sans-serif}
-.app{display:flex;flex-direction:column;height:100vh}
-.top{display:flex;align-items:center;gap:12px;padding:12px 18px;background:var(--bar);border-bottom:1px solid var(--line)}
-.top h1{font-size:16px;margin:0;font-weight:600;white-space:nowrap}
-.sp{flex:1}
-.profsel{display:flex;align-items:center;gap:8px}.profsel label{color:var(--muted);font-size:12px}
-select,.btn,input{font:inherit}
-select{font-size:13px;background:#16181c;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
-.pill{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:4px 11px;color:var(--muted);white-space:nowrap}
-.pin{font-family:Consolas,ui-monospace,monospace;letter-spacing:.1em;color:var(--text)}
-.btn{font-size:13px;border:1px solid var(--line);background:#16181c;color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer}
-.btn:hover{background:#202329}
-.btn.primary{background:var(--accent);color:#07130c;border-color:transparent;font-weight:600}
-.btn.blue{background:var(--blue);color:#06121c;border-color:transparent;font-weight:600}
-.btn.ghost{background:transparent;border-color:transparent;color:var(--muted);padding:5px 9px}
-.btn.ghost:hover{background:#202329;color:var(--text)}
-.btn.sm{padding:5px 9px;font-size:12.5px}
-a.btn{text-decoration:none;display:inline-block}
-.body{flex:1;display:grid;grid-template-columns:230px minmax(0,1fr);min-height:0}
-.rail{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:12px}
-.rail .grp{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:14px 6px 6px}
-.rail .grp:first-child{margin-top:0}
-.rail a{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid transparent;border-radius:8px;padding:8px 10px;color:var(--text);cursor:pointer;text-decoration:none}
-.rail a small{color:var(--muted)}
-.rail a:hover{background:var(--card)}
-.rail a.active{background:var(--card);border-color:var(--line)}
-.main{display:flex;flex-direction:column;min-width:0}
-.bar2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid var(--line)}
-.crumbs{display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:1;min-width:0}
-.crumbs a{color:var(--blue);cursor:pointer;text-decoration:none;padding:2px 6px;border-radius:6px}
-.crumbs a:hover{background:var(--card)}
-.crumbs .sep{color:var(--muted)}
-.list{flex:1;overflow:auto}
-.row{display:grid;grid-template-columns:1fr 120px 150px auto;align-items:center;gap:10px;padding:9px 18px;border-bottom:1px solid rgba(255,255,255,.05)}
-.row:hover{background:var(--panel)}
-.nm{display:flex;align-items:center;gap:10px;min-width:0}
-.nm .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.nm .t:hover{text-decoration:underline}
-.ic{width:18px;height:18px;flex:0 0 18px;color:var(--muted)}.ic.dir{color:#e2b65c}
-.size,.mod{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-.acts{display:flex;gap:4px;justify-content:flex-end;opacity:0;transition:opacity .1s}
-.row:hover .acts{opacity:1}
-.empty,.err{padding:42px 18px;color:var(--muted);text-align:center}
-.drop{position:fixed;inset:0;background:rgba(11,12,14,.86);border:3px dashed var(--accent);display:none;align-items:center;justify-content:center;font-size:20px;color:var(--accent);z-index:50}
-.drop.show{display:flex}
-.editor{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:40}
-.editor.show{display:flex}
-.ehead{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bar);border-bottom:1px solid var(--line)}
-.ehead .pa{font-family:Consolas,ui-monospace,monospace;color:var(--muted);font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#ta{flex:1;width:100%;border:0;outline:0;resize:none;background:#070809;color:#dce7ef;font:13px/1.55 Consolas,ui-monospace,monospace;padding:14px;white-space:pre;tab-size:4}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#202329;border:1px solid var(--line);color:var(--text);padding:9px 16px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
-.toast.show{opacity:1}
-@media(max-width:760px){.body{grid-template-columns:1fr}.rail{display:none}.row{grid-template-columns:1fr auto}.size,.mod{display:none}.acts{opacity:1}}
-</style></head><body><div class="app">
-<div class="top"><h1>Bandit Remote Files</h1>
+    static std::string ExplorerHead() {
+        return std::string(R"RFSPA(<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bandit Remote Files</title><style>)RFSPA") + RemoteStyles() + "</style>" + ThemeBootHtml() + R"RFSPA(</head><body><div class="app">
+<header class="top"><a class="brand" id="homebtn"><strong>BANDIT</strong><span class="brand-label">Remote Files</span></a>
 <div class="profsel"><label for="prof">Profile</label><select id="prof" onchange="switchProfile(this.value)"></select></div>
-<span class="sp"></span>
-<span class="pill">PIN <span class="pin" id="pinv"></span></span>
-<button class="btn" id="mkbtn" onclick="mkdir()">New folder</button>
-<button class="btn blue" id="upbtn" onclick="document.getElementById('up').click()">Upload</button>
-<a class="btn ghost" id="homebtn">Files home</a>
-<button class="btn ghost" onclick="reload()" title="Refresh">Refresh</button>
-<input id="up" type="file" multiple style="display:none" onchange="upload(this.files)"></div>
-<div class="body"><nav class="rail" id="rail"></nav><div class="main">
-<div class="bar2"><div class="crumbs" id="crumbs"></div><div id="extra"></div></div>
-<div class="list" id="list"></div></div></div>
+<div class="top-actions"><span class="session">PIN <span class="pin" id="pinv"></span></span></div></header>
+<div class="shell"><details class="side" id="navigation" open><summary>Browse &amp; diagnostics</summary><div class="navbody"><nav class="rail" id="rail" aria-label="File locations"></nav></div></details>
+<main class="main"><div class="browser-head"><div><div class="eyebrow">File browser</div><div class="title-row"><h1 id="folder-title">Game files</h1><span class="access" id="access">Loading</span></div></div>
+<div class="toolbar"><label class="filter"><span class="sr-only">Filter files</span><input id="filter" type="search" placeholder="Filter files" oninput="filterList()"></label><button class="btn" id="mkbtn" onclick="mkdir()" hidden>New folder</button><button class="btn primary" id="upbtn" onclick="document.getElementById('up').click()" hidden>Upload files</button><button class="btn ghost" onclick="reload()" aria-label="Refresh folder">Refresh</button></div></div>
+<input id="up" type="file" multiple hidden onchange="upload(this.files)">
+<div class="bar2" id="bar2"><nav class="crumbs" id="crumbs" aria-label="Folder path"></nav><div id="extra"></div></div>
+<div class="list-head" aria-hidden="true"><span>Name</span><span class="size">Size</span><span class="mod">Modified</span><span></span></div>
+<div class="list" id="list" aria-label="Files" aria-busy="true"></div>
+<footer class="list-footer"><span id="count" role="status">Loading folder</span><span class="drop-hint" id="drop-hint"></span></footer></main></div>
 <div id="drop" class="drop">Drop files or folders to upload</div>
-<div id="editor" class="editor"><div class="ehead"><span id="epath" class="pa"></span>
-<button class="btn primary" id="savebtn" onclick="saveEd()">Save</button>
-<button class="btn" onclick="openEd(edPath)">Reload</button>
-<button class="btn ghost" onclick="closeEd()">Close</button></div>
-<textarea id="ta" spellcheck="false"></textarea></div>
-<div id="toast" class="toast"></div></div>
-<script>)RFSPA";
+<section id="editor" class="editor" aria-label="Text editor"><header class="ehead"><span id="epath" class="pa"></span><div class="toolbar"><button class="btn primary" id="savebtn" onclick="saveEd()">Save changes</button><button class="btn" onclick="reloadEd()">Reload</button><button class="btn ghost" onclick="closeEd()">Close</button></div></header>
+<label class="sr-only" for="ta">File contents</label><textarea id="ta" spellcheck="false"></textarea><footer class="editor-footer"><span id="edit-state" role="status">Saved</span><span>Ctrl / Cmd + S to save</span></footer></section>
+<div id="toast" class="toast" role="status" aria-live="polite"></div></div><script>)RFSPA";
     }
 
     static const char* ExplorerScript() {
         return R"RFSPA(
-var cur="",edPath="",canWrite=false;
+var cur='',edPath='',edOriginal='',canWrite=false,busy=false,saving=false,loadId=0,listing=null,editorFocus=null;
 var SCOPES=[
- {g:"Profile",items:[{s:"profile",l:"Game files",h:"folder"},{s:"saves",l:"Worlds",h:"saves"},{s:"mods",l:"Mods",h:"jars"},{s:"resourcepacks",l:"Resource packs",h:"zip"}]},
- {g:"Diagnostics",items:[{s:"logs",l:"Current logs",h:"now"},{s:"previous",l:"Previous logs",h:"last"},{s:"crash",l:"Crash reports",h:"zip"},{s:"runtime",l:"Runtime cache",h:"read"}]}
+ {g:'Workspace',items:[{s:'profile',l:'Game files'},{s:'saves',l:'Worlds'},{s:'mods',l:'Mods'},{s:'resourcepacks',l:'Resource packs'}]},
+ {g:'Diagnostics',items:[{s:'logs',l:'Current logs'},{s:'previous',l:'Previous logs'},{s:'crash',l:'Crash reports'},{s:'runtime',l:'Runtime cache'}]}
 ];
-var ICON_DIR='<svg class="ic dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>';
-var ICON_FILE='<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+var ICON_DIR='<svg class="ic dir" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7V5h7l2 3h9v12H3V7Z"/></svg>';
+var ICON_FILE='<svg class="ic" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 3H5v18h14V8Z"/><path d="M14 3v5h5"/></svg>';
 function enc(p){return encodeURIComponent(p)}
-function esc(s){return (s+'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function join(b,n){return b?b+"/"+n:n}
-function q(extra){var s='?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope);if(extra)s+=extra;return s}
-function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('show')},1800)}
-function scopeLabel(sc){for(var i=0;i<SCOPES.length;i++)for(var j=0;j<SCOPES[i].items.length;j++)if(SCOPES[i].items[j].s===sc)return SCOPES[i].items[j].l;return sc}
+function join(b,n){return b?b+'/'+n:n}
+function q(extra){return '?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+(extra||'')}
+function el(id){return document.getElementById(id)}
+function button(label,run,cls){var b=document.createElement('button');b.type='button';b.className=cls||'';b.textContent=label;b.onclick=run;return b}
+function toast(message,persistent){var t=el('toast');t.textContent=message;t.classList.add('show');clearTimeout(t._t);if(!persistent)t._t=setTimeout(function(){t.classList.remove('show')},4000)}
+function scopeLabel(sc){for(var g of SCOPES)for(var it of g.items)if(it.s===sc)return it.l;return 'Game files'}
 function homeHref(){return '/?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)}
 function initChrome(){
- document.getElementById('pinv').textContent=CFG.pin;
- document.getElementById('homebtn').href=homeHref();
- var sel=document.getElementById('prof');sel.innerHTML='';
- CFG.profiles.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name+' ('+p.id+')';if(p.id===CFG.profile)o.selected=true;sel.appendChild(o)});
- var rail=document.getElementById('rail'),h='';
- SCOPES.forEach(function(grp){h+='<div class="grp">'+esc(grp.g)+'</div>';grp.items.forEach(function(it){h+='<a data-s="'+it.s+'" onclick="go(\''+it.s+'\')"><span>'+esc(it.l)+'</span><small>'+esc(it.h)+'</small></a>'})});
- rail.innerHTML=h;
+ var wide=matchMedia('(min-width:761px)');function fitNav(){el('navigation').open=wide.matches}fitNav();wide.addEventListener('change',fitNav);
+ el('pinv').textContent=CFG.pin;el('homebtn').href=homeHref();
+ CFG.profiles.forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.name+' ('+p.id+')';o.selected=p.id===CFG.profile;el('prof').appendChild(o)});
+ var rail=el('rail');
+ SCOPES.forEach(function(group,index){
+  var title=document.createElement('div');title.className='grp';title.textContent=group.g;rail.appendChild(title);
+  if(!index){var home=document.createElement('a');home.href=homeHref();home.textContent='Overview';home.id='overview';rail.appendChild(home)}
+  group.items.forEach(function(item){var a=document.createElement('a');a.textContent=item.l;a.dataset.scope=item.s;a.href='/browse?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+item.s;a.onclick=function(e){e.preventDefault();go(item.s)};rail.appendChild(a)});
+ });
 }
-function railActive(){document.querySelectorAll('.rail a').forEach(function(a){a.classList.toggle('active',a.getAttribute('data-s')===CFG.scope)})}
-function switchProfile(id){CFG.profile=id;document.getElementById('homebtn').href=homeHref();load('')}
-function go(sc){CFG.scope=sc;load('')}
-function reload(){load(cur)}
+function navigationReady(){if(busy||saving){toast('Wait for the transfer to finish');return false}return true}
+function switchProfile(id){if(!navigationReady()){el('prof').value=CFG.profile;return}CFG.profile=id;el('homebtn').href=homeHref();el('overview').href=homeHref();load('')}
+function go(scope){if(!navigationReady())return;CFG.scope=scope;if(matchMedia('(max-width:760px)').matches)el('navigation').open=false;load('')}
+function reload(){if(navigationReady())load(cur)}
+function showError(message){
+ var box=document.createElement('div');box.className='err';var title=document.createElement('strong');title.textContent='Could not open folder';box.appendChild(title);
+ var text=document.createElement('p');text.textContent=message;box.appendChild(text);box.appendChild(button('Try again',reload,'btn secondary'));
+ var home=document.createElement('a');home.href=homeHref();home.className='btn ghost';home.textContent='Reconnect';box.appendChild(home);el('list').replaceChildren(box);el('count').textContent='Folder unavailable';
+}
 async function load(path){
- cur=path||"";railActive();
- var L=document.getElementById('list');
- var r;try{r=await fetch('/api/list'+q('&path='+enc(cur)))}catch(e){L.innerHTML='<div class="err">Connection lost</div>';return}
- if(!r.ok){L.innerHTML='<div class="err">Could not open folder</div>';return}
- var d=await r.json();
- if(!d.ok){L.innerHTML='<div class="err">Could not open folder</div>';return}
- canWrite=!!d.writable;
- document.getElementById('mkbtn').style.display=canWrite?'':'none';
- document.getElementById('upbtn').style.display=canWrite?'':'none';
- renderCrumbs();renderExtra(d);renderList(d);
+ if(!navigationReady())return;
+ var id=++loadId;cur=path||'';listing=null;canWrite=false;
+ el('mkbtn').hidden=true;el('upbtn').hidden=true;el('filter').value='';el('filter').disabled=true;el('access').textContent='Loading';el('count').textContent='Loading folder';el('drop-hint').textContent='';el('extra').replaceChildren();
+ el('folder-title').textContent=scopeLabel(CFG.scope);el('list').setAttribute('aria-busy','true');el('list').replaceChildren();
+ document.querySelectorAll('.rail a[data-scope]').forEach(function(a){var active=a.dataset.scope===CFG.scope;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');a.href='/browse?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+a.dataset.scope});
+ renderCrumbs();el('bar2').hidden=!cur;history.replaceState(null,'','/browse'+q('&path='+enc(cur)));
+ try{
+  var r=await fetch('/api/list'+q('&path='+enc(cur)));
+  if(!r.ok)throw Error(r.status===401?'The PIN has expired. Reconnect using the PIN on your Xbox.':'Check the Xbox connection and try again.');
+  var d=await r.json();if(!d.ok)throw Error('This folder is unavailable. Choose another location.');if(id!==loadId)return;
+  canWrite=!!d.writable;listing=d;el('filter').disabled=false;el('mkbtn').hidden=!canWrite;el('upbtn').hidden=!canWrite;el('access').textContent=canWrite?'Read & write':'Read only';
+  el('drop-hint').textContent=canWrite?'Drop files or folders to upload':'Downloads available';renderExtra(d);filterList();
+ }catch(e){if(id!==loadId)return;el('access').textContent='Unavailable';showError(e.message||'Connection lost')}
+ finally{if(id===loadId)el('list').setAttribute('aria-busy','false')}
 }
 function renderCrumbs(){
- var c=document.getElementById('crumbs'),html='<a onclick="load(\'\')">'+esc(scopeLabel(CFG.scope))+'</a>',acc="";
- if(cur){cur.split('/').forEach(function(seg){if(!seg)return;acc=join(acc,seg);html+='<span class="sep">/</span><a onclick="load(\''+acc.replace(/'/g,"\\'")+'\')">'+esc(seg)+'</a>'})}
- c.innerHTML=html;
+ var c=el('crumbs');c.hidden=!cur;var root=button(scopeLabel(CFG.scope),function(){load('')});root.title=scopeLabel(CFG.scope);c.replaceChildren(root);var acc='';
+ cur.split('/').filter(Boolean).forEach(function(segment){acc=join(acc,segment);var path=acc,crumb=button(segment,function(){load(path)});crumb.title=segment;c.appendChild(crumb)});
 }
 function renderExtra(d){
- var e=document.getElementById('extra');
- if(d.world){var wn=cur.split('/')[0]||cur;e.innerHTML='<a class="btn sm" href="/download?file=export:world:'+enc(wn)+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin)+'">Export world zip</a>'}
- else e.innerHTML='';
+ el('extra').replaceChildren();if(!d.world)return;
+ var a=document.createElement('a');a.className='btn sm';a.textContent='Export world zip';a.href='/download?file=export:world:'+enc(cur.split('/')[0])+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin);el('extra').appendChild(a);
 }
-function rowActs(en,p,nm){
- var a='';
- if(en.dir){
-  if(en.world)a+='<a class="btn ghost" href="/download?file=export:world:'+enc(en.name)+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin)+'">Zip</a>';
-  if(canWrite)a+='<button class="btn ghost" onclick="rename(\''+p+'\',\''+nm+'\')">Rename</button><button class="btn ghost" onclick="del(\''+p+'\',1)">Delete</button>';
+function rowActs(entry,path){
+ var details=document.createElement('details');details.className='acts';
+ var summary=document.createElement('summary');summary.textContent='\u00b7\u00b7\u00b7';summary.setAttribute('aria-label','Actions for '+entry.name);details.appendChild(summary);
+ var menu=document.createElement('div');menu.className='action-menu';
+ if(entry.dir){
+  menu.appendChild(button('Open folder',function(){load(path)}));
+  if(entry.world){var a=document.createElement('a');a.textContent='Export world zip';a.href='/download?file=export:world:'+enc(entry.name)+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin);menu.appendChild(a)}
  }else{
-  if(en.text)a+='<button class="btn ghost" onclick="openEd(\''+p+'\')">Edit</button>';
-  a+='<button class="btn ghost" onclick="dl(\''+p+'\')">Download</button>';
-  if(canWrite)a+='<button class="btn ghost" onclick="rename(\''+p+'\',\''+nm+'\')">Rename</button><button class="btn ghost" onclick="del(\''+p+'\',0)">Delete</button>';
+  if(entry.text)menu.appendChild(button(canWrite?'Edit file':'View file',function(){openEd(path)}));
+  menu.appendChild(button('Download',function(){dl(path)}));
  }
- return a;
+ if(canWrite){menu.appendChild(button('Rename',function(){rename(path,entry.name)}));menu.appendChild(button('Delete',function(){del(path,entry.dir)},'danger'))}
+ menu.addEventListener('click',function(){details.open=false});details.appendChild(menu);
+ details.addEventListener('toggle',function(){
+  if(!details.open)return;
+  document.querySelectorAll('.acts[open]').forEach(function(other){if(other!==details)other.open=false});
+  var rect=summary.getBoundingClientRect(),height=menu.offsetHeight;
+  menu.style.left=Math.max(8,Math.min(innerWidth-176,rect.right-168))+'px';
+  menu.style.top=Math.max(8,Math.min(innerHeight-height-8,rect.bottom+height+4<innerHeight?rect.bottom+4:rect.top-height-4))+'px';
+ });return details;
 }
-function renderList(d){
- var L=document.getElementById('list');
- if(!d.entries.length){L.innerHTML='<div class="empty">This folder is empty</div>';return}
- var h='';
- d.entries.forEach(function(en){
-  var path=join(cur,en.name),p=path.replace(/'/g,"\\'"),nm=en.name.replace(/'/g,"\\'");
-  var click=en.dir?("load('"+p+"')"):(en.text?("openEd('"+p+"')"):("dl('"+p+"')"));
-  h+='<div class="row"><div class="nm">'+(en.dir?ICON_DIR:ICON_FILE)+'<span class="t" onclick="'+click+'">'+esc(en.name)+'</span></div>'
-   +'<div class="size">'+(en.dir?'':esc(en.sizeText))+'</div><div class="mod">'+esc(en.modified||'')+'</div>'
-   +'<div class="acts">'+rowActs(en,p,nm)+'</div></div>';
+function filterList(){
+ if(!listing)return;
+ var needle=el('filter').value.toLocaleLowerCase(),entries=listing.entries.filter(function(entry){return entry.name.toLocaleLowerCase().includes(needle)}),list=el('list');list.replaceChildren();
+ el('count').textContent=needle?entries.length+' of '+listing.entries.length+' items':entries.length+' '+(entries.length===1?'item':'items');
+ if(!entries.length){var empty=document.createElement('div');empty.className='empty';var heading=document.createElement('strong');heading.textContent=needle?'No matching files':'This folder is empty';empty.appendChild(heading);empty.appendChild(document.createTextNode(needle?'Try a different filename.':canWrite?'Upload files or drop them into this window.':'Files will appear here when the launcher creates them.'));list.appendChild(empty);return}
+ entries.forEach(function(entry){
+  var path=join(cur,entry.name),row=document.createElement('div');row.className='row';
+  var name=document.createElement('div');name.className='nm';name.innerHTML=entry.dir?ICON_DIR:ICON_FILE;
+  var open=button(entry.name,function(){if(entry.dir)load(path);else if(entry.text)openEd(path);else dl(path)},'t');open.title=entry.name;name.appendChild(open);row.appendChild(name);
+  var size=document.createElement('div');size.className='size';size.textContent=entry.dir?'':entry.sizeText;row.appendChild(size);
+  var modified=document.createElement('div');modified.className='mod';modified.textContent=entry.modified||'';row.appendChild(modified);row.appendChild(rowActs(entry,path));list.appendChild(row);
  });
- L.innerHTML=h;
 }
-function dl(p){window.location='/download-path'+q('&path='+enc(p))}
-async function del(p,isDir){
- if(!confirm('Delete '+(isDir?'folder':'file')+' "'+p.split('/').pop()+'"?'+(isDir?' Removes everything inside.':'')))return;
- var r=await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+'&path='+enc(p)});
- toast(r.ok?'Deleted':'Delete failed');load(cur);
+function dl(path){window.location='/download-path'+q('&path='+enc(path))}
+async function change(action,path,extra,success){
+ if(!canWrite||!navigationReady())return;
+ busy=true;
+ try{var r=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+'&path='+enc(path)+(extra||'')});if(!r.ok)throw Error();toast(success)}
+ catch(e){toast('Could not '+action+'. Check the connection and try again.')}
+ finally{busy=false;load(cur)}
 }
-async function rename(p,old){
- var nn=prompt('Rename to',old);if(!nn||nn===old)return;
- var r=await fetch('/api/rename',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+'&path='+enc(p)+'&name='+enc(nn)});
- toast(r.ok?'Renamed':'Rename failed');load(cur);
-}
-async function mkdir(){
- var nn=prompt('New folder name');if(!nn)return;
- var r=await fetch('/api/mkdir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+'&path='+enc(cur)+'&name='+enc(nn)});
- toast(r.ok?'Folder created':'Failed');load(cur);
-}
-async function uploadOne(file,sub){
- var fd=new FormData();fd.append('file',file);
- var dest=sub?join(cur,sub):cur;
- var r=await fetch('/api/upload'+q('&path='+enc(dest)),{method:'POST',body:fd});
- return r.ok;
+function del(path,isDir){if(!canWrite||!navigationReady())return;if(confirm('Delete '+(isDir?'folder':'file')+' "'+path.split('/').pop()+'"?'+(isDir?' Removes everything inside.':'')))change('delete',path,'','Deleted')}
+function rename(path,old){if(!canWrite||!navigationReady())return;var name=prompt('Rename to',old);if(name&&name!==old)change('rename',path,'&name='+enc(name),'Renamed')}
+function mkdir(){if(!canWrite||!navigationReady())return;var name=prompt('New folder name');if(name)change('mkdir',cur,'&name='+enc(name),'Folder created')}
+)RFSPA"
+        R"RFSPA(async function uploadOne(file,sub){
+ var data=new FormData();data.append('file',file);
+ var r=await fetch('/api/upload'+q('&path='+enc(sub?join(cur,sub):cur)),{method:'POST',body:data});return r.ok;
 }
 async function upload(files){
- if(!files||!files.length)return;
- var ok=0;
- for(var i=0;i<files.length;i++){if(await uploadOne(files[i],''))ok++}
- toast(ok+'/'+files.length+' file(s) uploaded');document.getElementById('up').value='';load(cur);
+ if(!canWrite||!files||!files.length||!navigationReady())return;
+ busy=true;var ok=0,total=files.length;
+ try{for(var i=0;i<total;i++){toast('Uploading '+(i+1)+' of '+total,true);try{if(await uploadOne(files[i],''))ok++}catch(e){}}}
+ finally{busy=false;toast(ok+' of '+total+' files uploaded'+(ok<total?'. Some uploads failed.':''));el('up').value='';load(cur)}
 }
-function entryFile(en){return new Promise(function(res,rej){en.file(res,rej)})}
-function entryBatch(rd){return new Promise(function(res,rej){rd.readEntries(res,rej)})}
-async function walkEntry(en,sub,out){
- if(en.isFile){out.push({entry:en,sub:sub});return}
- if(!en.isDirectory)return;
- var next=sub?sub+'/'+en.name:en.name,rd=en.createReader(),batch;
- // readEntries only returns a partial batch, keep going until it comes back empty
- do{batch=await entryBatch(rd);for(var i=0;i<batch.length;i++)await walkEntry(batch[i],next,out)}while(batch.length)
+function entryFile(entry){return new Promise(function(resolve,reject){entry.file(resolve,reject)})}
+function entryBatch(reader){return new Promise(function(resolve,reject){reader.readEntries(resolve,reject)})}
+async function walkEntry(entry,sub,out){
+ if(entry.isFile){out.push({entry:entry,sub:sub});return}if(!entry.isDirectory)return;
+ var next=join(sub,entry.name),reader=entry.createReader(),batch;
+ // readEntries returns partial batches until the directory is exhausted
+ do{batch=await entryBatch(reader);for(var i=0;i<batch.length;i++)await walkEntry(batch[i],next,out)}while(batch.length)
 }
 async function uploadDropped(roots){
- var flat=[];
- for(var j=0;j<roots.length;j++){try{await walkEntry(roots[j],'',flat)}catch(e){}}
- if(!flat.length){toast('Nothing to upload');return}
- toast('Uploading '+flat.length+' file(s)...');
- var ok=0;
- for(var k=0;k<flat.length;k++){try{if(await uploadOne(await entryFile(flat[k].entry),flat[k].sub))ok++}catch(e){}}
- toast(ok+'/'+flat.length+' file(s) uploaded');load(cur);
+ if(!canWrite||!navigationReady())return;
+ busy=true;var flat=[],ok=0,scanFailed=false;
+ try{
+  toast('Reading dropped folders',true);
+  for(var root of roots){try{await walkEntry(root,'',flat)}catch(e){scanFailed=true}}
+  for(var i=0;i<flat.length;i++){toast('Uploading '+(i+1)+' of '+flat.length,true);try{if(await uploadOne(await entryFile(flat[i].entry),flat[i].sub))ok++}catch(e){}}
+ }finally{busy=false;toast(ok+' of '+flat.length+' files uploaded'+(scanFailed||ok<flat.length?'. Some files could not be uploaded.':''));load(cur)}
 }
-function openEd(p){
- fetch('/api/raw'+q('&path='+enc(p))).then(function(r){if(!r.ok)throw 0;return r.text()}).then(function(t){
-  edPath=p;document.getElementById('epath').textContent=scopeLabel(CFG.scope)+' / '+p;document.getElementById('ta').value=t;
-  document.getElementById('savebtn').style.display=canWrite?'':'none';
-  document.getElementById('editor').classList.add('show');
- }).catch(function(){toast('Could not open file')});
+function dirty(){return el('editor').classList.contains('show')&&el('ta').value!==edOriginal}
+function updateEditState(){var state=el('edit-state');state.classList.remove('danger');state.textContent=!canWrite?'Read only':dirty()?'Unsaved changes':'Saved'}
+async function openEd(path){
+ if(!navigationReady())return;
+ var requestId=loadId;
+ try{
+  var r=await fetch('/api/raw'+q('&path='+enc(path)));if(!r.ok)throw Error();var text=await r.text();if(requestId!==loadId)return;
+  if(!el('editor').classList.contains('show'))editorFocus=document.activeElement.closest('.acts')?.querySelector('summary')||document.activeElement;edPath=path;edOriginal=text;el('epath').textContent=scopeLabel(CFG.scope)+' / '+path;el('ta').value=text;el('ta').readOnly=!canWrite;
+  el('savebtn').hidden=!canWrite;el('editor').classList.add('show');document.querySelector('.app>.shell').inert=true;document.querySelector('.app>.top').inert=true;updateEditState();el('ta').focus();
+ }catch(e){toast('Could not open file')}
 }
-function closeEd(){document.getElementById('editor').classList.remove('show')}
+function reloadEd(){if(navigationReady()&&(!dirty()||confirm('Discard unsaved changes and reload this file?')))openEd(edPath)}
+function closeEd(){
+ if(!navigationReady()||(dirty()&&!confirm('Discard unsaved changes?')))return;
+ el('editor').classList.remove('show');document.querySelector('.app>.shell').inert=false;document.querySelector('.app>.top').inert=false;if(editorFocus&&editorFocus.isConnected)editorFocus.focus();
+}
 async function saveEd(){
- var r=await fetch('/api/write'+q('&path='+enc(edPath)),{method:'POST',body:document.getElementById('ta').value});
- toast(r.ok?'Saved':'Save failed');
+ if(!canWrite||saving||!el('editor').classList.contains('show'))return;
+ saving=true;el('savebtn').disabled=true;el('edit-state').textContent='Saving';var text=el('ta').value;
+ try{var r=await fetch('/api/write'+q('&path='+enc(edPath)),{method:'POST',body:text});if(!r.ok)throw Error();edOriginal=text;updateEditState();toast('Saved')}
+ catch(e){el('edit-state').classList.add('danger');el('edit-state').textContent='Save failed. Changes are still here.';toast('Could not save. Check the connection and try again.')}
+ finally{saving=false;el('savebtn').disabled=false}
 }
-document.getElementById('ta').addEventListener('keydown',function(e){
- if(e.key==='Tab'){e.preventDefault();var t=this,s=t.selectionStart;t.value=t.value.slice(0,s)+'  '+t.value.slice(t.selectionEnd);t.selectionStart=t.selectionEnd=s+2}
+el('ta').addEventListener('input',updateEditState);
+el('ta').addEventListener('keydown',function(e){
+ if(e.key==='Tab'&&!e.shiftKey&&!this.readOnly){e.preventDefault();var start=this.selectionStart;this.setRangeText('  ',start,this.selectionEnd,'end');updateEditState()}
  if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveEd()}
 });
-var dz=document.getElementById('drop'),dc=0;
-window.addEventListener('dragenter',function(e){e.preventDefault();if(!canWrite)return;dc++;dz.classList.add('show')});
-window.addEventListener('dragover',function(e){e.preventDefault()});
-window.addEventListener('dragleave',function(e){dc--;if(dc<=0)dz.classList.remove('show')});
-window.addEventListener('drop',function(e){e.preventDefault();dc=0;dz.classList.remove('show');if(!canWrite)return;
- var dt=e.dataTransfer,roots=[];
- // has to run before the first await or the item list is gone
- if(dt.items)for(var i=0;i<dt.items.length;i++){var en=dt.items[i].webkitGetAsEntry?dt.items[i].webkitGetAsEntry():null;if(en)roots.push(en)}
- if(roots.length)uploadDropped(roots);
- else if(dt.files.length)upload(dt.files)});
-initChrome();load('');
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.querySelectorAll('.acts[open]').forEach(function(menu){menu.open=false;menu.querySelector('summary').focus()});if(el('editor').classList.contains('show'))closeEd()}});
+function closeMenus(){document.querySelectorAll('.acts[open]').forEach(function(menu){menu.open=false})}
+el('list').addEventListener('scroll',closeMenus);window.addEventListener('resize',closeMenus);
+document.addEventListener('click',function(e){document.querySelectorAll('.acts[open]').forEach(function(menu){if(!menu.contains(e.target))menu.open=false})});
+window.addEventListener('beforeunload',function(e){if(dirty()||busy||saving){e.preventDefault();e.returnValue=''}});
+var dz=el('drop'),dragCount=0;
+function isFileDrag(e){return e.dataTransfer&&Array.from(e.dataTransfer.types).includes('Files')}
+window.addEventListener('dragenter',function(e){if(!isFileDrag(e))return;e.preventDefault();if(!canWrite||busy||el('editor').classList.contains('show'))return;dragCount++;dz.classList.add('show')});
+window.addEventListener('dragover',function(e){if(isFileDrag(e))e.preventDefault()});
+window.addEventListener('dragleave',function(e){if(!isFileDrag(e))return;dragCount--;if(dragCount<=0)dz.classList.remove('show')});
+window.addEventListener('drop',function(e){
+ if(!isFileDrag(e))return;e.preventDefault();dragCount=0;dz.classList.remove('show');if(!canWrite||busy||el('editor').classList.contains('show'))return;
+ var data=e.dataTransfer,roots=[];
+ // browser entries must be captured before the first await
+ if(data.items)for(var item of data.items){var entry=item.webkitGetAsEntry?item.webkitGetAsEntry():null;if(entry)roots.push(entry)}
+ if(roots.length)uploadDropped(roots);else if(data.files.length)upload(data.files);
+});
+initChrome();load(CFG.path||'');
 )RFSPA";
     }
 
@@ -1519,7 +1691,7 @@ initChrome();load('');
 
         std::ostringstream cfg;
         cfg << "var CFG={pin:\"" << pin_ << "\",scope:\"" << JsonEscape(scope) << "\",profile:\""
-            << JsonEscape(w2a(profileId)) << "\",profiles:[";
+            << JsonEscape(w2a(profileId)) << "\",path:\"" << JsonEscape(QueryValue(query, "path")) << "\",profiles:[";
         const std::vector<Profile> profiles = LoadProfiles(runtimeRoot_);
         bool firstP = true;
         for (const auto& p : profiles) {

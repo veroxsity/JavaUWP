@@ -191,6 +191,38 @@ void TestUnknownCrash() {
         soft.fingerprint + " vs " + hard.fingerprint);
 }
 
+void TestHeapExhaustion() {
+    int pinned = 0, cap = 0;
+
+    std::string spiral;
+    for (int i = 0; i < 6; ++i) {
+        spiral += "[2026-09-14T06:36:0" + std::to_string(i) +
+            "-0700][915.244s] GC(109" + std::to_string(i) +
+            ") Pause Full (G1 Compaction Pause) 2522M->2522M(2560M) 1771.764ms\n";
+    }
+    Check(crashparse::DetectHeapExhaustion(spiral, pinned, cap),
+        "a run of full GCs freeing nothing at the cap is heap exhaustion", std::to_string(pinned));
+    CheckEq(std::to_string(pinned), "2522", "the pinned size is read back");
+    CheckEq(std::to_string(cap), "2560", "the cap is read back");
+
+    std::string healthy;
+    for (int i = 0; i < 6; ++i) {
+        healthy += "[0.0s] GC(" + std::to_string(i) +
+            ") Pause Full (G1 Compaction Pause) 2500M->900M(2560M) 900ms\n";
+    }
+    Check(!crashparse::DetectHeapExhaustion(healthy, pinned, cap),
+        "full GCs that actually free memory are not exhaustion", std::to_string(pinned));
+
+    std::string tooFew =
+        "[0.0s] GC(1) Pause Full (G1 Compaction Pause) 2522M->2522M(2560M) 1771ms\n"
+        "[0.0s] GC(2) Pause Full (G1 Compaction Pause) 2522M->2522M(2560M) 1771ms\n";
+    Check(!crashparse::DetectHeapExhaustion(tooFew, pinned, cap),
+        "two full GCs are not enough to call it a spiral", std::to_string(pinned));
+
+    Check(!crashparse::DetectHeapExhaustion("", pinned, cap),
+        "an empty gc log is not exhaustion", "");
+}
+
 void TestPhase() {
     CheckEq(crashparse::DetectPhase("nothing happened"), "launcher", "phase with no jvm");
     CheckEq(crashparse::DetectPhase("JNI_CreateJavaVM ok"), "jvm_init", "phase at jvm init");
@@ -237,6 +269,7 @@ int main() {
     TestScrubbing();
     TestDiscriminator();
     TestUnknownCrash();
+    TestHeapExhaustion();
     TestPhase();
     TestMarker();
     TestLaunchArgumentRedaction();

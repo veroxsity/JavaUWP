@@ -1,5 +1,7 @@
 #include "launcher_ui.h"
 
+#include "mod_source.h"
+
 #include "mods_browser.h"
 #include "auth_screen.h"
 #include "launcher_mouse.h"
@@ -217,8 +219,17 @@ static std::wstring CrashSuspectLine(const telemetry::CrashRecord& record) {
         return line;
     }
     if (!record.detail.symbol.empty()) {
+        // ole32 is com, and jna cannot LoadLibrary a system dll from a uwp package
+        if (record.detail.symbol.find("Ole32") != std::string::npos) {
+            return L"A mod asked Windows for hardware details, which this console blocks.\n"
+                   L"Mods that probe the GPU this way cannot run here yet.";
+        }
         return L"A mod asked for " + a2w(record.detail.symbol.c_str()) +
-            L", which this console's graphics layer does not provide.\nThis points to the launcher's graphics layer.";
+            L", which this console does not provide.";
+    }
+    if (record.exception.find(L"heap_exhausted") != std::wstring::npos) {
+        return L"This pack ran out of memory (" + record.message + L").\n"
+               L"The console has about 5 GB for everything, so very large packs cannot load.";
     }
     if (record.exception.find(L"unknown_") != std::wstring::npos) {
         return L"Nothing readable was left behind, so there is no diagnosis for this one.";
@@ -415,7 +426,7 @@ static void ShowCrashScreen(ICoreWindow* window, AuthScreenRenderer* renderer, A
 }
 
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 4;
+    constexpr int kSettingsRows = 5;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -431,6 +442,8 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     state.settingsConfigured = telemetry::Configured();
     state.settingsReportingOn = telemetry::ConsentGranted();
     state.settingsInstallId = telemetry::InstallIdText();
+    state.settingsModSource = modsource::Current();
+    state.settingsCurseForgeKeyHint = modsource::CurseForgeKeyHint();
 
     bool upWas = false;
     bool downWas = false;
@@ -533,6 +546,22 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                 state.settingsNote = L"A new reporting id was created.";
             } else {
                 state.settingsNote = L"The reporting id could not be reset.";
+            }
+        } else if (pressed == 4) {
+            const ModSource next = state.settingsModSource == ModSource::CurseForge
+                ? ModSource::Modrinth
+                : ModSource::CurseForge;
+            if (modsource::SetCurrent(next)) {
+                state.settingsModSource = next;
+                state.settingsCurseForgeKeyHint = modsource::CurseForgeKeyHint();
+                if (next == ModSource::CurseForge && state.settingsCurseForgeKeyHint.empty()) {
+                    state.settingsNote = L"CurseForge selected, but no API key is set. Add one in Remote Files.";
+                } else {
+                    state.settingsNote = std::wstring(L"Mods will come from ") +
+                        modsource::DisplayName(next) + L".";
+                }
+            } else {
+                state.settingsNote = L"The mod source could not be changed.";
             }
         }
 

@@ -32,6 +32,15 @@ HttpResult HttpPostStringTimed(
 HttpResult HttpGetBearer(const wchar_t* url, const std::string& token);
 HttpResult HttpGetString(const wchar_t* url);
 
+using HttpHeaders = std::vector<std::pair<std::wstring, std::wstring>>;
+
+HttpResult HttpGetWithHeaders(const wchar_t* url, const HttpHeaders& headers);
+HttpResult HttpPostWithHeaders(
+    const wchar_t* url,
+    const std::string& body,
+    const wchar_t* mediaType,
+    const HttpHeaders& headers);
+
 // returns the response etag and an empty body for status 304
 HttpResult HttpGetConditionalTimed(
     const wchar_t* url,

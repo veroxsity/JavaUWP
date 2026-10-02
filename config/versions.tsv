@@ -2,53 +2,53 @@ minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	contr
 26.2	26.2 Fabric	fabric	0.19.3	current	experimental	fabric	Modern controller and compat target
 26.2	26.2 Forge	forge	65.1.3	current	experimental	forge	Modern shared controller target
 26.2	26.2 NeoForge	neoforge	26.2.0.82	current	experimental	neoforge	Modern shared controller target
-26.1.2	26.1.2 Fabric	fabric	0.19.2	current	experimental	fabric	Modern controller and compat target
+26.1.2	26.1.2 Fabric	fabric	0.19.3	current	experimental	fabric	Modern controller and compat target
 26.1.2	26.1.2 Forge	forge	64.1.3	current	experimental	forge	Modern shared controller target
 26.1.2	26.1.2 NeoForge	neoforge	26.1.2.107	current	experimental	neoforge	Modern shared controller target
-26.1.1	26.1.1 Fabric	fabric	0.19.2	current	experimental	fabric	Modern controller and compat target
+26.1.1	26.1.1 Fabric	fabric	0.19.3	current	experimental	fabric	Modern controller and compat target
 26.1.1	26.1.1 Forge	forge	63.0.2	current	experimental	forge	Modern shared controller target
 26.1.1	26.1.1 NeoForge	neoforge	26.1.1.15-beta	current	experimental	neoforge	Modern shared controller target
-26.1	26.1 Fabric	fabric	0.19.2	current	experimental	fabric	Modern controller and compat target
+26.1	26.1 Fabric	fabric	0.19.3	current	experimental	fabric	Modern controller and compat target
 26.1	26.1 Forge	forge	62.0.9	current	experimental	forge	Modern shared controller target
 26.1	26.1 NeoForge	neoforge	26.1.0.19-beta	current	experimental	neoforge	Modern shared controller target
-1.21.11	1.21.11 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.11	1.21.11 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.11	1.21.11 Forge	forge	61.2.1	java21	experimental	forge	Modern shared controller target
 1.21.11	1.21.11 NeoForge	neoforge	21.11.45	java21	experimental	neoforge	Modern shared controller target
-1.21.10	1.21.10 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.10	1.21.10 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.10	1.21.10 Forge	forge	60.1.15	java21	experimental	forge	Modern shared controller target
 1.21.10	1.21.10 NeoForge	neoforge	21.10.64	java21	experimental	neoforge	Modern shared controller target
-1.21.9	1.21.9 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.9	1.21.9 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.9	1.21.9 Forge	forge	59.0.5	java21	experimental	forge	Modern shared controller target
 1.21.9	1.21.9 NeoForge	neoforge	21.9.16-beta	java21	experimental	neoforge	Modern shared controller target
-1.21.8	1.21.8 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.8	1.21.8 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.8	1.21.8 Forge	forge	58.1.22	java21	experimental	forge	Modern shared controller target
 1.21.8	1.21.8 NeoForge	neoforge	21.8.54	java21	experimental	neoforge	Modern shared controller target
-1.21.7	1.21.7 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.7	1.21.7 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.7	1.21.7 Forge	forge	57.0.3	java21	experimental	forge	Modern shared controller target
 1.21.7	1.21.7 NeoForge	neoforge	21.7.25-beta	java21	experimental	neoforge	Modern shared controller target
-1.21.6	1.21.6 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.6	1.21.6 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.6	1.21.6 Forge	forge	56.0.9	java21	experimental	forge	Modern shared controller target
 1.21.6	1.21.6 NeoForge	neoforge	21.6.20-beta	java21	experimental	neoforge	Modern shared controller target
-1.21.5	1.21.5 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.5	1.21.5 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.5	1.21.5 Forge	forge	55.1.13	java21	experimental	forge	Modern shared controller target
 1.21.5	1.21.5 NeoForge	neoforge	21.5.98	java21	experimental	neoforge	Modern shared controller target
-1.21.4	1.21.4 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.4	1.21.4 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.4	1.21.4 Forge	forge	54.1.18	java21	experimental	forge	Modern shared controller target
 1.21.4	1.21.4 NeoForge	neoforge	21.4.157	java21	experimental	neoforge	Modern shared controller target
-1.21.3	1.21.3 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.3	1.21.3 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.3	1.21.3 Forge	forge	53.1.12	java21	experimental	forge	Modern shared controller target
 1.21.3	1.21.3 NeoForge	neoforge	21.3.97	java21	experimental	neoforge	Modern shared controller target
-1.21.2	1.21.2 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.2	1.21.2 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.2	1.21.2 NeoForge	neoforge	21.2.1-beta	java21	experimental	neoforge	Forge did not publish a 1.21.2 loader
-1.21.1	1.21.1 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21.1	1.21.1 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21.1	1.21.1 Forge	forge	52.1.16	java21	experimental	forge	Modern shared controller target
 1.21.1	1.21.1 NeoForge	neoforge	21.1.250	java21	experimental	neoforge	Modern shared controller target
-1.21	1.21 Fabric	fabric	0.19.2	java21	experimental	fabric	Modern controller and compat target
+1.21	1.21 Fabric	fabric	0.19.3	java21	experimental	fabric	Modern controller and compat target
 1.21	1.21 Forge	forge	51.0.33	java21	experimental	forge	Modern shared controller target
 1.21	1.21 NeoForge	neoforge	21.0.167	java21	experimental	neoforge	Modern shared controller target
-1.20.4	1.20.4 Fabric	fabric	0.19.2	java21	testing	fabric	Legacy target retained
+1.20.4	1.20.4 Fabric	fabric	0.19.3	java21	testing	fabric	Legacy target retained
 1.20.4	1.20.4 NeoForge	neoforge	20.4.237	java17	experimental	none	Legacy target retained
-1.20.1	1.20.1 Fabric	fabric	0.19.2	java21	testing	fabric	Legacy target retained
+1.20.1	1.20.1 Fabric	fabric	0.19.3	java21	testing	fabric	Legacy target retained
 1.20.1	1.20.1 Forge	forge	47.4.20	java21	experimental	forge	Legacy target retained
 1.19.2	1.19.2 Fabric	fabric	0.14.25	java21	testing	fabric	Legacy target retained
 1.18.2	1.18.2 Forge	forge	40.2.27	java17	experimental	none	Legacy target retained

@@ -88,7 +88,7 @@ static bool ZipAddFileFromPath(mz_zip_archive* zip, const std::string& archiveNa
     std::vector<unsigned char> bytes;
     if (!ReadBinaryFileLimited(path, bytes, 256ull * 1024ull * 1024ull)) return false;
     if (bytes.empty()) return false;
-    return mz_zip_writer_add_mem(zip, archiveName.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION) != 0;
+    return mz_zip_writer_add_mem(zip, archiveName.c_str(), bytes.data(), bytes.size(), static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION)) != 0;
 }
 
 bool ExportWorldZip(

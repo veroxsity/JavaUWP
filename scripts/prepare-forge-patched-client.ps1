@@ -128,13 +128,12 @@ Ensure-LibraryByName "net.minecraftforge:jarsplitter:1.1.4" | Out-Null
 Ensure-LibraryByName "net.minecraftforge:ForgeAutoRenamingTool:0.1.22:all" | Out-Null
 Ensure-LibraryByName "net.minecraftforge:binarypatcher:1.1.1" | Out-Null
 Ensure-LibraryByName "net.minecraftforge:forge:${ForgeVersion}:universal" | Out-Null
+# 1.20.1 never runs the installer, it only needs client.lzma out of it
 if (-not (Test-Path $installerJar)) {
-    $installerSrc = Join-Path $root "build\forge-installer.jar"
-    if (-not (Test-Path $installerSrc)) {
-        throw "Forge installer jar missing at $installerSrc"
-    }
+    $installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/$ForgeVersion/forge-$ForgeVersion-installer.jar"
     Ensure-Dir (Split-Path $installerJar)
-    Copy-Item $installerSrc $installerJar -Force
+    Write-Host "Downloading $installerUrl"
+    Invoke-WebRequest -UseBasicParsing -Uri $installerUrl -OutFile $installerJar -TimeoutSec 180
 }
 
 if (-not (Test-Path $binPatch)) {

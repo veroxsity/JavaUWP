@@ -70,15 +70,6 @@ static bool ReadBinaryFileAll(const std::wstring& path, std::vector<unsigned cha
     return f.good() || f.eof();
 }
 
-static bool WriteAllBytes(const std::wstring& path, const void* data, size_t size) {
-    EnsureDirectoryTree(GetParentDir(path));
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return false;
-    const bool ok = fwrite(data, 1, size, f) == size;
-    fclose(f);
-    return ok;
-}
-
 std::wstring ProfileExportsDir(const std::wstring& runtimeRoot) {
     return runtimeRoot + L"\\exports";
 }
@@ -449,7 +440,7 @@ bool InstallModpackFromFile(
 
 static bool ZipAddBytes(mz_zip_archive* zip, const std::string& archiveName, const std::vector<unsigned char>& bytes) {
     if (bytes.empty()) return false;
-    return mz_zip_writer_add_mem(zip, archiveName.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION) != 0;
+    return mz_zip_writer_add_mem(zip, archiveName.c_str(), bytes.data(), bytes.size(), static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION)) != 0;
 }
 
 static bool ZipAddFileFromPath(mz_zip_archive* zip, const std::string& archiveName, const std::wstring& path) {
@@ -679,7 +670,7 @@ bool ExportProfileMrpack(
         return false;
     }
 
-    if (!mz_zip_writer_add_mem(&zip, "modrinth.index.json", indexUtf8.data(), indexUtf8.size(), MZ_DEFAULT_COMPRESSION)) {
+    if (!mz_zip_writer_add_mem(&zip, "modrinth.index.json", indexUtf8.data(), indexUtf8.size(), static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION))) {
         mz_zip_writer_end(&zip);
         error = L"Could not write pack index";
         return false;

@@ -163,12 +163,6 @@ static bool TomlLineStartsSection(const std::wstring& line, std::wstring* sectio
     return true;
 }
 
-static std::wstring TrimWhitespace(std::wstring value) {
-    while (!value.empty() && iswspace(value.front())) value.erase(value.begin());
-    while (!value.empty() && iswspace(value.back())) value.pop_back();
-    return value;
-}
-
 static std::wstring TomlValueForLine(const std::wstring& line) {
     const size_t eq = line.find(L'=');
     if (eq == std::wstring::npos) return std::wstring();

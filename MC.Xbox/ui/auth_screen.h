@@ -713,15 +713,15 @@ public:
                 const float rowH = 40.0f;
                 const int n = static_cast<int>(state.modsTargets.size());
                 const int visible = (std::min)(n, kModsTargetRowsVisible);
-                int scroll = state.modsTargetScroll;
-                if (scroll > n - visible) scroll = n - visible;
-                if (scroll < 0) scroll = 0;
+                int targetScroll = state.modsTargetScroll;
+                if (targetScroll > n - visible) targetScroll = n - visible;
+                if (targetScroll < 0) targetScroll = 0;
                 const float dropTop = targetBox.bottom + 4.0f;
                 const D2D1_RECT_F drop = D2D1::RectF(targetBox.left, dropTop, targetBox.right, dropTop + rowH * visible + 12.0f);
                 FillRound(drop, surfaceFill.Get(), 12.0f);
                 StrokeRound(drop, accent.Get(), 12.0f, 2.0f);
                 for (int slot = 0; slot < visible; ++slot) {
-                    const int i = scroll + slot;
+                    const int i = targetScroll + slot;
                     const float ry = dropTop + 6.0f + slot * rowH;
                     const D2D1_RECT_F row = D2D1::RectF(drop.left + 6.0f, ry, drop.right - 6.0f, ry + rowH - 4.0f);
                     RegisterHit(launchhit::kTargetItemBase + i, row);
@@ -741,7 +741,7 @@ public:
                     const float trackTop = dropTop + 6.0f;
                     const float trackH = rowH * visible - 4.0f;
                     const float thumbH = (std::max)(24.0f, trackH * visible / static_cast<float>(n));
-                    const float thumbY = trackTop + (trackH - thumbH) * scroll / static_cast<float>(n - visible);
+                    const float thumbY = trackTop + (trackH - thumbH) * targetScroll / static_cast<float>(n - visible);
                     FillRound(D2D1::RectF(drop.right - 8.0f, thumbY, drop.right - 4.0f, thumbY + thumbH), accent.Get(), 2.0f);
                 }
             }

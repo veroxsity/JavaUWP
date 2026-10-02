@@ -11,6 +11,7 @@ void FabricFinalizeVersionInfo(
     const LaunchTarget& target,
     const std::wstring& packageDir,
     const LaunchTarget& defaultTarget) {
+    (void)defaultTarget;
     const std::wstring packagedLoaderJar = packageDir + L"\\runtime\\libraries\\net\\fabricmc\\fabric-loader\\" +
         target.loaderVersion + L"\\fabric-loader-" + target.loaderVersion + L".jar";
 

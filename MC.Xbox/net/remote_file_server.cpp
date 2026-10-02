@@ -37,7 +37,8 @@ static std::string HtmlEscape(const std::wstring& value) {
     return out;
 }
 
-static std::string JsonEscape(const std::string& s) {
+// also escapes < so a value can never close the script tag the json is embedded in
+static std::string ScriptJsonEscape(const std::string& s) {
     std::string o;
     for (char c : s) {
         switch (c) {
@@ -1306,7 +1307,7 @@ async function uploadManual(input){
         std::sort(files.begin(), files.end(), byName);
 
         std::ostringstream js;
-        js << "{\"ok\":true,\"scope\":\"" << JsonEscape(scope) << "\",\"path\":\"" << JsonEscape(w2a(relNorm))
+        js << "{\"ok\":true,\"scope\":\"" << ScriptJsonEscape(scope) << "\",\"path\":\"" << ScriptJsonEscape(w2a(relNorm))
             << "\",\"writable\":" << (writable ? "true" : "false")
             << ",\"world\":" << ((scope == "saves" && IsWorldFolder(full)) ? "true" : "false")
             << ",\"entries\":[";
@@ -1314,7 +1315,7 @@ async function uploadManual(input){
         auto emit = [&](const E& e) {
             if (!firstOut) js << ",";
             firstOut = false;
-            js << "{\"name\":\"" << JsonEscape(w2a(e.name)) << "\",\"dir\":" << (e.dir ? "true" : "false")
+            js << "{\"name\":\"" << ScriptJsonEscape(w2a(e.name)) << "\",\"dir\":" << (e.dir ? "true" : "false")
                 << ",\"size\":" << e.size << ",\"sizeText\":\"" << FormatBytes(e.size)
                 << "\",\"modified\":\"" << FormatModified(e.mtime) << "\",\"text\":"
                 << ((!e.dir && IsEditableTextFile(e.name)) ? "true" : "false")
@@ -1690,14 +1691,14 @@ initChrome();load(CFG.path||'');
         const std::wstring profileId = NormalizeProfileId(QueryValue(query, "profile"));
 
         std::ostringstream cfg;
-        cfg << "var CFG={pin:\"" << pin_ << "\",scope:\"" << JsonEscape(scope) << "\",profile:\""
-            << JsonEscape(w2a(profileId)) << "\",path:\"" << JsonEscape(QueryValue(query, "path")) << "\",profiles:[";
+        cfg << "var CFG={pin:\"" << pin_ << "\",scope:\"" << ScriptJsonEscape(scope) << "\",profile:\""
+            << ScriptJsonEscape(w2a(profileId)) << "\",path:\"" << ScriptJsonEscape(QueryValue(query, "path")) << "\",profiles:[";
         const std::vector<Profile> profiles = LoadProfiles(runtimeRoot_);
         bool firstP = true;
         for (const auto& p : profiles) {
             if (!firstP) cfg << ",";
             firstP = false;
-            cfg << "{id:\"" << JsonEscape(w2a(p.id)) << "\",name:\"" << JsonEscape(w2a(p.name)) << "\"}";
+            cfg << "{id:\"" << ScriptJsonEscape(w2a(p.id)) << "\",name:\"" << ScriptJsonEscape(w2a(p.name)) << "\"}";
         }
         cfg << "]};";
 

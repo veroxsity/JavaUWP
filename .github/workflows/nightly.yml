@@ -33,12 +33,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: microsoft
           java-version: "17"
@@ -51,7 +51,7 @@ jobs:
           Write-Host "JDK 17: $env:JAVA_HOME"
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: microsoft
           java-version: "21"
@@ -64,7 +64,7 @@ jobs:
           Write-Host "JDK 21: $env:JAVA_HOME"
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: microsoft
           java-version: "25"
@@ -74,13 +74,13 @@ jobs:
         run: .\scripts\clean.ps1 -Apply
 
       - name: Restore Fabric remap cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: staging/cache/gameDir/.fabric/remappedJars
           key: fabric-remap-${{ runner.os }}-${{ hashFiles('scripts/config.ps1') }}
 
       - name: Restore loader installer cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: staging/cache/loader-installers
           key: loader-installers-${{ runner.os }}-${{ hashFiles('config/versions.tsv') }}
@@ -88,7 +88,7 @@ jobs:
             loader-installers-${{ runner.os }}-
 
       - name: Restore download manifest cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: staging/cache/manifests
           key: manifests-${{ runner.os }}-${{ hashFiles('config/versions.tsv', 'scripts/new-download-manifest.ps1', 'scripts/common.ps1') }}
@@ -96,7 +96,7 @@ jobs:
             manifests-${{ runner.os }}-
 
       - name: Restore patched loader clients
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: prebuilt
           key: prebuilt-${{ runner.os }}-${{ hashFiles('config/versions.tsv', 'scripts/prepare-forge-patched-client.ps1', 'scripts/gen-neoforge-artifacts.ps1') }}
@@ -135,7 +135,7 @@ jobs:
           Export-Certificate -Cert $signature.SignerCertificate -FilePath dist\BanditLauncherNative-nightly.cer -Force | Out-Null
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: BanditLauncherNative-nightly
           path: |

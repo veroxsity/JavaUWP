@@ -22,13 +22,13 @@ struct QrMatrix {
 
 namespace qr_detail {
 
-static void AppendBits(std::vector<bool>& bits, uint32_t value, int count) {
+inline void AppendBits(std::vector<bool>& bits, uint32_t value, int count) {
     for (int i = count - 1; i >= 0; --i) {
         bits.push_back(((value >> i) & 1) != 0);
     }
 }
 
-static uint8_t GfMul(uint8_t x, uint8_t y) {
+inline uint8_t GfMul(uint8_t x, uint8_t y) {
     int z = 0;
     for (int i = 7; i >= 0; --i) {
         z = (z << 1) ^ ((z >> 7) * 0x11D);
@@ -39,7 +39,7 @@ static uint8_t GfMul(uint8_t x, uint8_t y) {
     return static_cast<uint8_t>(z);
 }
 
-static uint8_t GfPow2(int power) {
+inline uint8_t GfPow2(int power) {
     uint8_t value = 1;
     for (int i = 0; i < power; ++i) {
         value = GfMul(value, 2);
@@ -47,7 +47,7 @@ static uint8_t GfPow2(int power) {
     return value;
 }
 
-static std::vector<uint8_t> ReedSolomonGenerator(int degree) {
+inline std::vector<uint8_t> ReedSolomonGenerator(int degree) {
     std::vector<uint8_t> result = { 1 };
     for (int i = 0; i < degree; ++i) {
         const uint8_t root = GfPow2(i);
@@ -61,7 +61,7 @@ static std::vector<uint8_t> ReedSolomonGenerator(int degree) {
     return result;
 }
 
-static std::vector<uint8_t> ReedSolomonRemainder(
+inline std::vector<uint8_t> ReedSolomonRemainder(
     const std::vector<uint8_t>& data,
     const std::vector<uint8_t>& generator)
 {
@@ -78,7 +78,7 @@ static std::vector<uint8_t> ReedSolomonRemainder(
     return result;
 }
 
-static std::vector<uint8_t> MakeVersion3LowCodewords(const std::string& text) {
+inline std::vector<uint8_t> MakeVersion3LowCodewords(const std::string& text) {
     constexpr int kDataCodewords = 55;
     constexpr int kEccCodewords = 15;
     constexpr int kCapacityBits = kDataCodewords * 8;
@@ -267,6 +267,6 @@ private:
 
 } // namespace qr_detail
 
-static QrMatrix GenerateLoginQrMatrix(const std::string& text) {
+inline QrMatrix GenerateLoginQrMatrix(const std::string& text) {
     return qr_detail::QrBuilder().build(text);
 }

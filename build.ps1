@@ -875,21 +875,11 @@ function Build-JavaBaseUwpFilesystemPatch {
     Remove-Item -Recurse -Force $javaBasePatchDir -ErrorAction SilentlyContinue
     Ensure-Dir `
         (Join-Path $javaBasePatchSrcDir "java\io"), `
-        (Join-Path $javaBasePatchSrcDir "java\security"), `
         (Join-Path $javaBasePatchSrcDir "sun\nio\fs"), `
         $javaBasePatchClassesDir
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $srcArchive = [System.IO.Compression.ZipFile]::OpenRead($srcZip)
     try {
-        $securityEntry = $srcArchive.Entries | Where-Object { $_.FullName -eq "java.base/java/security/Security.java" } | Select-Object -First 1
-        if (-not $securityEntry) { throw "Security.java not found inside $srcZip" }
-        $reader = [System.IO.StreamReader]::new($securityEntry.Open())
-        try {
-            $securitySource = $reader.ReadToEnd()
-        } finally {
-            $reader.Dispose()
-        }
-
         $fileEntry = $srcArchive.Entries | Where-Object { $_.FullName -eq "java.base/java/io/File.java" } | Select-Object -First 1
         if (-not $fileEntry) { throw "File.java not found inside $srcZip" }
         $reader = [System.IO.StreamReader]::new($fileEntry.Open())
@@ -910,27 +900,21 @@ function Build-JavaBaseUwpFilesystemPatch {
     } finally {
         $srcArchive.Dispose()
     }
-    $oldSecurityLine = "path = path.toRealPath();"
-    $newSecurityLine = "try { path = path.toRealPath(); } catch (IOException realPathFailure) { path = path.toAbsolutePath(); }"
     $javaBasePatchSources = @()
-    if (-not $securitySource.Contains($oldSecurityLine)) {
-        Write-Warning "Security.java realpath patch target not found for $JavaHome; continuing with other java.base UWP filesystem patches."
-    } else {
-        $securitySource = $securitySource.Replace($oldSecurityLine, $newSecurityLine)
-        $securitySourcePath = Join-Path $javaBasePatchSrcDir "java\security\Security.java"
-        [System.IO.File]::WriteAllText($securitySourcePath, $securitySource)
-        $javaBasePatchSources += $securitySourcePath
-    }
 
-    $oldFileLine = "            int nameMax = FS.getNameMax(dir.getPath());"
-    $newFileBlock = @'
+    # jdk 17 calls the field fs, 21 and later FS
+    $fsField = if ($fileSource.Contains("int nameMax = FS.getNameMax(dir.getPath());")) { "FS" }
+        elseif ($fileSource.Contains("int nameMax = fs.getNameMax(dir.getPath());")) { "fs" }
+        else { throw "File.java temp-file nameMax patch target not found for $JavaHome." }
+    $oldFileLine = "            int nameMax = $fsField.getNameMax(dir.getPath());"
+    $newFileBlock = @"
             int nameMax;
             try {
-                nameMax = FS.getNameMax(dir.getPath());
+                nameMax = $fsField.getNameMax(dir.getPath());
             } catch (Throwable nameMaxFailure) {
                 nameMax = 255;
             }
-'@
+"@
     if (-not $fileSource.Contains($oldFileLine)) {
         throw "File.java temp-file nameMax patch target not found for $JavaHome."
     }

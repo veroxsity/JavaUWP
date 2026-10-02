@@ -1722,7 +1722,7 @@ static void SetModsTargetFromProfile(AuthUiState& state, const std::wstring& run
     state.modsBrowseTargetId = ResolveProfileTarget(runtimeRoot, profile).targetId;
 }
 
-static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot, const std::wstring& userModsDir) {
+static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot) {
     state.modsCards.clear();
     state.selectedModIndex = 0;
     state.modsScrollRow = 0;
@@ -2101,7 +2101,7 @@ void ShowModsPage(
     state.status = L"Loading installed mods";
     state.modsTargets = LoadVersionCatalog(runtimeRoot);
     SetModsTargetFromProfile(state, runtimeRoot, GetActiveProfileId(runtimeRoot));
-    LoadModsTab(state, runtimeRoot, userModsDir);
+    LoadModsTab(state, runtimeRoot);
 
     StartIconWorker();
     BeginModsSearchCapture(window);
@@ -2140,7 +2140,7 @@ void ShowModsPage(
         }
         if (buf != loadedQuery) {
             state.modsSearchQuery = buf;
-            LoadModsTab(state, runtimeRoot, userModsDir);
+            LoadModsTab(state, runtimeRoot);
             loadedQuery = buf;
         }
     };
@@ -2159,7 +2159,7 @@ void ShowModsPage(
         const int total = static_cast<int>(state.modsTargets.size());
         idx = (idx % total + total) % total;
         state.modsBrowseTargetId = state.modsTargets[static_cast<size_t>(idx)].targetId;
-        LoadModsTab(state, runtimeRoot, userModsDir);
+        LoadModsTab(state, runtimeRoot);
         state.modsFocus = 3;
         state.selectedModIndex = 0;
         state.modsScrollRow = 0;
@@ -2190,7 +2190,7 @@ void ShowModsPage(
         if (tab == state.selectedModsTab) return;
         state.selectedModsTab = tab;
         state.modsTargetOpen = false;
-        LoadModsTab(state, runtimeRoot, userModsDir);
+        LoadModsTab(state, runtimeRoot);
         loadedQuery = state.modsSearchQuery;
     };
 
@@ -2199,7 +2199,7 @@ void ShowModsPage(
         state.modsSource = source;
         modsource::SetCurrent(source);
         state.modsTargetOpen = false;
-        LoadModsTab(state, runtimeRoot, userModsDir);
+        LoadModsTab(state, runtimeRoot);
         loadedQuery = state.modsSearchQuery;
     };
 
@@ -2335,7 +2335,7 @@ void ShowModsPage(
             state.status = !s.empty() ? s : (ok ? L"Installed" : L"Install failed");
             state.isError = !ok;
             if (ok && state.selectedModsTab == modstab::kProfiles) {
-                LoadModsTab(state, runtimeRoot, userModsDir);
+                LoadModsTab(state, runtimeRoot);
                 loadedQuery = state.modsSearchQuery;
             }
         }
@@ -2519,7 +2519,7 @@ void ShowModsPage(
                     const std::wstring gone = state.modsProfileName;
                     DeleteProfile(runtimeRoot, state.modsProfileId);
                     state.modsProfileOpen = false;
-                    LoadModsTab(state, runtimeRoot, userModsDir);
+                    LoadModsTab(state, runtimeRoot);
                     state.status = L"Deleted " + gone + L". Use Undo deleted profile to restore it.";
                 }
             } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
@@ -2527,12 +2527,12 @@ void ShowModsPage(
                     const std::wstring gone = state.modsProfileName;
                     DeleteProfile(runtimeRoot, state.modsProfileId);
                     state.modsProfileOpen = false;
-                    LoadModsTab(state, runtimeRoot, userModsDir);
+                    LoadModsTab(state, runtimeRoot);
                     state.status = L"Deleted " + gone + L". Use Undo deleted profile to restore it.";
                 } else if (state.modsProfileFocus == 3 && !state.modsProfileBuiltin) {
                     std::wstring backupDir;
                     if (BackupProfile(runtimeRoot, state.modsProfileId, backupDir)) {
-                        LoadModsTab(state, runtimeRoot, userModsDir);
+                        LoadModsTab(state, runtimeRoot);
                         state.status = L"Backed up " + state.modsProfileName;
                         state.isError = false;
                     } else {
@@ -2789,7 +2789,7 @@ void ShowModsPage(
                 if (sel.projectId == L"__profile__" && sel.filePath != kVanillaProfileId) {
                     DeleteProfile(runtimeRoot, sel.filePath);
                     const std::wstring deleted = sel.title;
-                    LoadModsTab(state, runtimeRoot, userModsDir);
+                    LoadModsTab(state, runtimeRoot);
                     if (state.selectedModIndex >= static_cast<int>(state.modsCards.size())) {
                         state.selectedModIndex = (std::max)(0, static_cast<int>(state.modsCards.size()) - 1);
                     }
@@ -2804,7 +2804,7 @@ void ShowModsPage(
                     if (selected.projectId == L"__restore_deleted__") {
                         std::wstring restored;
                         if (RestoreProfileBackup(runtimeRoot, LatestProfileBackup(runtimeRoot, L"deleted"), true, restored)) {
-                            LoadModsTab(state, runtimeRoot, userModsDir);
+                            LoadModsTab(state, runtimeRoot);
                             ensureSelectionVisible();
                             state.status = L"Restored " + restored;
                             state.isError = false;
@@ -2815,7 +2815,7 @@ void ShowModsPage(
                     } else if (selected.projectId == L"__restore_backup__") {
                         std::wstring restored;
                         if (RestoreProfileBackup(runtimeRoot, LatestProfileBackup(runtimeRoot, L"manual"), false, restored)) {
-                            LoadModsTab(state, runtimeRoot, userModsDir);
+                            LoadModsTab(state, runtimeRoot);
                             ensureSelectionVisible();
                             state.status = L"Restored backup " + restored;
                             state.isError = false;
@@ -2828,7 +2828,7 @@ void ShowModsPage(
                         const std::wstring pid = CreateAutoProfile(runtimeRoot, target);
                         SetActiveProfileId(runtimeRoot, pid);
                         state.modsBrowseTargetId = target.targetId;
-                        LoadModsTab(state, runtimeRoot, userModsDir);
+                        LoadModsTab(state, runtimeRoot);
                         ensureSelectionVisible();
                         state.status = L"New profile ready. Browse mods to fill it.";
                     } else if (selected.projectId == L"__profile__") {

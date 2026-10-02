@@ -42,7 +42,6 @@ LaunchTarget ResolveLaunchTarget(const std::wstring& runtimeRoot, const std::wst
 LaunchTarget ResolveProfileTarget(const std::wstring& runtimeRoot, const Profile& profile);
 
 std::vector<Profile> LoadProfiles(const std::wstring& runtimeRoot);
-void SaveProfiles(const std::wstring& runtimeRoot, const std::vector<Profile>& profiles);
 std::wstring GetActiveProfileId(const std::wstring& runtimeRoot);
 void SetActiveProfileId(const std::wstring& runtimeRoot, const std::wstring& id);
 Profile GetProfileById(const std::wstring& runtimeRoot, const std::wstring& id);

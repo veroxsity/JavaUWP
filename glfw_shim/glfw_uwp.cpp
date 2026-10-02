@@ -729,7 +729,8 @@ static void ReportEglError(const char* label) {
 }
 
 static int MapVirtualKeyToGlfw(VirtualKey key) {
-    switch (key) {
+    // the oem punctuation keys have no VirtualKey names, so the switch runs on the raw value
+    switch (static_cast<int>(key)) {
     case VirtualKey_Space: return GLFW_KEY_SPACE;
     case VirtualKey_Number0: return GLFW_KEY_0;
     case VirtualKey_Number1: return GLFW_KEY_1;
@@ -824,17 +825,17 @@ static int MapVirtualKeyToGlfw(VirtualKey key) {
     case VirtualKey_LeftWindows: return GLFW_KEY_LEFT_SUPER;
     case VirtualKey_RightWindows: return GLFW_KEY_RIGHT_SUPER;
     case VirtualKey_Menu: return GLFW_KEY_MENU;
-    case (VirtualKey)188: return GLFW_KEY_COMMA;
-    case (VirtualKey)190: return GLFW_KEY_PERIOD;
-    case (VirtualKey)191: return GLFW_KEY_SLASH;
-    case (VirtualKey)186: return GLFW_KEY_SEMICOLON;
-    case (VirtualKey)222: return GLFW_KEY_APOSTROPHE;
-    case (VirtualKey)219: return GLFW_KEY_LEFT_BRACKET;
-    case (VirtualKey)221: return GLFW_KEY_RIGHT_BRACKET;
-    case (VirtualKey)220: return GLFW_KEY_BACKSLASH;
-    case (VirtualKey)189: return GLFW_KEY_MINUS;
-    case (VirtualKey)187: return GLFW_KEY_EQUAL;
-    case (VirtualKey)192: return GLFW_KEY_GRAVE_ACCENT;
+    case 188: return GLFW_KEY_COMMA;
+    case 190: return GLFW_KEY_PERIOD;
+    case 191: return GLFW_KEY_SLASH;
+    case 186: return GLFW_KEY_SEMICOLON;
+    case 222: return GLFW_KEY_APOSTROPHE;
+    case 219: return GLFW_KEY_LEFT_BRACKET;
+    case 221: return GLFW_KEY_RIGHT_BRACKET;
+    case 220: return GLFW_KEY_BACKSLASH;
+    case 189: return GLFW_KEY_MINUS;
+    case 187: return GLFW_KEY_EQUAL;
+    case 192: return GLFW_KEY_GRAVE_ACCENT;
     default:
         return GLFW_KEY_UNKNOWN;
     }

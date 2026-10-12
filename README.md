@@ -1,320 +1,154 @@
 # Bandit Launcher
 
-![Pre release](https://img.shields.io/badge/status-pre%20release-2ea44f)
-![Xbox Developer Mode](https://img.shields.io/badge/platform-Xbox%20Developer%20Mode-107c10)
-![UWP](https://img.shields.io/badge/app-UWP-0078d4)
-![Minecraft Java](https://img.shields.io/badge/Minecraft-Java%20Edition-62b47a)
-![Fabric](https://img.shields.io/badge/loader-Fabric-f6c344)
-![NeoForge](https://img.shields.io/badge/loader-NeoForge-f16436)
-![Forge](https://img.shields.io/badge/loader-Forge-e04e39)
+![Pre-release](https://img.shields.io/badge/status-pre%20release-2ea44f)
+![Xbox Series X|S](https://img.shields.io/badge/platform-Xbox%20Series%20X%7CS-107c10)
+![Minecraft Java Edition](https://img.shields.io/badge/Minecraft-Java%20Edition-62b47a)
 
-Bandit Launcher brings **Minecraft Java Edition** to **Xbox Developer Mode**. It is a UWP app that signs you in with your Microsoft account, verifies that you own Java Edition, downloads the official game files you need, and launches Minecraft with Fabric, Forge, or NeoForge inside the Xbox app sandbox.
+Bandit Launcher runs **Minecraft Java Edition directly on Xbox Series X|S in Developer Mode**, with Fabric, Forge and NeoForge. It signs in through Microsoft, verifies Java Edition ownership and downloads the official game files.
 
-The `main-native` branch builds as `Microsoft.MicrosoftEdge.BanditLauncher` for native Xbox mouse input. It installs separately from the normal `BanditVault.Launcher` package and has its own LocalState. The native mouse build has been tested on Xbox.
+> **Xbox One, Xbox One S and Xbox One X are not supported.** Both launcher builds are for Xbox Series S and Xbox Series X only.
 
-Join our discord [here](https://discord.gg/XTFYUKbG7g)
-
-This is a real pre release build. The launcher is playable, supports multiple Minecraft versions and loaders, can install compatible mods and modpacks from Modrinth, and includes active fixes for Xbox input, graphics, Java, and filesystem behavior.
-
-## Who This Is For
-
-Bandit Launcher is aimed at people who already use **Xbox Developer Mode** and want to run **Minecraft Java Edition** on their console with legitimate Microsoft sign in.
-
-You should be comfortable with:
-
-- Installing and sideloading UWP apps in Developer Mode.
-- Waiting through a first launch download of official Minecraft files.
-- Early software that may change between builds.
-
-**Xbox Series S and Series X** are the only supported consoles. Xbox One was dropped and is planned to return later as its own separate target.
+[Download](#download) · [Getting started](#getting-started) · [Minecraft versions](#minecraft-versions) · [Discord](https://discord.gg/XTFYUKbG7g) · [Video guide](https://youtu.be/ATHiVaBenY8)
 
 ## Requirements
 
-- An Xbox console in **Developer Mode**.
-- A **Microsoft account that owns Minecraft Java Edition**.
-- A network connection for sign in and for downloading official game files on first launch (and when adding new versions).
-- Enough free storage on the console for Minecraft libraries, assets, profiles, mods, and saves.
+- **Xbox Series S or Xbox Series X** with Developer Mode enabled.
+- A Microsoft account with a valid Minecraft Java Edition entitlement.
+- An internet connection for sign-in and downloads.
+- Free console storage for game files, profiles, mods and worlds.
 
-Bandit Launcher does not provide offline play, cracked accounts, or alternate launch paths that skip Microsoft authentication or ownership checks.
+Java and controller support are included in the launcher package for the targets that use them. No separate Java installation is needed on the console. Bandit Launcher requires Microsoft authentication and ownership verification. It does not support cracked or offline accounts.
 
-## Getting Bandit Launcher
+## Download
 
-Pre release packages are built from this repository. If you are building or testing with the project, see [docs/BUILDING.md](docs/BUILDING.md) for the full setup guide.
-
-Automated **nightly** packages are published to the [nightly release](https://github.com/veroxsity/JavaUWP/releases/tag/nightly) when relevant source changes land on `main`. These are testing builds, not a final public release.
-
-Native mouse packages from `main-native` are published to the separate [nightly-native release](https://github.com/veroxsity/JavaUWP/releases/tag/nightly-native). Download the APPX and its matching public certificate from the same release.
-
-
-**Important:** Redistribution of generated APPX packages, including nightly builds, is not permitted without prior written permission. Videos, streams, screenshots, reviews, benchmarks, and tutorials are allowed under the creator rules in [LICENSE](LICENSE) and [docs/LEGAL.md](docs/LEGAL.md).
-
-Video guide: https://youtu.be/ATHiVaBenY8
-
-## First Launch
-
-1. Install the signed APPX on your Xbox in Developer Mode.
-2. Open **Bandit Launcher**.
-3. If you are not signed in yet, the launcher shows a **Microsoft device code** screen. On another device, open [microsoft.com/link](https://www.microsoft.com/link), enter the code, and sign in with the account that owns Minecraft Java Edition.
-4. After sign in, the launcher verifies Xbox and Minecraft Services ownership.
-5. Choose or create a **profile** and pick a **launch target** (Minecraft version + loader).
-6. On first play for that target, the launcher downloads official Minecraft, loader, and asset files into the app's storage. This can take a while.
-7. Press **Play**. Minecraft starts inside the same UWP process using the packaged Java runtime and graphics stack.
-
-From the main menu you can also browse mods, repair downloads, start **Remote Files**, view logs, and sign out.
-
-## Pre Release Status
-
-Bandit Launcher is built for testers who are comfortable with Xbox Developer Mode and early software. Current builds are meant to be used, tested, and improved, but they are not the final public release yet.
-
-## Supported Targets
-
-A launch target is a playable combination of:
-
-```text
-minecraft version + loader + loader version
-```
-
-| Target | State | Notes |
+| Build | Download | Mouse input |
 | --- | --- | --- |
-| `26.2 + Fabric 0.19.3` | Experimental | First calendar versioned target. Unobfuscated client with no Fabric intermediary, LWJGL 3.4.1, and the Java 25 runtime. |
-| `1.21.11 + Fabric 0.19.2` | Supported | Current default target with bundled controller support. Base game has been tested. |
-| `1.21.1 + Fabric 0.19.2` | Testing | Base game, bundled controller support, and Cobblemon have been verified. Uses Java 21 for mods that require it. |
-| `1.21.1 + NeoForge 21.1.233` | Experimental | Base game, Sodium, JEI, and Modrinth modpack installs have been tested. Includes the bundled controller bridge and uses Java 21. |
-| `1.20.4 + Fabric 0.19.2` | Testing | Base game has been tested and includes bundled controller support. Uses Java 21. |
-| `1.20.1 + Fabric 0.19.2` | Testing | Bundled Bandit controller layer. Uses Java 21. Still needs broader testing. |
-| `1.20.1 + Forge 47.4.20` | Experimental | Initial Forge provider with bundled controller mod. Uses Java 21. |
-| `1.19.2 + Fabric 0.14.25` | Testing | Base game and controller support have been tested. Uses Java 21. |
-| `1.16.5 + Fabric 0.14.25` | Testing | Legacy target under active validation. Uses Java 21 and the built in controller layer. |
+| Nightly | [Main nightly release](https://github.com/veroxsity/JavaUWP/releases/tag/nightly) | Optional mouse relay from a phone or PC on the same network. |
+| Native mouse | [Native mouse nightly release](https://github.com/veroxsity/JavaUWP/releases/tag/nightly-native) | Direct USB mouse input in launcher menus and Minecraft. |
 
-Other catalog entries (additional Forge versions, older vanilla targets, and future loaders) may appear in the launcher before their launch providers are finished. Fabric is the most mature path today; NeoForge and Forge 1.20.1 are experimental.
+This branch builds the **native mouse package**. Download the `.appx` from the chosen release. For the native mouse build, also use the matching public `.cer` certificate from that release. Both releases include a `.sha256` file for checking the package download.
+
+These are pre-release testing builds. Nightly builds are experimental and do not come with support. Read the release notes before installing.
+
+**The native mouse build installs as a separate app and has its own saves, profiles and settings.** Switching between builds does not transfer data automatically. Export important worlds through Remote Files before changing builds or removing an app.
+
+## Getting started
+
+1. Install the signed APPX through Xbox Device Portal while the console is in Developer Mode.
+2. Open **Bandit Launcher**.
+3. When the Microsoft device code appears, open [microsoft.com/link](https://www.microsoft.com/link) on another device. Enter the code and sign in with the account that has Java Edition.
+4. Wait for the launcher to verify the account and Minecraft entitlement.
+5. Choose or create a profile, then select its Minecraft version and loader. The default is **Minecraft 1.21.11 with Fabric**.
+6. Press **Play**. The first launch downloads the game, libraries, assets and loader files for that target. Allow time for this to finish.
+
+Use the **Mods** page to manage profiles and install content. Start **Remote Files** to upload worlds, edit configs or download logs from another device.
 
 ## Features
 
-**Account and launch**
+- Separate profiles for different Minecraft versions, loaders and mod setups.
+- Modrinth and CurseForge browsing for mods, modpacks, resource packs and shaders.
+- Recommended mods filtered for the selected launch target.
+- Bundled Bandit Controller support for targets that list a controller provider.
+- Profile backups and restore options, including undoing the last deleted profile.
+- Remote Files for managing profiles and worlds through a browser on the local network.
+- Download repair, current and previous run logs, and crash report ZIPs.
+- Optional crash and usage reporting, controlled from launcher Settings.
 
-- Microsoft sign in with device code flow.
-- Minecraft Java ownership verification before runtime downloads.
-- Multiple Minecraft launch targets without rebuilding the APPX.
-- Profile targets, so each profile can carry its own Minecraft version and loader.
-- Launcher owned repair flow for runtime downloads.
+## Minecraft versions
 
-**Downloads and storage**
+The default target is **1.21.11 + Fabric 0.19.5**, using Java 21. The catalog also includes these targets.
 
-- Dynamic official Minecraft, asset, library, Fabric, Forge, and NeoForge downloads into UWP `LocalState`.
-- Persistent isolated profile storage under UWP `LocalState`.
-- Packaged current Java runtime (JDK 21 or newer) for the default target.
-- Bundled Java 21 and optional Java 17 runtimes for mods and targets that require them.
+| Minecraft version | Loaders in the catalog | Status |
+| --- | --- | --- |
+| `26.1`, `26.1.1`, `26.1.2`, `26.2` | Fabric, Forge, NeoForge | Experimental. Uses the Java 25 runtime. |
+| `1.21` through `1.21.11` | Fabric and NeoForge. Forge on every listed version except `1.21.2`. | Experimental. Uses Java 21. |
+| `1.20.4` | Fabric, NeoForge | Fabric is testing. NeoForge is experimental and has no bundled controller provider. |
+| `1.20.1` | Fabric, Forge | Fabric is testing. Forge is experimental. |
+| `1.19.2` | Fabric | Testing. |
+| `1.18.2` | Forge | Experimental. No bundled controller provider. |
+| `1.16.5` | Fabric | Testing. |
+| `1.12.2` | Forge, Vanilla | Catalog entries only. The legacy launch provider is not implemented. |
 
-**Mods and content**
+Fabric uses **0.19.5** on listed targets from `1.20.1` onward, and **0.14.25** on `1.19.2` and `1.16.5`. Exact Forge and NeoForge versions, runtime choices and controller providers are listed in [the version catalog](config/versions.tsv).
 
-- Modrinth browsing and install support for the selected target.
-- Browser based mod, resource pack, and datapack uploads to the active profile.
-- Per version Fabric loader support.
-- Initial NeoForge 1.21.1 launch provider support.
-- Experimental Forge 1.20.1 launch provider support.
-- Built in Xbox compatibility mod with Minecraft and mod compatibility fixes.
-- Bundled Xbox controller mods under `controller_mod/` for Fabric, Forge 1.20.1, and NeoForge 1.21.1.
+A catalog entry is not proof that the game or every mod works on Xbox. A target needs its launch files and bundled support files in the installed package. Experimental targets still need testing, and available targets can differ between builds. Check the installed launcher's target list and the release notes.
 
-**Xbox integration**
+## Mods, modpacks and other content
 
-- Custom GLFW shim for UWP windowing, input, gamepad state, and EGL.
-- Mesa based graphics path for Xbox Series consoles.
-- Native USB mouse input path in launcher menus and in game on Xbox Dev Mode.
-- Separate menu and game mouse sensitivity settings in the launcher.
-- Controller snap and free cursor modes can still be switched in menus.
-- GameInput based controller support through the GLFW shim.
-- Bundled Bandit controller layer for every supported Fabric target from `1.16.5` through `1.21.11`, `1.20.1` Forge, and `1.21.1` NeoForge.
-- Shared controller settings at `config/bandit-controller.properties` (deadzones, look speed, toggle crouch/sprint).
+Choose the profile and launch target before installing content. Mods must match both the Minecraft version and loader, and must work inside the Xbox UWP sandbox.
 
-**Diagnostics and file access**
+The Mods page includes **Popular**, **Latest**, **Recommended**, **Modpacks**, **Resource packs** and **Shaders** tabs. Switch between Modrinth and CurseForge using the source selector or launcher Settings.
 
-- Remote file manager over your local network for uploads and log downloads.
-- Current and previous run logs, plus packaged crash report zips.
-- UWP tile assets and packaged menu panorama assets.
+**CurseForge needs a personal API key.** Start Remote Files and add it under **Settings**, then select CurseForge in the launcher. Modrinth does not need a key.
 
-## Profiles
+Some CurseForge authors block downloads by third-party launchers. If a pack needs those files, Remote Files shows a **Manual downloads** panel with links and an upload option. Finish those downloads before trying to play the pack.
 
-Each profile keeps its own game folder, mods, resource packs, saves, configs, and logs. Shared downloaded Minecraft libraries and assets are stored once and reused across profiles that need the same versions.
+Shader packs need a compatible shader loader such as Iris or Oculus in the same profile. Installing a shader pack does not guarantee it will render correctly or run well on Xbox.
 
-When you add a new profile, pick the Minecraft version and loader you want that profile to use. Switching profiles lets you keep separate mod setups or worlds without mixing files.
+## Controller and mouse
 
-## Recommended Mods
+Bandit Controller is included for the catalog targets that have a controller provider. Press **View/Back** in game to open its settings. Controller availability for each target is listed in [the version catalog](config/versions.tsv).
 
-For the best current experience, install recommended mods from the Mods page after signing in.
+To use another controller mod, turn **Bandit Controller** off for that profile before installing it.
 
-For modern Fabric targets:
-
-- Sodium
-
-For `1.21.1 + NeoForge 21.1.233`:
-
-- Sodium
-- JEI
-
-For supported Fabric targets from `1.16.5` through `1.21.11`, plus `1.20.1` Forge, Bandit Launcher includes its own controller support layer. Press **View/Back** in-game to open Bandit Controller settings. Sodium can still help performance on Fabric, but older Sodium versions may need launcher compatibility settings that are seeded automatically.
-
-Cobblemon has been verified on `1.21.1 + Fabric 0.19.2` using the Java 21 runtime.
+- **Main nightly** uses the optional mouse relay. A browser page is available from the launcher. Companion downloads for Windows, Android and iOS are on the [Mouse Relay release](https://github.com/veroxsity/JavaUWP/releases/tag/mouse-relay-nightly).
+- **Native mouse nightly** accepts a USB mouse directly. Launcher Settings has separate menu and game mouse sensitivity controls.
 
 ## Remote Files
 
-The launcher includes a remote file manager for devices on the same local network. Start it from the launcher, open the shown URL and PIN in a browser, then manage files without using Xbox Device Portal.
+Start **Remote Files** in the launcher, then open the displayed URL and PIN on a phone or computer on the same network. Pick the profile to manage before uploading or changing files.
 
-A profile picker lets you manage any profile, not just the active one. Remote Files can:
+Remote Files can:
 
-- Browse files in a full explorer: breadcrumbs, drag and drop upload, rename, delete, new folder, and an inline editor for text files like configs.
-- Export and import full world saves as `.zip` files for the active profile.
-- Upload `.jar` mods to the active profile.
-- Upload `.zip` resource packs to the active profile.
-- Upload `.zip` datapacks into a selected world under the active profile.
-- Import Modrinth `.mrpack` files into the active profile.
-- Export the active profile as a Modrinth-compatible `.mrpack` for use on PC.
-- Browse active profile files, saves, mods, resource packs, logs, crash reports, and the shared runtime cache.
-- Download current logs, previous run logs, and crash report zips for debugging.
+- Browse, upload, download, rename and delete profile files and create folders.
+- Edit text files such as configs in the browser.
+- Import and export world saves as `.zip` files.
+- Upload mods, resource packs and world datapacks.
+- Import Modrinth `.mrpack` and CurseForge `.zip` modpacks.
+- Export a mod profile as a Modrinth-compatible `.mrpack` for use on PC.
+- Download logs and crash report ZIPs.
+- Set the CurseForge API key and complete manual pack downloads.
 
-Uploads are scoped to known safe folders. Remote Files does not provide arbitrary write access to all of `LocalState`.
+Remote Files uses plain HTTP and a PIN on the local network. Keep the URL private, use a trusted network and stop the server when finished. Do not expose it to the internet. See [Privacy](docs/PRIVACY.md) for details.
 
-## Persistent Storage
+## Saves and updates
 
-The installed app keeps downloaded runtime files, profiles, saves, configs, mods, resource packs, datapacks, logs, and crash reports in UWP `LocalState`. Updating or reinstalling the APPX should not wipe normal profile data.
+Each profile has its own worlds, mods, resource packs, configs and logs. Downloaded game libraries and assets are shared between profiles within the same installed app.
 
-Profile data is isolated by profile:
+Updating the same app package keeps its normal profile data. **Back up worlds before uninstalling or moving to another build.** Removing the app can remove its local data, and the main and native mouse packages do not share storage.
 
-```text
-LocalState
-  profiles
-    <profile-id>
-      game
-        mods
-        resourcepacks
-        saves
-          <world>
-            datapacks
-        config
-        screenshots
-        logs
-```
+Use Remote Files to export worlds. The Profiles page also has profile backup and restore options.
 
-Shared downloaded runtime data is kept separately:
+## Known limitations and troubleshooting
 
-```text
-LocalState
-  game
-    libraries
-    versions
-  assets
-```
+- **Xbox One consoles are not supported.**
+- Forge, NeoForge and modern targets are experimental. Mod and shader compatibility varies by version and build.
+- Large modpacks can exceed the console app's available memory. A successful download does not mean the pack will run.
+- First launch and large pack imports can take several minutes.
+- Some desktop mods depend on native libraries or platform features that the Xbox sandbox does not provide.
 
-Launcher diagnostics are organized separately from game data:
+If sign-in fails, check that the Microsoft account has Java Edition and a Minecraft Java profile. If required game files are missing, use the launcher's download repair option.
 
-```text
-LocalState
-  logs
-    current
-  logs_previous
-  crash-reports
-  state
-```
+For a game or mod crash, download the crash report ZIP and the profile's `latest.log` through Remote Files. Include the launcher build, Minecraft version, loader and modpack or mod names when describing the problem. Remove private information before sharing files.
 
-`logs/current` is the latest launcher run. On the next launcher start, those files move to `logs_previous` before new logs are written. Crash report zips collect launcher logs, previous logs, profile game logs, and Minecraft crash files when possible.
+Crash and usage reporting is off until enabled. It can be changed in launcher Settings and is not required to use the launcher. See [Privacy](docs/PRIVACY.md) for what is sent and how it is stored.
 
-## How It Works
+## Project docs
 
-At a high level, Bandit Launcher keeps the game inside one UWP process and adapts desktop Minecraft expectations to the Xbox sandbox:
+- [Building](docs/BUILDING.md)
+- [Compatible mods](docs/COMPATIBLE-MODS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Patching notes](docs/PATCHING.md)
+- [Privacy](docs/PRIVACY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Third-party components](docs/THIRD-PARTY.md)
 
-1. `MC.Xbox.exe` starts as a UWP app.
-2. The launcher checks for a saved Microsoft refresh token.
-3. If needed, it shows a device code sign in screen for `microsoft.com/link`.
-4. The launcher verifies Xbox and Minecraft Services ownership.
-5. The signed in menu opens with Play, Mods, repair downloads, and sign out.
-6. The selected profile chooses the launch target.
-7. The app verifies and downloads official files for that target into `LocalState`.
-8. The app seeds launcher owned support files and compatibility mods.
-9. The app uses the selected profile's isolated game folder for saves, mods, resource packs, config, and logs.
-10. The app publishes the live UWP `CoreWindow` for EGL.
-11. The app loads `jvm.dll` and starts Java in the same process.
-12. The selected loader launches Minecraft.
-13. LWJGL loads the custom `glfw.dll`.
-14. Mesa translates OpenGL calls to D3D12 on the Xbox graphics path.
-15. Remote Files can be started from the launcher to upload profile files or download diagnostics from another device.
+## License and creator content
 
-## Known Issues
+Original project code uses the custom terms in [LICENSE](LICENSE). Private use and private modifications are allowed under those terms. Public forks, mirrors, source redistribution and packaged builds require prior written permission from veroxsity / BanditVault.
 
-These are the main areas still being worked on for the pre release:
+Videos, streams, screenshots, reviews, benchmarks and tutorials are allowed when they credit veroxsity / BanditVault and visibly link to the official project or another official BanditVault page. They must follow the license's redistribution, authentication and endorsement rules.
 
-- Forge support is experimental and currently focused on `1.20.1 + Forge 47.4.20`.
-- Additional Forge versions and older vanilla targets are cataloged but not launchable yet.
-- NeoForge support is new and currently focused on `1.21.1 + NeoForge 21.1.233`.
-- Mod compatibility depends on each mod working inside the Xbox UWP sandbox.
-- First launch can take a while because official files need to download.
-- Chunk loading can still be choppy on some older versions.
-- Some Java diagnostics may warn because the sandbox does not look like desktop Windows.
-- Legacy graphics and controller support are still being tuned.
+Redistributing APPX packages, including nightly builds, requires prior written permission. Removing or bypassing Microsoft/Xbox authentication or Minecraft ownership checks is not permitted.
 
-## Videos And Streaming
-
-You may make public videos, streams, screenshots, reviews, benchmarks, tutorials, and other creator content about Bandit Launcher.
-
-Creator content must:
-
-- Credit veroxsity / BanditVault and include a visible link to the official project page or another official BanditVault page.
-- Use legitimate Microsoft/Xbox sign in and Minecraft Java ownership verification.
-- Avoid sharing generated APPX packages, private builds, modified builds, source archives, mirrors, or re uploads.
-- Avoid instructions, patches, scripts, configuration, or links intended to bypass Microsoft/Xbox authentication, Minecraft ownership checks, token validation, account checks, or entitlement enforcement.
-- Avoid implying endorsement by veroxsity / BanditVault, Microsoft, Mojang, Xbox, Minecraft, Fabric, Forge, NeoForge, LWJGL, Mesa, or other third parties unless permission has been given separately.
-
-## For Developers
-
-Detailed build, patching, architecture, compatible mods, FAQs and legal notes live in `docs/`.
-
-- [Building](docs/BUILDING.md): requirements, cache setup, packaging, nightly workflow.
-- [Architecture](docs/ARCHITECTURE.md): UWP host layout, launch flow, and loader modules.
-- [Patching notes](docs/PATCHING.md): why Fabric, GLFW, and sandbox patches exist.
-- [Legal notes](docs/LEGAL.md): licensing, redistribution, and nightly package rules.
-- [Privacy](docs/PRIVACY.md): account data, opt-in telemetry, and the local network servers.
-- [Contributing](CONTRIBUTING.md): auth policy and contribution expectations.
-- [FAQ](docs/FAQ.md) - Contains answers to frequent questions asked by many users.
-
-Quick local build from the repo root:
-
-```powershell
-.\scripts\setup.ps1
-.\build.ps1
-```
-
-Generated build output goes to `staging` and `output`. These folders are ignored by git.
-
-To preview or apply cleanup:
-
-```powershell
-.\scripts\clean.ps1
-.\scripts\clean.ps1 -Apply
-```
-
-## Repo Layout
-
-| Path | Purpose |
-| --- | --- |
-| `MC.Xbox/` | UWP host app: sign in, launcher UI, downloads, profiles, mods, and JVM launch. |
-| `glfw_shim/` | Replacement `glfw.dll` for UWP windowing, input, gamepad state, and EGL. |
-| `compat_mod/` | Fabric compatibility mod for Minecraft, mod, filesystem, and graphics fixes. |
-| `controller_mod/` | Shared controller core plus Fabric and Forge Xbox controller mods built under `runtime/version-mods/`. |
-| `patch/` | Patched Fabric Loader and securejarhandler classes used by the build. |
-| `scripts/` | Setup, cleanup, asset, patch, manifest, and build helpers. |
-| `config/` | Launch target catalog used by the launcher and build. |
-| `mesa-runtime/` | Mesa UWP runtime DLLs used by local builds. |
-| `build.ps1` | Main APPX build script. |
-| `docs/` | Build, architecture, patching, and legal notes. |
-
-This repo does not include Minecraft game files, signed APPX packages, or local signing certificates. Runtime game files are downloaded by the installed app after ownership verification.
-
-## License And Ownership
-
-Original project code in this repository is available under the custom terms in [LICENSE](LICENSE). Private use is allowed with credit. Public forks, redistribution, mirrors, modified public copies, and packaged builds require prior written permission from veroxsity / BanditVault.
-
-Videos, streams, screenshots, reviews, benchmarks, tutorials, and other creator content are allowed when they follow the attribution, redistribution, endorsement, and authentication rules in [LICENSE](LICENSE).
-
-Redistribution of generated APPX packages, including nightly and pre release packages, is not permitted without prior written permission.
-
-Removing, bypassing, disabling, stubbing, faking, or making optional Microsoft/Xbox authentication or Minecraft entitlement checks is not permitted.
-
-Minecraft, Fabric, Mojang assets, Mesa, LWJGL, Java, and other external components remain under their own licenses and terms.
+Bandit Launcher does not bundle Minecraft game files. Minecraft and all third-party components remain under their own licenses and terms. See [Legal notes](docs/LEGAL.md) for more detail.

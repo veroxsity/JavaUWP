@@ -126,7 +126,7 @@ jobs:
 
       - name: Build APPX
         shell: powershell
-        run: .\build.ps1 -SkipStopAppProcesses -AppxVersion $env:APPX_VERSION
+        run: .\build.ps1 -SkipStopAppProcesses -ReleaseChannel nightly-native -AppxVersion $env:APPX_VERSION
 
       - name: Stage native release assets
         shell: powershell

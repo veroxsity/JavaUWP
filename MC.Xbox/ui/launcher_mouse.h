@@ -52,6 +52,7 @@ constexpr int kProfileBackup = 13;
 constexpr int kProfileExport = 14;
 constexpr int kTabBase = 100;
 constexpr int kCrashButtonBase = 300;
+constexpr int kChangelogButtonBase = 350;
 constexpr int kSettingsRowBase = 400;
 constexpr int kSourceBase = 500;
 constexpr int kCardBase = 1000;

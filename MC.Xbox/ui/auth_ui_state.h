@@ -12,7 +12,7 @@
 
 constexpr int kModsTargetRowsVisible = 10;
 
-constexpr int kMainMenuItems = 6;
+constexpr int kMainMenuItems = 7;
 
 struct AuthUiState {
     std::wstring title;
@@ -88,7 +88,21 @@ struct AuthUiState {
     int crashButtonCount = 0;
     std::wstring crashFootnote;
 
+    bool showChangelog = false;
+    // the same screen doubles as the new version notice, which adds a QR code and two buttons
+    bool changelogOffer = false;
+    std::wstring changelogHeadline;
+    std::wstring changelogSub;
+    std::wstring changelogBody;
+    std::vector<std::pair<UINT32, UINT32>> changelogBold;
+    std::vector<std::pair<UINT32, UINT32>> changelogHead;
+    int changelogScroll = 0;
+    int changelogSelected = 0;
+    std::wstring changelogUrl;
+    bool updateAvailable = false;
+
     bool showSettings = false;
+    bool settingsUpdateCheckOn = true;
     int settingsSelected = 0;
     int settingsMenuMouseSpeed = 100;
     int settingsGameMouseSpeed = 100;

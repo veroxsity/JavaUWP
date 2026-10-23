@@ -135,6 +135,65 @@ AuthUiState Crash(bool details, bool consent) {
     return state;
 }
 
+AuthUiState Changelog(bool offer, int scroll, bool withBody) {
+    AuthUiState state = Screen();
+    state.showChangelog = true;
+    state.changelogOffer = offer;
+    state.changelogScroll = scroll;
+    state.changelogUrl = L"https://github.com/veroxsity/JavaUWP/releases";
+    if (offer) {
+        state.changelogHeadline = L"Version 1.0.0.510 is available";
+        state.changelogSub = L"You are running 1.0.0.509. Updating is up to you.";
+        state.qr = GenerateLoginQrMatrix("https://github.com/veroxsity/JavaUWP/releases");
+    } else {
+        state.changelogHeadline = L"What's new";
+        state.changelogSub = L"The latest changes, fetched from GitHub.";
+    }
+    if (!withBody) return state;
+
+    // shaped like what FormatChangelog returns
+    std::wstring& text = state.changelogBody;
+    auto mark = [&](std::vector<std::pair<UINT32, UINT32>>& ranges, UINT32 start) {
+        ranges.emplace_back(start, static_cast<UINT32>(text.size()) - start);
+    };
+    auto heading = [&](const wchar_t* line, bool major) {
+        if (!text.empty()) text += L"\n";
+        const UINT32 start = static_cast<UINT32>(text.size());
+        text += line;
+        mark(major ? state.changelogHead : state.changelogBold, start);
+        text += L"\n";
+    };
+    auto paragraph = [&](const wchar_t* lead, const wchar_t* rest) {
+        text += L"\n";
+        const UINT32 start = static_cast<UINT32>(text.size());
+        text += lead;
+        mark(state.changelogBold, start);
+        text += rest;
+        text += L"\n";
+    };
+    heading(L"2026-10-23", true);
+    heading(L"Added", false);
+    paragraph(L"The launcher tells you when a new version is out.",
+        L" It checks GitHub once when it opens, shows what changed and links to the download page. Skip a version to hide the notice until the next one appears. The check can be turned off in Settings.");
+    paragraph(L"A What's new page on the main menu.",
+        L" It shows the changelog without leaving the launcher, and works offline with the copy that came with your version.");
+    heading(L"Fixed", false);
+    paragraph(L"The native keyboard no longer stops some controller mods compiling.",
+        L" Forge, NeoForge and 1.20.1 Fabric were left without their controller mod in published builds.");
+    paragraph(L"Remote Files no longer blocks other devices while one browser tab sits idle.", L"");
+    heading(L"2026-09-04", true);
+    heading(L"Security", false);
+    paragraph(L"The remote file server printed its access PIN into the log.",
+        L" The file browser generates a six digit PIN per session, and that PIN was being written to the launch log, which is collected into crash zips. The PIN is no longer logged, there is now a retry limit and a lockout.");
+    paragraph(L"Downloaded files were not always verified.",
+        L" When a hash lookup failed, the error was swallowed and a blank hash was written into the download manifest, and a blank hash matched anything. Hash failures now stop the build instead.");
+    heading(L"Fixed", false);
+    paragraph(L"1.21.4 could not launch at all.",
+        L" It failed on startup with a duplicate ASM error, before a single mod loaded. It now starts.");
+    paragraph(L"The mod browser's target list ran off the bottom of the screen", L" once the catalogue grew past a handful of versions.");
+    return state;
+}
+
 std::vector<Scene> Scenes() {
     std::vector<Scene> scenes;
 
@@ -172,6 +231,24 @@ std::vector<Scene> Scenes() {
         state.title = L"Steve";
         state.status = L"Ready to play 1.21.11 Fabric";
         state.detail = L"Profile Survival, 12 mods";
+        return state;
+    } });
+    scenes.push_back({ L"main-menu-update", [] {
+        AuthUiState state = Screen();
+        state.showMainMenu = true;
+        state.updateAvailable = true;
+        state.title = L"Steve";
+        state.status = L"Ready to play 1.21.11 Fabric";
+        state.detail = L"Profile Survival, 12 mods";
+        return state;
+    } });
+    scenes.push_back({ L"changelog-page", [] { return Changelog(false, 0, true); } });
+    scenes.push_back({ L"changelog-scrolled", [] { return Changelog(false, 7, true); } });
+    scenes.push_back({ L"changelog-empty", [] { return Changelog(false, 0, false); } });
+    scenes.push_back({ L"update-offer", [] { return Changelog(true, 0, true); } });
+    scenes.push_back({ L"update-offer-skip-selected", [] {
+        AuthUiState state = Changelog(true, 0, true);
+        state.changelogSelected = 1;
         return state;
     } });
     scenes.push_back({ L"remote-files", [] {

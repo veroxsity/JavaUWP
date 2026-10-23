@@ -121,6 +121,7 @@ public:
 
     // renders into a bitmap for SaveFramePng, tools\ui-preview uses it to check layouts without an appx build
     bool InitializeOffscreen(float viewW, float viewH, float scale) {
+        offscreen_ = true;
         width_ = viewW;
         height_ = viewH;
         displayScale_ = scale > 0.0f ? scale : 1.0f;
@@ -193,7 +194,7 @@ public:
             if (!Initialize(window.Get())) return;
             deviceRecoveryNeeded_ = false;
         }
-        if (!d2dContext_ || !swapChain_) return;
+        if (!d2dContext_ || (!swapChain_ && !offscreen_)) return;
         if (!EnsureRenderTargetSize()) return;
         if (!targetBitmap_ && !CreateTargetBitmap()) return;
 
@@ -761,6 +762,105 @@ public:
             return;
         }
 
+        if (state.showChangelog) {
+            const float left = frame.left + 54.0f;
+            const float right = frame.right - 54.0f;
+            const float top = frame.top + 48.0f;
+            const bool offer = state.changelogOffer;
+
+            float headlineLeft = left;
+            if (offer) {
+                DrawIcon(L"\uE896", D2D1::RectF(left, top, left + 40.0f, top + 56.0f), accent.Get(), true);
+                headlineLeft = left + 52.0f;
+            } else {
+                const D2D1_RECT_F back = DrawBackChip(left, top + 6.0f, surfaceFill.Get(), softEdge.Get(), muted.Get());
+                headlineLeft = back.right + 16.0f;
+            }
+            DrawText(state.changelogHeadline.c_str(), titleFormat_.Get(),
+                D2D1::RectF(headlineLeft, top, right, top + 58.0f), white.Get());
+            if (!state.changelogSub.empty()) {
+                DrawText(state.changelogSub.c_str(), smallFormat_.Get(),
+                    D2D1::RectF(left, top + 70.0f, right, top + 104.0f), muted.Get());
+            }
+
+            const float qrColumn = offer ? 300.0f : 0.0f;
+            const float bodyTop = top + 116.0f;
+            const float bodyBottom = offer ? frame.bottom - 132.0f : frame.bottom - 64.0f;
+            const D2D1_RECT_F bodyRect = D2D1::RectF(left, bodyTop, right - (offer ? qrColumn + 24.0f : 0.0f), bodyBottom);
+            FillRound(bodyRect, surfaceFill.Get(), 16.0f);
+            StrokeRound(bodyRect, softEdge.Get(), 16.0f, 1.0f);
+            const D2D1_RECT_F inner = D2D1::RectF(
+                bodyRect.left + 18.0f, bodyRect.top + 14.0f, bodyRect.right - 18.0f, bodyRect.bottom - 14.0f);
+            const float lineStep = 30.0f;
+            const float scrollPx = static_cast<float>(state.changelogScroll) * lineStep;
+
+            const bool haveBody = !state.changelogBody.empty();
+            const std::wstring bodyText = haveBody
+                ? state.changelogBody
+                : std::wstring(L"The changelog is not available right now.");
+            ComPtr<IDWriteTextLayout> layout;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                    bodyText.c_str(), static_cast<UINT32>(bodyText.size()), smallFormat_.Get(),
+                    inner.right - inner.left, 100000.0f, layout.GetAddressOf()))) {
+                if (haveBody) {
+                    for (const auto& b : state.changelogBold) {
+                        layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_RANGE{ b.first, b.second });
+                        layout->SetDrawingEffect(white.Get(), DWRITE_TEXT_RANGE{ b.first, b.second });
+                    }
+                    for (const auto& hh : state.changelogHead) {
+                        layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_RANGE{ hh.first, hh.second });
+                        layout->SetFontSize(27.0f, DWRITE_TEXT_RANGE{ hh.first, hh.second });
+                        layout->SetDrawingEffect(accent.Get(), DWRITE_TEXT_RANGE{ hh.first, hh.second });
+                    }
+                }
+                DWRITE_TEXT_METRICS tm{};
+                const float viewH = inner.bottom - inner.top;
+                if (SUCCEEDED(layout->GetMetrics(&tm))) {
+                    g_changelogMaxScroll.store(
+                        tm.height > viewH ? static_cast<int>(ceilf((tm.height - viewH) / lineStep)) : 0);
+                }
+                d2dContext_->PushAxisAlignedClip(inner, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                d2dContext_->DrawTextLayout(D2D1::Point2F(inner.left, inner.top - scrollPx), layout.Get(), muted.Get());
+                d2dContext_->PopAxisAlignedClip();
+            }
+
+            if (offer) {
+                const float side = (std::min)(qrColumn, bodyBottom - bodyTop - 96.0f);
+                const D2D1_RECT_F qrRect = D2D1::RectF(right - qrColumn, bodyTop, right - qrColumn + side, bodyTop + side);
+                DrawQr(state.qr, qrRect, white.Get(), black.Get(), muted.Get());
+                DrawText(L"Scan to open the release page", smallFormat_.Get(),
+                    D2D1::RectF(qrRect.left, qrRect.bottom + 12.0f, right, qrRect.bottom + 40.0f), muted.Get());
+                DrawText(state.changelogUrl.c_str(), smallFormat_.Get(),
+                    D2D1::RectF(qrRect.left, qrRect.bottom + 40.0f, right, qrRect.bottom + 100.0f), accent.Get());
+
+                const float btnH = 58.0f;
+                const float btnY = frame.bottom - 108.0f;
+                const float btnW = (right - left - 18.0f) / 2.0f;
+                const wchar_t* buttonLabels[] = { L"Skip this version", L"Remind me next time" };
+                for (int i = 0; i < 2; ++i) {
+                    const float x = left + i * (btnW + 18.0f);
+                    const D2D1_RECT_F button = D2D1::RectF(x, btnY, x + btnW, btnY + btnH);
+                    const bool sel = i == state.changelogSelected;
+                    if (sel) GlowSelect(button, 12.0f);
+                    FillRound(button, sel ? accentSoft.Get() : surfaceFill.Get(), 12.0f);
+                    StrokeRound(button, sel ? accent.Get() : softEdge.Get(), 12.0f, sel ? 3.0f : 1.0f);
+                    DrawText(buttonLabels[i], bodyMid_.Get(),
+                        D2D1::RectF(button.left + 20.0f, button.top, button.right - 12.0f, button.bottom),
+                        sel ? accent.Get() : white.Get());
+                    RegisterHit(launchhit::kChangelogButtonBase + i, button);
+                }
+            }
+
+            DrawText(
+                offer
+                    ? L"Install the new package from a PC. Skipping hides this notice until a newer version is out."
+                    : L"Use up and down to scroll. Press B or select Back to return to the launcher.",
+                smallFormat_.Get(), D2D1::RectF(left, frame.bottom - 40.0f, right, frame.bottom - 8.0f), muted.Get());
+
+            finishDraw();
+            return;
+        }
+
         if (state.showSettings) {
             const float left = frame.left + 54.0f;
             const float right = frame.right - 54.0f;
@@ -810,6 +910,10 @@ public:
                     : L"API key saved (" + state.settingsCurseForgeKeyHint + L").")
                 : std::wstring(L"Modrinth needs no key. Switch to CurseForge to browse there instead.");
             drawSettingsRow(4, L"Mod download source", sourceDetail.c_str(), curseForge ? L"CurseForge" : L"Modrinth");
+
+            drawSettingsRow(5, L"Check for new versions",
+                L"Asks GitHub which version is newest when the launcher opens. Nothing about you is sent.",
+                state.settingsUpdateCheckOn ? L"On" : L"Off");
 
             DrawText(
                 state.settingsConfigured
@@ -911,11 +1015,14 @@ public:
             const float top = frame.top + 34.0f;
             const float buttonH = 56.0f;
             const float buttonGap = 14.0f;
-            const wchar_t* labels[] = { L"Play", L"Mods", L"Remote Files", L"Settings", L"Repair downloads", L"Sign out" };
+            const wchar_t* labels[] = {
+                L"Play", L"Mods", L"Remote Files", L"Settings",
+                state.updateAvailable ? L"Update available" : L"What's new",
+                L"Repair downloads", L"Sign out" };
 
             DrawText(title.c_str(), titleFormat_.Get(), D2D1::RectF(left, top, menuRight, top + 48.0f), white.Get());
 
-            const wchar_t* menuIcons[] = { L"\uE768", L"\uE74C", L"\uE838", L"\uE713", L"\uE72C", L"\uE7E8" };
+            const wchar_t* menuIcons[] = { L"\uE768", L"\uE74C", L"\uE838", L"\uE713", L"\uE946", L"\uE72C", L"\uE7E8" };
             for (int i = 0; i < kMainMenuItems; ++i) {
                 const float y = top + 76.0f + i * (buttonH + buttonGap);
                 const D2D1_RECT_F button = D2D1::RectF(left, y, menuRight, y + buttonH);
@@ -1158,6 +1265,7 @@ private:
     D3D_DRIVER_TYPE d3dDriverType_ = D3D_DRIVER_TYPE_UNKNOWN;
     bool presentOkLogged_ = false;
     bool deviceRecoveryNeeded_ = false;
+    bool offscreen_ = false;
 
     void ResetDeviceResources() {
         if (d2dContext_) d2dContext_->SetTarget(nullptr);

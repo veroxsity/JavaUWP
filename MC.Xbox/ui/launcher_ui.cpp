@@ -3,6 +3,7 @@
 #include "mod_source.h"
 
 #include "mods_browser.h"
+#include "mods_ui_globals.h"
 #include "auth_screen.h"
 #include "launcher_mouse.h"
 #include "launcher_common.h"
@@ -12,6 +13,7 @@
 #include "remote_file_server.h"
 #include "qr_code.h"
 #include "telemetry.h"
+#include "update_check.h"
 
 #include <chrono>
 #include <thread>
@@ -203,6 +205,20 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
         }
 
         backWasDown = backDown;
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+}
+
+// wait for release before the menu resets its edge detection
+static void WaitForMenuKeysReleased(ICoreWindow* window, AuthScreenRenderer* renderer, const AuthUiState& state) {
+    while (AnyVirtualKeyDown(window, {
+        ABI::Windows::System::VirtualKey_Enter,
+        ABI::Windows::System::VirtualKey_Space,
+        ABI::Windows::System::VirtualKey_GamepadA,
+        ABI::Windows::System::VirtualKey_Escape,
+        ABI::Windows::System::VirtualKey_GamepadB
+    })) {
+        RenderAuth(renderer, state);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
@@ -418,25 +434,170 @@ static void ShowCrashScreen(ICoreWindow* window, AuthScreenRenderer* renderer, A
 
     telemetry::ClearLastCrash();
 
-    // wait for release before the menu resets its edge detection
-    while (AnyVirtualKeyDown(window, {
-        ABI::Windows::System::VirtualKey_Enter,
-        ABI::Windows::System::VirtualKey_Space,
-        ABI::Windows::System::VirtualKey_GamepadA,
-        ABI::Windows::System::VirtualKey_Escape,
-        ABI::Windows::System::VirtualKey_GamepadB
-    })) {
-        RenderAuth(renderer, state);
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
-    }
+    WaitForMenuKeysReleased(window, renderer, state);
 
     state.showCrashScreen = false;
     state.showMainMenu = wasShowingMenu;
     WriteLog(L"Crash screen dismissed");
 }
 
+static void ShowChangelogScreen(
+    ICoreWindow* window,
+    AuthScreenRenderer* renderer,
+    AuthUiState& state,
+    const updates::Offer* offer) {
+    WriteLog(offer ? L"Update notice shown" : L"Changelog opened");
+
+    bool fromGitHub = false;
+    const std::wstring markdown = updates::ChangelogMarkdown(&fromGitHub);
+    std::wstring body;
+    updates::TextRanges bold;
+    updates::TextRanges head;
+    updates::FormatChangelog(markdown, body, bold, head);
+
+    const std::wstring previousStatus = state.status;
+    const std::wstring previousDetail = state.detail;
+
+    state.showMainMenu = false;
+    state.showModsPage = false;
+    state.showRemoteFiles = false;
+    state.showSettings = false;
+    state.showDeviceCode = false;
+    state.showChangelog = true;
+    state.changelogOffer = offer != nullptr;
+    state.changelogBody = body;
+    state.changelogBold = bold;
+    state.changelogHead = head;
+    state.changelogScroll = 0;
+    state.changelogSelected = 0;
+    state.isError = false;
+    if (offer) {
+        state.changelogHeadline = L"Version " + offer->latest + L" is available";
+        state.changelogSub = L"You are running " + offer->current + L". Updating is up to you.";
+        state.changelogUrl = updates::ReleasesUrl();
+        state.qr = GenerateLoginQrMatrix(w2a(state.changelogUrl));
+    } else {
+        state.changelogHeadline = L"What's new";
+        state.changelogSub = fromGitHub
+            ? std::wstring(L"The latest changes, fetched from GitHub.")
+            : L"The changes that came with this version (" + telemetry::LauncherBuild() + L").";
+        std::wstring newest;
+        if (updates::NewerAvailable(newest)) {
+            state.changelogSub += L" Version " + newest + L" is out. Get it from " + updates::ReleasesUrl() + L".";
+        }
+    }
+
+    bool leftWas = false;
+    bool rightWas = false;
+    bool selectWas = false;
+    bool backWas = false;
+    int scrollDirWas = 0;
+    ULONGLONG nextScrollAt = 0;
+
+    while (true) {
+        state.animation = static_cast<float>((GetTickCount64() % 100000) / 1000.0);
+        RenderAuth(renderer, state);
+
+        LauncherMouse& mouse = LauncherMouseInstance();
+        int clicked = -1;
+        bool clickedBack = false;
+        if (mouse.Visible() && mouse.TakeClick()) {
+            const int hit = renderer->HitTest(mouse.X(), mouse.Y());
+            if (hit == launchhit::kBack) clickedBack = true;
+            if (hit >= launchhit::kChangelogButtonBase && hit < launchhit::kChangelogButtonBase + 2) {
+                clicked = hit - launchhit::kChangelogButtonBase;
+            }
+        }
+
+        const bool leftDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Left,
+            ABI::Windows::System::VirtualKey_GamepadDPadLeft,
+            ABI::Windows::System::VirtualKey_GamepadLeftThumbstickLeft
+        });
+        const bool rightDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Right,
+            ABI::Windows::System::VirtualKey_GamepadDPadRight,
+            ABI::Windows::System::VirtualKey_GamepadLeftThumbstickRight
+        });
+        const bool upDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Up,
+            ABI::Windows::System::VirtualKey_GamepadDPadUp,
+            ABI::Windows::System::VirtualKey_GamepadLeftThumbstickUp
+        });
+        const bool downDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Down,
+            ABI::Windows::System::VirtualKey_GamepadDPadDown,
+            ABI::Windows::System::VirtualKey_GamepadLeftThumbstickDown
+        });
+        const bool selectDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Enter,
+            ABI::Windows::System::VirtualKey_Space,
+            ABI::Windows::System::VirtualKey_GamepadA
+        });
+        const bool backDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Escape,
+            ABI::Windows::System::VirtualKey_GamepadB
+        });
+
+        // a long changelog is slow to read one line per press, so holding the stick keeps scrolling
+        const int scrollDir = (downDown ? 1 : 0) - (upDown ? 1 : 0);
+        const ULONGLONG now = GetTickCount64();
+        if (scrollDir != 0 && (scrollDir != scrollDirWas || now >= nextScrollAt)) {
+            const int maxScroll = g_changelogMaxScroll.load();
+            state.changelogScroll = scrollDir > 0
+                ? (std::min)(maxScroll, state.changelogScroll + 1)
+                : (std::max)(0, state.changelogScroll - 1);
+            nextScrollAt = now + (scrollDir != scrollDirWas ? 320 : 55);
+        }
+        scrollDirWas = scrollDir;
+
+        if (mouse.Visible()) {
+            const float wheel = mouse.TakeWheel();
+            if (wheel != 0.0f) {
+                const int notches = static_cast<int>(wheel > 0.0f ? (wheel + 0.5f) : (wheel - 0.5f));
+                state.changelogScroll = (std::clamp)(
+                    state.changelogScroll - notches * 3, 0, g_changelogMaxScroll.load());
+            }
+        }
+
+        if (offer && ((leftDown && !leftWas) || (rightDown && !rightWas))) {
+            state.changelogSelected = 1 - state.changelogSelected;
+        }
+
+        if ((backDown && !backWas) || clickedBack) break;
+
+        const int pressed = clicked >= 0
+            ? clicked
+            : ((selectDown && !selectWas && offer) ? state.changelogSelected : -1);
+        if (pressed == 0) {
+            updates::SkipVersion(offer->latest);
+            break;
+        }
+        if (pressed == 1) break;
+
+        leftWas = leftDown;
+        rightWas = rightDown;
+        selectWas = selectDown;
+        backWas = backDown;
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+
+    WaitForMenuKeysReleased(window, renderer, state);
+
+    state.showChangelog = false;
+    state.changelogOffer = false;
+    state.changelogBody.clear();
+    state.changelogBold.clear();
+    state.changelogHead.clear();
+    state.qr = QrMatrix();
+    state.showMainMenu = true;
+    state.status = previousStatus;
+    state.detail = previousDetail;
+    WriteLog(L"Changelog closed");
+}
+
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 5;
+    constexpr int kSettingsRows = 6;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -454,6 +615,7 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     state.settingsInstallId = telemetry::InstallIdText();
     state.settingsModSource = modsource::Current();
     state.settingsCurseForgeKeyHint = modsource::CurseForgeKeyHint();
+    state.settingsUpdateCheckOn = updates::Enabled();
 
     bool upWas = false;
     bool downWas = false;
@@ -573,6 +735,21 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
             } else {
                 state.settingsNote = L"The mod source could not be changed.";
             }
+        } else if (pressed == 5) {
+            const bool turnOn = !state.settingsUpdateCheckOn;
+            if (!updates::HasReleaseChannel()) {
+                state.settingsNote = L"This build is not published anywhere, so there is nothing to check.";
+            } else if (updates::SetEnabled(turnOn)) {
+                state.settingsUpdateCheckOn = turnOn;
+                if (turnOn) {
+                    updates::StartCheckAsync();
+                    state.settingsNote = L"The launcher will check for new versions when it opens.";
+                } else {
+                    state.settingsNote = L"The launcher will not look for new versions.";
+                }
+            } else {
+                state.settingsNote = L"The update setting could not be saved.";
+            }
         }
 
         upWas = upDown;
@@ -649,6 +826,15 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
         }
         state.selectedMenuIndex = selected;
         state.animation = static_cast<float>((GetTickCount64() % 100000) / 1000.0);
+        {
+            std::wstring newest;
+            state.updateAvailable = updates::NewerAvailable(newest);
+            updates::Offer offer;
+            if (updates::TakeOffer(offer)) {
+                ShowChangelogScreen(window, renderer, state, &offer);
+                continue;
+            }
+        }
         RenderAuth(renderer, state);
 
         const bool upDown = AnyVirtualKeyDown(window, {
@@ -692,6 +878,9 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
                 WriteLog(L"Main menu: Settings selected");
                 ShowSettingsPage(window, renderer, state);
             } else if (selected == 4) {
+                WriteLog(L"Main menu: What's new selected");
+                ShowChangelogScreen(window, renderer, state, nullptr);
+            } else if (selected == 5) {
                 WriteLog(L"Main menu: Repair downloads selected");
                 StopRemoteFileServer();
                 state.status = L"Repairing downloaded files";

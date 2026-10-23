@@ -39,6 +39,7 @@
 #include "runtime_manager.h"
 #include "minecraft_launch.h"
 #include "telemetry.h"
+#include "update_check.h"
 
 // ICoreWindowInterop is forward-declared without a GUID, so IID_PPV_ARGS
 // cannot use it directly. Redeclare it with the correct uuid here.
@@ -559,6 +560,7 @@ public:
         ApplyMouseSensitivity(LoadMouseSensitivity());
         telemetry::ReportHardCrash(exeDir);
         telemetry::FlushQueueAsync();
+        updates::StartCheckAsync();
         const std::wstring graphicsRuntime = DetectGraphicsRuntimeName();
         SetEnvironmentVariableW(L"MC_GRAPHICS_RUNTIME", graphicsRuntime.c_str());
         SetEnvironmentVariableW(L"mesa_glthread", L"true");

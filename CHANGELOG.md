@@ -2,6 +2,14 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-10-23
+
+### Added
+
+**The launcher tells you when a new version is out.** When it opens, it checks GitHub for the newest version on the channel you installed. If there is a newer one, a notice shows what changed and a QR code for the release page. You can skip that version, or be reminded next time. Updating is still done from a PC, so nothing installs by itself. The check can be turned off in Settings.
+
+**A What's new page on the main menu.** It shows the changelog without leaving the launcher. It reads the latest copy from GitHub, and falls back to the one that came with your version when you are offline.
+
 ## 2026-09-04
 
 ### Security

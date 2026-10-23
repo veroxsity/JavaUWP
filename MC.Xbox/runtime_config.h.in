@@ -22,3 +22,6 @@ static constexpr wchar_t kMinecraftVersionW[] = L"@@MC_VERSION@@";
 static constexpr char    kFabricLoaderVersion[] = "@@FABRIC_LOADER_VERSION@@";
 static constexpr char    kFabricLaunchVersion[] = "fabric-loader-@@FABRIC_LOADER_VERSION@@-@@MC_VERSION@@";
 static constexpr char    kMinecraftAssetIndex[] = "@@MC_ASSET_INDEX@@";
+
+// Channel this package is published on. Empty for local builds, which never check for updates.
+static constexpr wchar_t kReleaseChannelW[] = L"@@RELEASE_CHANNEL@@";

@@ -188,6 +188,10 @@ Do not expose this port to the internet.
 - Fabric, Forge and NeoForge loaders and their libraries, from their own distribution points.
 - Mods and modpacks from Modrinth when you browse or install them. Those requests go to
   Modrinth and fall under Modrinth's own privacy policy.
+- The newest version number and the changelog, from GitHub, when the launcher opens. These are
+  plain requests for public pages. They carry no install ID, account details or anything else
+  from your console, though GitHub can see the console's IP address like any other website.
+  The answer is kept in `LocalState\updates` and asked for again after about six hours.
 
 ## Your choices
 
@@ -197,6 +201,7 @@ Do not expose this port to the internet.
   sent.
 - Sign out to remove the stored refresh token.
 - Leave Remote Files stopped.
+- Turn off Check for new versions in Settings to stop the launcher contacting GitHub on start.
 - Delete `LocalState\telemetry` to clear consent, install ID, queue and cached feed together.
 - Email the address below with your install ID to have its rows removed from the server.
 

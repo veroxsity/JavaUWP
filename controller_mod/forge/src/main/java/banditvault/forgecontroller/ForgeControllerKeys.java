@@ -15,6 +15,8 @@ final class ForgeControllerKeys {
     final KeyMapping use;
     final KeyMapping inventory;
     final KeyMapping swapOffhand;
+    final KeyMapping drop;
+    final KeyMapping pickItem;
 
     ForgeControllerKeys(Options options) {
         forward = options.f_92085_;
@@ -28,5 +30,7 @@ final class ForgeControllerKeys {
         use = options.f_92095_;
         inventory = options.f_92092_;
         swapOffhand = options.f_92093_;
+        drop = options.f_92094_;
+        pickItem = options.f_92097_;
     }
 }

@@ -16,7 +16,15 @@
     "NeoForgeControllerRecipeBookPageAccessor",
     "NeoForgeControllerRecipeOverlayAccessor",
     "NeoForgeControllerScreenMixin",
-    "NeoForgeControllerTitleScreenMixin"
+    "NeoForgeControllerTitleScreenMixin",
+    "NeoForgeControllerTextFieldAccessor",
+    "NeoForgeControllerTextModelAccessor",
+    "NeoForgeControllerEditBoxAccessor",
+    "NeoForgeControllerSignEditScreenAccessor",
+    "NeoForgeControllerTextHelperAccessor",
+    "NeoForgeControllerBookAccessor",
+    "NeoForgeControllerKeyboardAccessor",
+    "NeoForgeControllerCreativeInventoryAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

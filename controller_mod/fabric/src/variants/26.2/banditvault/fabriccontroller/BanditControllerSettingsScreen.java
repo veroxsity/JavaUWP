@@ -155,10 +155,6 @@ public final class BanditControllerSettingsScreen extends Screen {
         FabricClientApi.setScreen(Minecraft.getInstance(), parent);
     }
 
-    public boolean isCapturingBinding() {
-        return captureOption != null;
-    }
-
     public boolean handleControllerInput(ControllerState state, float triggerDeadzone) {
         if (captureOption != null) {
             handleControllerCapture(state, triggerDeadzone);

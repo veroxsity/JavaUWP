@@ -12,6 +12,7 @@ on:
       - "controller_mod/**"
       - "patch/**"
       - "scripts/**"
+      - "config/**"
       - "log_configs/**"
       - "mesa-runtime/**"
       - "build.ps1"
@@ -121,7 +122,7 @@ jobs:
 
       - name: Build APPX
         shell: powershell
-        run: .\build.ps1 -SkipStopAppProcesses -AppxVersion $env:APPX_VERSION
+        run: .\build.ps1 -StrictTargets -SkipStopAppProcesses -AppxVersion $env:APPX_VERSION
 
       - name: Stage native release assets
         shell: powershell

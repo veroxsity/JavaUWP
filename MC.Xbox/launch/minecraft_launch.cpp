@@ -166,83 +166,6 @@ std::wstring ReadLaunchLogTailForUi(const std::vector<std::wstring>& paths, size
     return L"Waiting for pre-launch log output...";
 }
 
-static bool FileContains(const std::wstring& path, const wchar_t* needle) {
-    if (!needle || !*needle) return false;
-    std::wstring text;
-    if (!ReadTextFile(path, text) || text.empty()) return false;
-    return text.find(needle) != std::wstring::npos;
-}
-
-LaunchUiSnapshot BuildLaunchUiSnapshot(
-    const std::vector<std::wstring>& launchLogPaths,
-    const std::wstring& glfwLogPath,
-    const std::wstring& latestLogPath,
-    const std::wstring& loaderLabel) {
-    LaunchUiSnapshot snap;
-    snap.logTail = ReadLaunchLogTailForUi(launchLogPaths);
-    snap.status = L"Starting Minecraft";
-    snap.detail = loaderLabel.empty()
-        ? L"Preparing the Java runtime and launch files."
-        : (L"Preparing " + loaderLabel + L" and the Java runtime.");
-    snap.progress = 0.12f;
-
-    std::wstring mcLaunch;
-    for (const std::wstring& path : launchLogPaths) {
-        std::wstring text;
-        if (ReadTextFile(path, text) && !text.empty()) {
-            mcLaunch = std::move(text);
-            break;
-        }
-    }
-
-    if (!mcLaunch.empty()) {
-        if (mcLaunch.find(L"Launching embedded JVM") != std::wstring::npos) {
-            snap.progress = 0.22f;
-            snap.status = L"Starting Java runtime";
-            snap.detail = L"The embedded JVM is loading.";
-        }
-        if (mcLaunch.find(L"JNI_CreateJavaVM") != std::wstring::npos) {
-            snap.progress = (std::max)(snap.progress, 0.34f);
-            snap.status = L"Starting Java runtime";
-            snap.detail = L"Java is online. Loader startup comes next.";
-        }
-        if (mcLaunch.find(L"Invoking ") != std::wstring::npos) {
-            snap.progress = (std::max)(snap.progress, 0.50f);
-            snap.status = loaderLabel.empty() ? L"Loading Minecraft" : (L"Loading " + loaderLabel);
-            snap.detail = L"Mods and libraries are being prepared. First launch can take a while.";
-        }
-        if (mcLaunch.find(L"NeoForge") != std::wstring::npos &&
-            mcLaunch.find(L"deploy") != std::wstring::npos) {
-            snap.progress = (std::max)(snap.progress, 0.42f);
-            snap.status = L"Preparing NeoForge";
-            snap.detail = L"NeoForge client files are being prepared.";
-        }
-    }
-
-    std::wstring latest;
-    if (ReadTextFile(latestLogPath, latest) && latest.size() > 180) {
-        snap.progress = (std::max)(snap.progress, 0.58f);
-        if (!snap.graphicsReady) {
-            snap.status = L"Bootstrapping Minecraft";
-            snap.detail = L"Minecraft is initializing in the background.";
-        }
-    }
-
-    if (FileContains(glfwLogPath, L"glfwInit OK")) {
-        snap.graphicsReady = true;
-        snap.progress = (std::max)(snap.progress, 0.86f);
-        snap.status = L"Opening Minecraft";
-        snap.detail = L"Graphics are starting. The Mojang loading screen should appear shortly.";
-    }
-    if (FileContains(glfwLogPath, L"glfwCreateWindow")) {
-        snap.graphicsReady = true;
-        snap.progress = (std::max)(snap.progress, 0.93f);
-        snap.status = L"Opening Minecraft";
-        snap.detail = L"The game window is ready. Minecraft should take over any moment.";
-    }
-
-    return snap;
-}
 static void LogTextFileTail(const std::wstring& path, const wchar_t* label, DWORD maxBytes = 16384) {
     int fd = -1;
     errno_t openErr = _wsopen_s(&fd, path.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYNO, _S_IREAD);
@@ -442,27 +365,6 @@ struct LogTailerGuard {
         }
     }
 };
-void CollectJars(const std::wstring& dir, std::vector<std::wstring>& jars) {
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do {
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        std::wstring full = dir + L"\\" + fd.cFileName;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            CollectJars(full, jars);
-        } else {
-            size_t len = wcslen(fd.cFileName);
-            if (len > 4 && _wcsicmp(fd.cFileName + len - 4, L".jar") == 0) {
-                if (!wcsstr(fd.cFileName, L"sources") && !wcsstr(fd.cFileName, L"javadoc")) {
-                    jars.push_back(full);
-                }
-            }
-        }
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
-}
-
 static std::wstring FileUriFromPath(const std::wstring& path) {
     const std::wstring normalized = fwd(path);
     if (normalized.empty()) return L"file:///";
@@ -887,6 +789,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const std::wstring& packagedJreRelativeDir,
     const std::wstring& javaBasePatchName,
     const std::wstring& javaZipfsPatchName,
+    const std::wstring& javaDesktopPatchName,
     const std::wstring& gameDir,
     const std::wstring& assetsDir,
     const std::wstring& nativesDir,
@@ -906,9 +809,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const std::vector<std::wstring>& extraGameArgs,
     const std::wstring& neoFormVersion,
     const std::wstring& neoForgeInstallToolsVersion,
-    const std::wstring& neoForgeJarSplitterVersion,
     const std::wstring& neoForgeBinaryPatcherVersion,
-    const std::wstring& neoForgeAutoRenamingToolVersion,
     const LaunchAuthConfig& authConfig,
     LaunchProgressCallback progress)
 {
@@ -959,6 +860,9 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     if (!minecraftVersion.empty() && !neoFormVersionForLaunch.empty()) {
         const std::wstring mcAndNeoForm = minecraftVersion + L"-" + neoFormVersionForLaunch;
         neoForgeMinecraftSrgJar = libraryDir + L"\\" + MavenPath(L"net.minecraft", L"client", mcAndNeoForm, L"srg");
+    }
+    if (loaderId == LoaderId::NeoForge && CompareVersionNumbers(w2a(minecraftVersion), "1.21.10") >= 0) {
+        neoForgeMinecraftSrgJar = libraryDir + L"\\" + MavenPath(L"net.neoforged", L"minecraft-client-patched", neoForgeVersionForLaunch);
     }
     auto expandLaunchArg = [&](std::wstring arg) {
         auto replaceAll = [&](const std::wstring& from, const std::wstring& to) {
@@ -1060,6 +964,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
 
     LoaderJvmContext loaderCtx;
     loaderCtx.loader = loaderId;
+    loaderCtx.mainClass = effectiveMainClass;
+    loaderCtx.prepClassPath = classPath;
     loaderCtx.exeDir = exeDir;
     loaderCtx.packageDir = packageDir;
     loaderCtx.gameDir = gameDir;
@@ -1071,9 +977,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     loaderCtx.minecraftVersion = minecraftVersion;
     loaderCtx.neoFormVersion = neoFormVersion;
     loaderCtx.neoForgeInstallToolsVersion = neoForgeInstallToolsVersion;
-    loaderCtx.neoForgeJarSplitterVersion = neoForgeJarSplitterVersion;
     loaderCtx.neoForgeBinaryPatcherVersion = neoForgeBinaryPatcherVersion;
-    loaderCtx.neoForgeAutoRenamingToolVersion = neoForgeAutoRenamingToolVersion;
     loaderCtx.extraGameArgs = extraGameArgs;
     loaderCtx.launcherOverrideDir = launcherOverrideDir;
     loaderCtx.launcherLogDir = launcherLogDir;
@@ -1137,8 +1041,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     } else {
         WriteLogF(L"Java ZipFS realpath patch missing: %s", javaZipfsPatch.c_str());
     }
-    const bool useJava21DesktopPatch = selectedJavaBasePatchName.find(L"-21.jar") != std::wstring::npos;
-    const std::wstring javaDesktopPatchName = useJava21DesktopPatch ? L"java-desktop-uwp-awt-21.jar" : L"java-desktop-uwp-awt.jar";
+    if (javaDesktopPatchName.empty()) return false;
     const std::wstring localJavaDesktopPatch = exeDir + L"\\" + javaDesktopPatchName;
     const std::wstring packagedJavaDesktopPatch = packageDir + L"\\" + javaDesktopPatchName;
     const std::wstring javaDesktopPatch =
@@ -1150,9 +1053,10 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         WriteLogF(L"Java desktop UWP AWT patch enabled: %s", javaDesktopPatch.c_str());
     } else {
         WriteLogF(L"Java desktop UWP AWT patch missing: %s", javaDesktopPatch.c_str());
+        return false;
     }
     vmOptionStorage.push_back("-Djava.home=" + w2a(fwd(jreDir)));
-    vmOptionStorage.push_back("-Djava.security.properties==" + w2a(fwd(jreDir + L"\\conf\\security\\xbox.properties")));
+    vmOptionStorage.push_back("-Djava.security.properties=" + w2a(fwd(jreDir + L"\\conf\\security\\xbox.properties")));
     vmOptionStorage.push_back("-Djava.security.egd=file:/dev/urandom");
     vmOptionStorage.push_back("-Djava.awt.headless=true");
     vmOptionStorage.push_back("-Dbanditvault.awt.skipDesktopProperties=true");
@@ -1350,7 +1254,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     }
 
     JavaVMInitArgs vmArgs = {};
-    vmArgs.version = JNI_VERSION_21;
+    vmArgs.version = JNI_VERSION_1_8;
     vmArgs.nOptions = static_cast<jint>(vmOptions.size());
     vmArgs.options = vmOptions.data();
     vmArgs.ignoreUnrecognized = JNI_FALSE;

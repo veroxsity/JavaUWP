@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <fstream>
 #include <vector>
+#include <memory>
 
 using namespace winrt::Windows::Data::Json;
 
@@ -59,31 +60,14 @@ static std::wstring ModrinthDependencyLoaderKey(const std::wstring& loader) {
     return L"";
 }
 
-static bool ReadBinaryFileAll(const std::wstring& path, std::vector<unsigned char>& out) {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    if (!f) return false;
-    const std::streamoff sz = f.tellg();
-    if (sz <= 0) return false;
-    out.resize(static_cast<size_t>(sz));
-    f.seekg(0);
-    f.read(reinterpret_cast<char*>(out.data()), sz);
-    return f.good() || f.eof();
-}
+static size_t ZipReadFileCallback(void* opaque, mz_uint64 offset, void* data, size_t size);
 
 std::wstring ProfileExportsDir(const std::wstring& runtimeRoot) {
     return runtimeRoot + L"\\exports";
 }
 
 std::wstring DefaultProfileExportPath(const std::wstring& runtimeRoot, const std::wstring& profileId) {
-    const Profile profile = GetProfileById(runtimeRoot, profileId);
-    std::wstring stem = profile.name.empty() ? profileId : profile.name;
-    for (wchar_t& ch : stem) {
-        if (ch == L'\\' || ch == L'/' || ch == L':' || ch == L'*' || ch == L'?' || ch == L'"' || ch == L'<' || ch == L'>' || ch == L'|') {
-            ch = L'_';
-        }
-    }
-    if (stem.empty()) stem = profileId;
-    return ProfileExportsDir(runtimeRoot) + L"\\" + SafeFileName(stem) + L".mrpack";
+    return ProfileExportsDir(runtimeRoot) + L"\\" + SafeFileName(profileId) + L".mrpack";
 }
 
 bool InstallModpackFromFile(
@@ -104,24 +88,23 @@ bool InstallModpackFromFile(
         return false;
     }
 
-    EnsureProfileGameDataInitialized(runtimeRoot, profileId);
-    const std::wstring gameDir = ProfileGameDir(runtimeRoot, profileId);
-    const std::wstring userModsDir = ProfileModsDir(runtimeRoot, profileId);
-    ConfigureKnownModDefaults(gameDir, userModsDir, GetProfileById(runtimeRoot, profileId).minecraftVersion);
-
-    std::vector<unsigned char> packBytes;
-    if (!ReadBinaryFileAll(mrpackPath, packBytes)) {
-        error = L"Could not read pack file";
+    FILE* inputFile = nullptr;
+    if (_wfopen_s(&inputFile, mrpackPath.c_str(), L"rb") != 0 || !inputFile) {
+        error = L"Could not open pack";
         return false;
     }
-    if (packBytes.empty()) {
-        error = L"Pack file was empty";
+    std::unique_ptr<FILE, decltype(&fclose)> input(inputFile, fclose);
+    if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = L"Could not read archive size"; return false; }
+    const __int64 archiveSize = _ftelli64(input.get());
+    if (archiveSize <= 0 || archiveSize > 128ll * 1024ll * 1024ll) {
+        error = L"Pack is empty or exceeds the 128 MB input limit";
         return false;
     }
-
     mz_zip_archive zip{};
-    if (!mz_zip_reader_init_mem(&zip, packBytes.data(), packBytes.size(), 0)) {
-        error = L"Pack is not a valid .mrpack archive";
+    zip.m_pRead = ZipReadFileCallback;
+    zip.m_pIO_opaque = input.get();
+    if (!mz_zip_reader_init(&zip, static_cast<mz_uint64>(archiveSize), 0)) {
+        error = L"Pack is not a valid ZIP archive";
         return false;
     }
 
@@ -130,6 +113,17 @@ bool InstallModpackFromFile(
     int skipped = 0;
     int blockedCount = 0;
     int missingCount = 0;
+    unsigned long long expanded = 0;
+    const mz_uint archiveCount = mz_zip_reader_get_num_files(&zip);
+    if (archiveCount > 20000) { mz_zip_reader_end(&zip); error = L"Too many pack entries"; return false; }
+    for (mz_uint i = 0; i < archiveCount; ++i) {
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, i, &stat) || stat.m_uncomp_size > 64ull * 1024ull * 1024ull ||
+            stat.m_uncomp_size > 512ull * 1024ull * 1024ull - expanded) {
+            mz_zip_reader_end(&zip); error = L"Pack exceeds extraction limits"; return false;
+        }
+        expanded += stat.m_uncomp_size;
+    }
     int unsupportedCount = 0;
     std::vector<ManualDownload> manual;
 
@@ -151,6 +145,32 @@ bool InstallModpackFromFile(
         error = L"Pack has no modrinth.index.json or manifest.json";
         return false;
     }
+
+    const Profile profile = GetProfileById(runtimeRoot, profileId);
+    try {
+        bool matches = false;
+        if (!indexJson.empty()) {
+            const JsonObject pack = JsonObject::Parse(winrt::to_hstring(indexJson));
+            const JsonObject deps = pack.GetNamedObject(L"dependencies");
+            const std::wstring loaderKey = ModrinthDependencyLoaderKey(profile.loader);
+            matches = deps.GetNamedString(L"minecraft", L"") == profile.minecraftVersion &&
+                !loaderKey.empty() && deps.GetNamedString(loaderKey, L"") == profile.loaderVersion;
+        } else {
+            const JsonObject pack = JsonObject::Parse(winrt::to_hstring(manifestJson));
+            const JsonObject mc = pack.GetNamedObject(L"minecraft");
+            const JsonArray loaders = mc.GetNamedArray(L"modLoaders");
+            const std::wstring loaderId = profile.loader + L"-" + profile.loaderVersion;
+            for (uint32_t i = 0; i < loaders.Size(); ++i) {
+                if (loaders.GetAt(i).GetObject().GetNamedString(L"id", L"") == loaderId) matches = true;
+            }
+            matches = matches && mc.GetNamedString(L"version", L"") == profile.minecraftVersion;
+        }
+        if (!matches) { mz_zip_reader_end(&zip); error = L"Pack target does not match the selected profile"; return false; }
+    } catch (...) { mz_zip_reader_end(&zip); error = L"Pack target metadata missing or invalid"; return false; }
+    EnsureProfileGameDataInitialized(runtimeRoot, profileId);
+    const std::wstring gameDir = ProfileGameDir(runtimeRoot, profileId);
+    const std::wstring userModsDir = ProfileModsDir(runtimeRoot, profileId);
+    ConfigureKnownModDefaults(gameDir, userModsDir, GetProfileById(runtimeRoot, profileId).minecraftVersion);
 
     if (!indexJson.empty()) {
     try {
@@ -355,7 +375,6 @@ bool InstallModpackFromFile(
             }
         }
         if (fileOk) {
-            DeleteFileW(dest.c_str());
             if (!MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING)) {
                 DeleteFileW(tmp.c_str());
                 if (firstError.empty()) firstError = L"Some pack files could not be saved";
@@ -368,6 +387,7 @@ bool InstallModpackFromFile(
     }
 
     WriteLog(L"Applying modpack overrides...");
+    int installedOverrides = 0;
     const mz_uint entryCount = mz_zip_reader_get_num_files(&zip);
     for (mz_uint i = 0; i < entryCount; ++i) {
         if (mz_zip_reader_is_file_a_directory(&zip, i)) continue;
@@ -396,8 +416,12 @@ bool InstallModpackFromFile(
         }
         size_t outSize = 0;
         void* p = mz_zip_reader_extract_to_heap(&zip, i, &outSize, 0);
-        if (!p) continue;
-        WriteAllBytes(dest, p, outSize);
+        if (!p) { if (firstError.empty()) firstError = L"Could not extract pack override " + rel; continue; }
+        if (!WriteAllBytes(dest, p, outSize)) {
+            if (firstError.empty()) firstError = L"Could not save pack override " + rel;
+        } else {
+            ++installedOverrides;
+        }
         mz_free(p);
     }
 
@@ -427,7 +451,7 @@ bool InstallModpackFromFile(
             L" content the launcher does not install, like worlds or data packs.";
     }
     if (skippedNote) *skippedNote = note;
-    if (jobs.empty() && firstError.empty()) {
+    if (jobs.empty() && installedOverrides == 0 && firstError.empty()) {
         error = note.empty() ? L"Pack had no installable client files" : note;
         return false;
     }
@@ -438,15 +462,32 @@ bool InstallModpackFromFile(
     return true;
 }
 
-static bool ZipAddBytes(mz_zip_archive* zip, const std::string& archiveName, const std::vector<unsigned char>& bytes) {
-    if (bytes.empty()) return false;
-    return mz_zip_writer_add_mem(zip, archiveName.c_str(), bytes.data(), bytes.size(), static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION)) != 0;
+struct ZipFileWriterState {
+    FILE* file = nullptr;
+};
+
+static size_t ZipFileWriteCallback(void* opaque, mz_uint64 file_ofs, const void* pBuf, size_t n) {
+    auto* state = static_cast<ZipFileWriterState*>(opaque);
+    if (!state || !state->file || !pBuf) return 0;
+    if (_fseeki64(state->file, static_cast<__int64>(file_ofs), SEEK_SET) != 0) return 0;
+    return fwrite(pBuf, 1, n, state->file) == n ? n : 0;
+}
+
+static size_t ZipReadFileCallback(void* opaque, mz_uint64 offset, void* data, size_t size) {
+    FILE* file = static_cast<FILE*>(opaque);
+    if (_fseeki64(file, static_cast<__int64>(offset), SEEK_SET) != 0) return 0;
+    return fread(data, 1, size, file);
 }
 
 static bool ZipAddFileFromPath(mz_zip_archive* zip, const std::string& archiveName, const std::wstring& path) {
-    std::vector<unsigned char> bytes;
-    if (!ReadBinaryFileAll(path, bytes)) return false;
-    return ZipAddBytes(zip, archiveName, bytes);
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, path.c_str(), L"rb") != 0 || !file) return false;
+    if (_fseeki64(file, 0, SEEK_END) != 0) { fclose(file); return false; }
+    const __int64 size = _ftelli64(file);
+    bool ok = size >= 0 && mz_zip_writer_add_read_buf_callback(zip, archiveName.c_str(), ZipReadFileCallback,
+        file, static_cast<mz_uint64>(size), nullptr, nullptr, 0, static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION), nullptr, 0, nullptr, 0) != 0;
+    if (fclose(file) != 0) ok = false;
+    return ok;
 }
 
 struct MrpackIndexedFile {
@@ -460,11 +501,6 @@ struct MrpackIndexedFile {
 static std::wstring JsonStringOrEmpty(const JsonObject& obj, const wchar_t* key) {
     if (!obj.HasKey(key) || obj.Lookup(key).ValueType() != JsonValueType::String) return L"";
     return obj.Lookup(key).GetString().c_str();
-}
-
-static bool JsonBoolOrFalse(const JsonObject& obj, const wchar_t* key) {
-    if (!obj.HasKey(key) || obj.Lookup(key).ValueType() != JsonValueType::Boolean) return false;
-    return obj.Lookup(key).GetBoolean();
 }
 
 static bool TryResolveModrinthIndexedFile(
@@ -491,9 +527,9 @@ static bool TryResolveModrinthIndexedFile(
             auto value = files.GetAt(i);
             if (value.ValueType() != JsonValueType::Object) continue;
             JsonObject file = value.GetObject();
-            if (!selected || JsonBoolOrFalse(file, L"primary")) {
+            if (file.HasKey(L"hashes") && JsonStringOrEmpty(file.GetNamedObject(L"hashes"), L"sha1") == a2w(sha1.c_str())) {
                 selected = file;
-                if (JsonBoolOrFalse(file, L"primary")) break;
+                break;
             }
         }
         if (!selected) return false;
@@ -556,7 +592,7 @@ static bool ConfigDirHasFiles(const std::wstring& configDir) {
     bool any = false;
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || ConfigDirHasFiles(configDir + L"\\" + fd.cFileName)) {
             any = true;
             break;
         }
@@ -565,18 +601,22 @@ static bool ConfigDirHasFiles(const std::wstring& configDir) {
     return any;
 }
 
-static void AddConfigOverridesToZip(mz_zip_archive* zip, const std::wstring& configDir, const char* prefix) {
-    WIN32_FIND_DATAW fd = {};
+static bool AddConfigOverridesToZip(mz_zip_archive* zip, const std::wstring& configDir, const char* prefix) {
+    WIN32_FIND_DATAW fd{};
     HANDLE h = FindFirstFileW((configDir + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND;
+    bool ok = true;
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
         const std::wstring full = configDir + L"\\" + fd.cFileName;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        const std::string archiveName = std::string(prefix) + w2a(fd.cFileName);
-        ZipAddFileFromPath(zip, archiveName, full);
+        const std::string name = std::string(prefix) + w2a(fd.cFileName);
+        ok = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            ? AddConfigOverridesToZip(zip, full, (name + "/").c_str()) : ZipAddFileFromPath(zip, name, full);
+        if (!ok) break;
     } while (FindNextFileW(h, &fd));
+    if (GetLastError() != ERROR_NO_MORE_FILES) ok = false;
     FindClose(h);
+    return ok;
 }
 
 bool ExportProfileMrpack(
@@ -661,42 +701,57 @@ bool ExportProfileMrpack(
     const std::wstring indexText = std::wstring(root.Stringify().c_str());
     const std::string indexUtf8 = w2a(indexText.c_str());
 
-    DeleteFileW(outputPath.c_str());
-    EnsureDirectoryTree(GetParentDir(outputPath));
-
-    mz_zip_archive zip{};
-    if (!mz_zip_writer_init_heap(&zip, 0, 1024 * 1024)) {
+    if (!EnsureDirectoryTree(GetParentDir(outputPath))) { error = L"Could not create export directory"; return false; }
+    const std::wstring temporary = outputPath + L".exporting";
+    FILE* outFile = nullptr;
+    if (_wfopen_s(&outFile, temporary.c_str(), L"wb") != 0 || !outFile) {
         error = L"Could not create export archive";
+        return false;
+    }
+    ZipFileWriterState writerState{ outFile };
+    mz_zip_archive zip{};
+    zip.m_pIO_opaque = &writerState;
+    zip.m_pWrite = ZipFileWriteCallback;
+    if (!mz_zip_writer_init(&zip, 0)) {
+        fclose(outFile);
+        DeleteFileW(temporary.c_str());
+        error = L"Could not start export archive";
         return false;
     }
 
     if (!mz_zip_writer_add_mem(&zip, "modrinth.index.json", indexUtf8.data(), indexUtf8.size(), static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION))) {
         mz_zip_writer_end(&zip);
+        fclose(outFile);
+        DeleteFileW(temporary.c_str());
         error = L"Could not write pack index";
         return false;
     }
 
     for (const auto& overrideFile : overrideFiles) {
         if (!ZipAddFileFromPath(&zip, overrideFile.first, overrideFile.second)) {
-            WriteLogF(L"Export skipped override file: %s", a2w(overrideFile.first.c_str()).c_str());
+            mz_zip_writer_end(&zip);
+            fclose(outFile);
+            DeleteFileW(temporary.c_str());
+            error = L"Could not export " + a2w(overrideFile.first.c_str());
+            return false;
         }
     }
 
-    AddConfigOverridesToZip(&zip, gameDir + L"\\config", "overrides/config/");
-
-    void* heapBuf = nullptr;
-    size_t heapSize = 0;
-    if (!mz_zip_writer_finalize_heap_archive(&zip, &heapBuf, &heapSize) || !heapBuf || heapSize == 0) {
+    if (!AddConfigOverridesToZip(&zip, gameDir + L"\\config", "overrides/config/")) {
         mz_zip_writer_end(&zip);
-        error = L"Could not finalize export archive";
+        fclose(outFile);
+        DeleteFileW(temporary.c_str());
+        error = L"Could not export all config files";
         return false;
     }
-    const bool wrote = WriteAllBytes(outputPath, heapBuf, heapSize);
-    mz_free(heapBuf);
-    mz_zip_writer_end(&zip);
-    if (!wrote) {
-        DeleteFileW(outputPath.c_str());
-        error = L"Could not write export archive";
+
+    const bool finalized = mz_zip_writer_finalize_archive(&zip) != 0;
+    const bool ended = mz_zip_writer_end(&zip) != 0;
+    const bool closed = fclose(outFile) == 0;
+    if (!finalized || !ended || !closed ||
+        !MoveFileExW(temporary.c_str(), outputPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(temporary.c_str());
+        error = L"Could not finish export archive. Previous export kept";
         return false;
     }
 

@@ -4,6 +4,7 @@
   "package": "banditvault.fabriccontroller.mixin",
   "compatibilityLevel": "__COMPAT_LEVEL__",
   "client": [
+    "BanditControllerKeyAccessor",
     "BanditControllerClientMixin",
     "BanditControllerGameRendererMixin",
     "BanditControllerHandledScreenMixin",

@@ -174,6 +174,7 @@ final class BanditControllerKeyboard {
         Object focused = findTarget(screen);
         if (focused instanceof AbstractWidget && ((AbstractWidget)focused).isMouseOver(cursorX, cursorY)) return focused;
         GuiEventListener hovered = screen.getChildAt(cursorX, cursorY).orElse(null);
+        if (hovered == null && screen instanceof AbstractSignEditScreen) return focused;
         return hovered instanceof EditBox || hovered instanceof MultiLineEditBox ? hovered : null;
     }
 

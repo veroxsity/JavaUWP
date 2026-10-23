@@ -29,7 +29,10 @@
 #include <chrono>
 #include <fstream>
 #include <functional>
+#include <future>
+#include <optional>
 #include <map>
+#include <regex>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -148,6 +151,12 @@ static std::vector<IconJob> g_iconJobs;
 static size_t g_iconCursor = 0;
 static std::atomic<bool> g_iconWorkerRun{false};
 static std::thread g_iconWorker;
+static struct IconWorkerCleanup {
+    ~IconWorkerCleanup() {
+        g_iconWorkerRun.store(false);
+        if (g_iconWorker.joinable()) g_iconWorker.join();
+    }
+} g_iconWorkerCleanup;
 
 // icons stream in on a worker so the grid renders instantly and a large result
 // set doesn't block the UI on sequential downloads
@@ -178,8 +187,6 @@ static void StartIconWorker() {
 }
 
 static void StopIconWorker() {
-    g_iconWorkerRun.store(false);
-    if (g_iconWorker.joinable()) g_iconWorker.join();
     std::lock_guard<std::mutex> lk(g_iconMutex);
     g_iconJobs.clear();
     g_iconCursor = 0;
@@ -330,9 +337,8 @@ static int RemoveProfileModAndUnusedDependencies(const std::wstring& runtimeRoot
     const bool hasMeta = ReadProfileModInstallMetaFromModsDir(modsDir, jarName, removedMeta);
 
     int removed = 0;
-    if (DeleteFileW((modsDir + L"\\" + jarName).c_str())) {
-        ++removed;
-    }
+    if (!DeleteFileW((modsDir + L"\\" + jarName).c_str())) return 0;
+    ++removed;
     DeleteFileW(ModMetaPath(runtimeRoot, jarName).c_str());
     DeleteFileW(ProfileModInstallMetaPathFromModsDir(modsDir, jarName).c_str());
 
@@ -345,14 +351,15 @@ static int RemoveProfileModAndUnusedDependencies(const std::wstring& runtimeRoot
         ProfileModInstallMeta meta;
         if (!ReadProfileModInstallMetaFromModsDir(modsDir, candidate, meta)) continue;
         if (!meta.dependency) continue;
-        const size_t erased = meta.requiredBy.erase(removedMeta.projectId);
+        size_t erased = meta.requiredBy.erase(removedMeta.projectId);
+        if (removedMeta.projectId.rfind(L"cf:", 0) == 0) erased += meta.requiredBy.erase(removedMeta.projectId.substr(3));
         if (erased == 0) continue;
 
         if (meta.requiredBy.empty()) {
             if (DeleteFileW((modsDir + L"\\" + candidate).c_str())) {
                 ++removed;
                 WriteLogF(L"Removed unused dependency mod: %s", candidate.c_str());
-            }
+            } else { continue; }
             DeleteFileW(ModMetaPath(runtimeRoot, candidate).c_str());
             DeleteFileW(ProfileModInstallMetaPathFromModsDir(modsDir, candidate).c_str());
         } else {
@@ -463,8 +470,6 @@ static bool FetchTabPage(
     return true;
 }
 
-static std::atomic<int> g_installDone{0};
-static std::atomic<int> g_installTotal{0};
 static std::atomic<bool> g_installResultReady{false};
 static std::atomic<bool> g_installResultOk{false};
 static std::mutex g_installStatusMutex;
@@ -596,33 +601,83 @@ static std::vector<std::string> SplitConstraintAlternatives(const std::string& c
     return out;
 }
 
-static bool SatisfiesVersionPredicatePart(const std::string& actual, std::string part) {
-    while (!part.empty() && isspace(static_cast<unsigned char>(part.front()))) part.erase(part.begin());
-    while (!part.empty() && isspace(static_cast<unsigned char>(part.back()))) part.pop_back();
-    if (part.empty() || part == "*") return true;
-
-    std::string op = "=";
-    size_t versionStart = 0;
-    if (part.rfind(">=", 0) == 0 || part.rfind("<=", 0) == 0 || part.rfind("==", 0) == 0) {
-        op = part.substr(0, 2);
-        versionStart = 2;
-    } else if (part[0] == '>' || part[0] == '<' || part[0] == '=') {
-        op = part.substr(0, 1);
-        versionStart = 1;
+static int CompareFabricVersions(std::string left, std::string right) {
+    left = left.substr(0, left.find('+'));
+    right = right.substr(0, right.find('+'));
+    const size_t ld = left.find('-'), rd = right.find('-');
+    auto split = [](const std::string& text) {
+        std::vector<std::string> parts;
+        std::stringstream input(text);
+        std::string part;
+        while (std::getline(input, part, '.')) parts.push_back(part);
+        return parts;
+    };
+    auto numeric = [](const std::string& value) { return !value.empty() && value.find_first_not_of("0123456789") == std::string::npos; };
+    auto numberCompare = [](std::string a, std::string b) {
+        a.erase(0, (std::min)(a.find_first_not_of('0'), a.size() - 1));
+        b.erase(0, (std::min)(b.find_first_not_of('0'), b.size() - 1));
+        if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
+        return a == b ? 0 : (a < b ? -1 : 1);
+    };
+    const auto lc = split(left.substr(0, ld)), rc = split(right.substr(0, rd));
+    for (size_t i = 0; i < (std::max)(lc.size(), rc.size()); ++i) {
+        const int cmp = numberCompare(i < lc.size() ? lc[i] : "0", i < rc.size() ? rc[i] : "0");
+        if (cmp != 0) return cmp;
     }
+    if (ld == std::string::npos || rd == std::string::npos) {
+        if (ld == rd) return 0;
+        return ld == std::string::npos ? 1 : -1;
+    }
+    const auto lp = split(left.substr(ld + 1)), rp = split(right.substr(rd + 1));
+    for (size_t i = 0; i < (std::min)(lp.size(), rp.size()); ++i) {
+        if (lp[i] == rp[i]) continue;
+        const bool ln = numeric(lp[i]), rn = numeric(rp[i]);
+        if (ln != rn) return ln ? -1 : 1;
+        return ln ? numberCompare(lp[i], rp[i]) : (lp[i] < rp[i] ? -1 : 1);
+    }
+    return lp.size() == rp.size() ? 0 : (lp.size() < rp.size() ? -1 : 1);
+}
 
-    std::string expected = part.substr(versionStart);
-    while (!expected.empty() && isspace(static_cast<unsigned char>(expected.front()))) expected.erase(expected.begin());
-    if (expected.empty() || expected == "*") return true;
-
-    const int cmp = CompareVersionNumbers(actual, expected);
+static bool SatisfiesVersionPredicatePart(const std::string& actual, std::string part) {
+    if (part.empty() || part == "*") return true;
+    std::string op = "=";
+    size_t start = 0;
+    if (part.rfind(">=", 0) == 0 || part.rfind("<=", 0) == 0 || part.rfind("==", 0) == 0) { op = part.substr(0, 2); start = 2; }
+    else if (std::string("><=~^").find(part[0]) != std::string::npos) { op = part.substr(0, 1); start = 1; }
+    std::string expected = part.substr(start);
+    const size_t wildcard = expected.substr(0, expected.find_first_of("-+")).find_first_of("xX*");
+    if (wildcard != std::string::npos) {
+        if (wildcard == 0) return expected.size() == 1;
+        if (expected[wildcard - 1] != '.' || expected.find('-') != std::string::npos) return actual == expected;
+        const auto prefix = expected.substr(0, wildcard - 1);
+        if (expected.substr(wildcard).find_first_not_of("xX*") != std::string::npos) return actual == expected;
+        op = std::count(prefix.begin(), prefix.end(), '.') == 0 ? "^" : "~";
+        expected = prefix + "-";
+    }
+    static const std::regex semantic("[0-9]+(\\.[0-9]+)*(-[0-9A-Za-z.-]*)?(\\+[0-9A-Za-z.-]+)?");
+    if (!std::regex_match(actual, semantic) || !std::regex_match(expected, semantic)) {
+        if (op == ">" || op == "<" || expected.empty()) { WriteLog(L"Fabric range not recognized. Loader will validate it"); return true; }
+        return actual == expected;
+    }
+    const int cmp = CompareFabricVersions(actual, expected);
     if (op == ">=") return cmp >= 0;
     if (op == "<=") return cmp <= 0;
     if (op == ">") return cmp > 0;
     if (op == "<") return cmp < 0;
-    if (op == "=" || op == "==") return cmp == 0;
-
-    return true;
+    if (op == "^" || op == "~") {
+        const std::string base = expected.substr(0, expected.find_first_of("-+"));
+        const size_t first = base.find('.');
+        const size_t boundary = op == "^" || first == std::string::npos ? first : base.find('.', first + 1);
+        const std::string prefix = base.substr(0, boundary);
+        const auto suffixStart = prefix.find_last_of('.');
+        std::string next = prefix.substr(suffixStart == std::string::npos ? 0 : suffixStart + 1);
+        size_t i = next.size();
+        while (i > 0 && next[i - 1] == '9') { next[--i] = '0'; }
+        if (i == 0) next.insert(next.begin(), '1'); else ++next[i - 1];
+        const std::string upper = (suffixStart == std::string::npos ? std::string() : prefix.substr(0, suffixStart + 1)) + next + "-";
+        return cmp >= 0 && CompareFabricVersions(actual, upper) < 0;
+    }
+    return cmp == 0;
 }
 
 static bool SatisfiesVersionPredicate(const std::string& actual, const std::wstring& predicate) {
@@ -749,21 +804,24 @@ static bool InstallModrinthProjectRecursive(
     const std::string& loaderId,
     const std::string& loaderVersion,
     const std::wstring& rootProjectId,
-    bool installingDependency) {
+    bool installingDependency,
+    const std::wstring& pinnedVersion = L"") {
     using namespace winrt::Windows::Data::Json;
     if (projectIdOrSlug.empty()) {
         error = L"Missing Modrinth project id";
         return false;
     }
-    if (visited.find(projectIdOrSlug) != visited.end()) {
+    const std::wstring visitId = pinnedVersion.empty() ? projectIdOrSlug : L"version:" + pinnedVersion;
+    if (visited.find(visitId) != visited.end()) {
         return true;
     }
-    visited.insert(projectIdOrSlug);
+    visited.insert(visitId);
 
     const std::string project = w2a(projectIdOrSlug);
     const std::string versions = FormUrlEncode("[\"" + gameVersion + "\"]");
-    const std::wstring url =
-        L"https://api.modrinth.com/v2/project/" + a2w(FormUrlEncode(project).c_str()) +
+    const std::wstring url = !pinnedVersion.empty()
+        ? L"https://api.modrinth.com/v2/version/" + a2w(FormUrlEncode(w2a(pinnedVersion)).c_str())
+        : L"https://api.modrinth.com/v2/project/" + a2w(FormUrlEncode(project).c_str()) +
         L"/version?" +
         (loaderId.empty() ? std::wstring() : (L"loaders=" + a2w(FormUrlEncode("[\"" + loaderId + "\"]").c_str()) + L"&")) +
         L"game_versions=" + a2w(versions.c_str()) +
@@ -778,7 +836,20 @@ static bool InstallModrinthProjectRecursive(
     }
 
     try {
-        JsonArray versionsArray = JsonArray::Parse(winrt::to_hstring(response.body));
+        JsonArray versionsArray;
+        if (pinnedVersion.empty()) { versionsArray = JsonArray::Parse(winrt::to_hstring(response.body)); }
+        else {
+            JsonObject version = JsonObject::Parse(winrt::to_hstring(response.body));
+            auto contains = [](const JsonArray& values, const std::string& expected) {
+                for (uint32_t i = 0; i < values.Size(); ++i) if (w2a(values.GetAt(i).GetString().c_str()) == expected) return true;
+                return false;
+            };
+            if (!contains(version.GetNamedArray(L"game_versions"), gameVersion) ||
+                (!loaderId.empty() && !contains(version.GetNamedArray(L"loaders"), loaderId))) {
+                error = L"Pinned dependency does not support the selected target"; return false;
+            }
+            versionsArray.Append(version);
+        }
         if (versionsArray.Size() == 0) {
             error = L"No " + (loaderId.empty() ? std::wstring(L"compatible") : a2w(loaderId.c_str())) + L" " + a2w(gameVersion.c_str()) + L" version was found";
             return false;
@@ -827,24 +898,17 @@ static bool InstallModrinthProjectRecursive(
                 return false;
             }
 
-            const std::wstring destination = userModsDir + L"\\" + SafeFileName(filename);
-            const std::wstring installedFileName = SafeFileName(filename);
             const std::wstring actualProjectId = JsonStringOrEmpty(version, L"project_id").empty()
                 ? projectIdOrSlug
                 : JsonStringOrEmpty(version, L"project_id");
-
-            if (FileMatchesSha1(destination, sha1)) {
-                std::wstring reason;
-                if (ModJarMatchesFabricLoader(destination, loaderVersion, reason)) {
-                    WriteLogF(L"Mod already installed: %s", destination.c_str());
-                    RecordProfileModInstall(userModsDir, installedFileName, actualProjectId,
-                        topMeta ? topMeta->title : projectIdOrSlug,
-                        installingDependency, rootProjectId);
-                    return true;
-                }
-                WriteLogF(L"Installed Modrinth file is not compatible with target loader: %s (%s)",
-                    destination.c_str(), reason.c_str());
+            const auto flag = compat::Lookup(topMeta ? topMeta->slug : projectIdOrSlug, actualProjectId,
+                a2w(gameVersion.c_str()), a2w(loaderId.c_str()), JsonStringOrEmpty(version, L"version_number"));
+            if (flag.found && flag.severity == L"block") {
+                lastSkipReason = flag.severity + L" " + flag.note;
+                continue;
             }
+            const std::wstring destination = userModsDir + L"\\" + SafeFileName(filename);
+            const std::wstring installedFileName = SafeFileName(filename);
 
             const std::wstring tempPath = destination + L".download";
             DeleteFileW(tempPath.c_str());
@@ -889,16 +953,16 @@ static bool InstallModrinthProjectRecursive(
                     if (depValue.ValueType() != JsonValueType::Object) continue;
                     JsonObject dep = depValue.GetObject();
                     if (JsonStringOrEmpty(dep, L"dependency_type") != L"required") continue;
-                    const std::wstring depProject = JsonStringOrEmpty(dep, L"project_id");
+                    const std::wstring depVersion = JsonStringOrEmpty(dep, L"version_id");
+                    const std::wstring depProject = JsonStringOrEmpty(dep, L"project_id").empty() ? depVersion : JsonStringOrEmpty(dep, L"project_id");
                     if (!depProject.empty() &&
-                        !InstallModrinthProjectRecursive(depProject, runtimeRoot, userModsDir, visited, installed, nullptr, error, gameVersion, loaderId, loaderVersion, rootProjectId, true)) {
+                        !InstallModrinthProjectRecursive(depProject, runtimeRoot, userModsDir, visited, installed, nullptr, error, gameVersion, loaderId, loaderVersion, rootProjectId, true, depVersion)) {
                         DeleteFileW(tempPath.c_str());
                         return false;
                     }
                 }
             }
 
-            DeleteFileW(destination.c_str());
             if (!MoveFileExW(tempPath.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
                 DeleteFileW(tempPath.c_str());
                 error = L"Could not install mod: " + filename;
@@ -914,6 +978,10 @@ static bool InstallModrinthProjectRecursive(
             RecordProfileModInstall(userModsDir, installedFileName, actualProjectId,
                 topMeta ? topMeta->title : projectIdOrSlug,
                 installingDependency, rootProjectId);
+            if (flag.found) {
+                if (!error.empty()) error += L"\n";
+                error += flag.severity + L" " + filename + L" " + flag.note;
+            }
             WriteLogF(L"Installed Modrinth mod %s", destination.c_str());
             return true;
         }
@@ -991,18 +1059,6 @@ static bool InstallCurseForgeProjectRecursive(
     const std::wstring destination = userModsDir + L"\\" + installedFileName;
     const std::wstring qualifiedId = modsource::QualifyProjectId(ModSource::CurseForge, modId);
 
-    if (!file.sha1.empty() && FileMatchesSha1(destination, file.sha1)) {
-        std::wstring reason;
-        if (ModJarMatchesFabricLoader(destination, loaderVersion, reason)) {
-            WriteLogF(L"Mod already installed: %s", destination.c_str());
-            RecordProfileModInstall(userModsDir, installedFileName, qualifiedId,
-                title, installingDependency, rootProjectId);
-            return true;
-        }
-        WriteLogF(L"Installed CurseForge file is not compatible with target loader: %s (%s)",
-            destination.c_str(), reason.c_str());
-    }
-
     const std::wstring tempPath = destination + L".download";
     DeleteFileW(tempPath.c_str());
     WriteLogF(L"Downloading CurseForge file %s", file.fileName.c_str());
@@ -1047,7 +1103,6 @@ static bool InstallCurseForgeProjectRecursive(
         }
     }
 
-    DeleteFileW(destination.c_str());
     if (!MoveFileExW(tempPath.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         DeleteFileW(tempPath.c_str());
         error = L"Could not install mod: " + file.fileName;
@@ -1097,7 +1152,7 @@ static bool InstallModProject(
     std::set<std::wstring> visited;
     const std::wstring id = !card.projectId.empty() ? card.projectId : card.slug;
     return InstallCurseForgeProjectRecursive(id, runtimeRoot, userModsDir, visited, installed,
-        &card, error, gameVersion, loaderName, loaderVersion, id, false);
+        &card, error, gameVersion, loaderName, loaderVersion, modsource::QualifyProjectId(ModSource::CurseForge, id), false);
 }
 
 
@@ -1265,7 +1320,6 @@ static bool InstallContentPack(
         error = L"Verification failed: " + fileName;
         return false;
     }
-    DeleteFileW(destination.c_str());
     if (!MoveFileExW(tempPath.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         WriteLogF(L"MoveFileEx failed for %s %s err=%u", noun, destination.c_str(), GetLastError());
         DeleteFileW(tempPath.c_str());
@@ -1407,7 +1461,6 @@ static void FetchProjectDetail(const std::wstring& idOrSlug, std::wstring& body,
 }
 
 static std::atomic<unsigned> g_detailReqId{0};
-static std::atomic<bool> g_detailFetching{false};
 static std::mutex g_detailMutex;
 static unsigned g_detailReadyId = 0;
 static std::wstring g_detailBody;
@@ -1418,7 +1471,6 @@ static unsigned StartDetailFetch(const ModCard& card) {
     const unsigned id = ++g_detailReqId;
     const std::wstring idOrSlug = !card.projectId.empty() ? card.projectId : card.slug;
     const ModSource source = card.source;
-    g_detailFetching.store(true);
     std::thread([id, idOrSlug, source]() {
         std::wstring body, meta;
         std::vector<std::pair<UINT32, UINT32>> bold, head;
@@ -1435,7 +1487,6 @@ static unsigned StartDetailFetch(const ModCard& card) {
             g_detailHead = head;
             g_detailReadyId = id;
         }
-        g_detailFetching.store(false);
     }).detach();
     return id;
 }
@@ -1455,14 +1506,13 @@ static void ApplyCompatFlag(AuthUiState& state, const ModCard& card) {
     state.modsCompatNote = flag.note.empty()
         ? (card.title + L" is known to fail on this console.")
         : flag.note;
+    if (!flag.severity.empty()) state.modsCompatNote = flag.severity + L": " + state.modsCompatNote;
 }
 
 static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot, const LaunchTarget& target) {
     if (g_installRunning.load()) return;
     g_installRunning.store(true);
     g_installResultReady.store(false);
-    g_installTotal.store(0);
-    g_installDone.store(0);
     SetInstallStatus(L"Starting " + card.title + L"...");
     ModCard copy = card;
     std::wstring rootCopy = runtimeRoot;
@@ -1472,55 +1522,66 @@ static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot
         const std::string loaderId = ModrinthLoaderId(targetCopy.loader);
         const std::string loaderVersion = w2a(targetCopy.loaderVersion);
         std::wstring err;
-        bool ok;
-        if (copy.kind == ContentKind::Modpack) {
-            const std::wstring pid = CreateProfile(rootCopy, copy.title, targetCopy);
-            WriteLogF(L"Installing modpack '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), pid.c_str());
-            ok = InstallModpack(copy, rootCopy, pid, err, gameVersion, loaderId);
-            if (ok) {
-                SetActiveProfileId(rootCopy, pid);
-                // on success err carries the note about files that need fetching by hand
-                SetInstallStatus(L"Installed profile " + copy.title + (err.empty() ? std::wstring() : L". " + err));
-            } else {
-                DeleteProfilePermanent(rootCopy, pid);
-                SetInstallStatus(err.empty() ? L"Modpack install failed" : err);
-            }
-        } else {
-            const std::wstring active = GetActiveProfileId(rootCopy);
-            if (active == kVanillaProfileId) {
-                ok = false;
-                SetInstallStatus(L"Vanilla is read-only. Pick or make a profile first.");
-            } else {
-                const LaunchTarget activeTarget = ResolveProfileTarget(rootCopy, GetProfileById(rootCopy, active));
-                if (activeTarget.targetId != targetCopy.targetId) {
-                    ok = false;
-                    WriteLogF(L"Install blocked: browse target %s != active profile target %s",
-                        targetCopy.targetId.c_str(), activeTarget.targetId.c_str());
-                    SetInstallStatus(L"Active profile is " + TargetProfileText(activeTarget) +
-                        L". Select or create a " + TargetShortText(targetCopy) + L" profile to install these.");
-                } else if (copy.kind == ContentKind::Mod) {
-                    std::vector<std::wstring> installed;
-                    WriteLogF(L"Installing mod '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
-                    ok = InstallModProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err, gameVersion, loaderId, targetCopy.loader, loaderVersion);
-                    SetInstallStatus(ok
-                        ? (installed.empty() ? L"Already installed" : L"Installed " + std::to_wstring(installed.size()) + L" file(s)")
-                        : (err.empty() ? L"Install failed" : err));
+        bool ok = false;
+        try {
+            if (copy.kind == ContentKind::Modpack) {
+                const std::wstring pid = CreateProfile(rootCopy, copy.title, targetCopy);
+                if (pid.empty()) { SetInstallStatus(L"Could not save the new profile"); g_installResultOk.store(false); g_installRunning.store(false); g_installResultReady.store(true); return; }
+                WriteLogF(L"Installing modpack '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), pid.c_str());
+                ok = InstallModpack(copy, rootCopy, pid, err, gameVersion, loaderId);
+                if (ok) {
+                    const bool activeSaved = SetActiveProfileId(rootCopy, pid);
+                    SetInstallStatus(L"Installed profile " + copy.title +
+                        (activeSaved ? std::wstring() : L". Could not save the active profile") +
+                        (err.empty() ? std::wstring() : L". " + err));
                 } else {
-                    bool alreadyInstalled = false;
-                    WriteLogF(L"Installing %s '%s' target=%s into profile %s", ContentNoun(copy.kind, false),
-                        copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
-                    ok = InstallContentPack(copy, rootCopy, active, gameVersion, alreadyInstalled, err);
-                    if (!ok) {
-                        SetInstallStatus(err.empty() ? L"Install failed" : err);
-                    } else if (copy.kind == ContentKind::Shader && !ProfileHasShaderLoader(ProfileModsDir(rootCopy, active))) {
-                        SetInstallStatus(L"Installed " + copy.title + L". Shaders need Iris or Oculus in this profile, add one from Popular.");
+                    DeleteProfilePermanent(rootCopy, pid);
+                    SetInstallStatus(err.empty() ? L"Modpack install failed" : err);
+                }
+            } else {
+                const std::wstring active = GetActiveProfileId(rootCopy);
+                if (active == kVanillaProfileId) {
+                    ok = false;
+                    SetInstallStatus(L"Vanilla is read-only. Pick or make a profile first.");
+                } else {
+                    const LaunchTarget activeTarget = ResolveProfileTarget(rootCopy, GetProfileById(rootCopy, active));
+                    if (activeTarget.targetId != targetCopy.targetId) {
+                        ok = false;
+                        WriteLogF(L"Install blocked: browse target %s != active profile target %s",
+                            targetCopy.targetId.c_str(), activeTarget.targetId.c_str());
+                        SetInstallStatus(L"Active profile is " + TargetProfileText(activeTarget) +
+                            L". Select or create a " + TargetShortText(targetCopy) + L" profile to install these.");
+                    } else if (copy.kind == ContentKind::Mod) {
+                        std::vector<std::wstring> installed;
+                        WriteLogF(L"Installing mod '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
+                        ok = InstallModProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err, gameVersion, loaderId, targetCopy.loader, loaderVersion);
+                        SetInstallStatus(ok
+                            ? ((installed.empty() ? std::wstring(L"Already installed") : L"Installed " + std::to_wstring(installed.size()) + L" file(s)") + (err.empty() ? std::wstring() : L"\n" + err))
+                            : (err.empty() ? L"Install failed" : err));
                     } else {
-                        SetInstallStatus((alreadyInstalled ? L"Already installed " : L"Installed ") + copy.title +
-                            L". Turn it on in game from " +
-                            (copy.kind == ContentKind::Shader ? L"Options, Video Settings, Shader Packs." : L"Options, Resource Packs."));
+                        bool alreadyInstalled = false;
+                        WriteLogF(L"Installing %s '%s' target=%s into profile %s", ContentNoun(copy.kind, false),
+                            copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
+                        ok = InstallContentPack(copy, rootCopy, active, gameVersion, alreadyInstalled, err);
+                        if (!ok) {
+                            SetInstallStatus(err.empty() ? L"Install failed" : err);
+                        } else if (copy.kind == ContentKind::Shader && !ProfileHasShaderLoader(ProfileModsDir(rootCopy, active))) {
+                            SetInstallStatus(L"Installed " + copy.title + L". Shaders need Iris or Oculus in this profile, add one from Popular.");
+                        } else {
+                            SetInstallStatus((alreadyInstalled ? L"Already installed " : L"Installed ") + copy.title +
+                                L". Turn it on in game from " +
+                                (copy.kind == ContentKind::Shader ? L"Options, Video Settings, Shader Packs." : L"Options, Resource Packs."));
+                        }
                     }
                 }
             }
+        } catch (const std::exception& ex) {
+            WriteLogF(L"Install failed %s", a2w(ex.what()).c_str());
+            SetInstallStatus(L"Install could not finish. Check available memory and storage");
+            ok = false;
+        } catch (...) {
+            SetInstallStatus(L"Install could not finish");
+            ok = false;
         }
         g_installResultOk.store(ok);
         g_installRunning.store(false);
@@ -1667,6 +1728,7 @@ static bool FetchRecommendedMods(const std::wstring& runtimeRoot, const LaunchTa
 
     const std::string gameVersion = w2a(target.minecraftVersion);
     const std::string loaderId = ModrinthLoaderId(target.loader);
+    std::vector<ModCard> candidates;
     for (const std::wstring& slug : recommendedSlugs) {
         std::wstring key = slug;
         std::transform(key.begin(), key.end(), key.begin(),
@@ -1674,15 +1736,25 @@ static bool FetchRecommendedMods(const std::wstring& runtimeRoot, const LaunchTa
         auto it = bySlug.find(key);
         if (it == bySlug.end()) continue;
 
-        const std::wstring projectKey = it->second.projectId.empty() ? it->second.slug : it->second.projectId;
-        if (!ModrinthProjectHasTargetVersion(projectKey, gameVersion, loaderId)) {
-            WriteLogF(L"Recommended mod hidden for target=%s project=%s slug=%s",
-                target.targetId.c_str(),
-                projectKey.c_str(),
-                it->second.slug.c_str());
-            continue;
+        candidates.push_back(it->second);
+    }
+    for (size_t start = 0; start < candidates.size(); start += 4) {
+        std::vector<std::future<bool>> checks;
+        const size_t end = (std::min)(start + 4, candidates.size());
+        for (size_t i = start; i < end; ++i) {
+            const std::wstring project = candidates[i].projectId.empty() ? candidates[i].slug : candidates[i].projectId;
+            checks.push_back(std::async(std::launch::async, [project, gameVersion, loaderId]() {
+                const HRESULT initialized = RoInitialize(RO_INIT_MULTITHREADED);
+                bool matches = false;
+                try { matches = ModrinthProjectHasTargetVersion(project, gameVersion, loaderId); }
+                catch (...) { WriteLog(L"Recommended version check failed"); }
+                if (SUCCEEDED(initialized)) RoUninitialize();
+                return matches;
+            }));
         }
-        out.push_back(it->second);
+        for (size_t i = start; i < end; ++i) {
+            if (checks[i - start].get()) out.push_back(candidates[i]);
+        }
     }
     return true;
 }
@@ -1722,7 +1794,7 @@ static void SetModsTargetFromProfile(AuthUiState& state, const std::wstring& run
     state.modsBrowseTargetId = ResolveProfileTarget(runtimeRoot, profile).targetId;
 }
 
-static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot) {
+static void FetchModsTab(AuthUiState& state, const std::wstring& runtimeRoot) {
     state.modsCards.clear();
     state.selectedModIndex = 0;
     state.modsScrollRow = 0;
@@ -1833,6 +1905,77 @@ static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot) {
     state.status = state.modsCards.empty()
         ? std::wstring(L"No ") + ContentNoun(tab.kind, true) + L" found"
         : std::to_wstring(state.modsCards.size()) + L" of " + std::to_wstring(total);
+}
+
+static std::future<std::pair<unsigned long long, AuthUiState>> g_browseJob;
+static std::optional<AuthUiState> g_browsePending;
+static std::wstring g_browseRoot;
+static unsigned long long g_browseGeneration = 0;
+static bool g_browseAppend = false;
+
+static void StartBrowseJob() {
+    if (!g_browsePending || g_browseJob.valid()) return;
+    AuthUiState request = std::move(*g_browsePending);
+    g_browsePending.reset();
+    const auto generation = g_browseGeneration;
+    const auto root = g_browseRoot;
+    const bool append = g_browseAppend;
+    g_browseJob = std::async(std::launch::async, [request = std::move(request), generation, root, append]() mutable {
+        const HRESULT initialized = RoInitialize(RO_INIT_MULTITHREADED);
+        try {
+            if (append) {
+                int total = request.modsTotalHits;
+                std::wstring error;
+                const int before = static_cast<int>(request.modsCards.size());
+                if (!FetchTabPage(request, root, before, request.modsCards, total, error)) {
+                    request.isError = true; request.status = error;
+                } else {
+                    request.modsTotalHits = total;
+                    request.modsExhausted = static_cast<int>(request.modsCards.size()) >= total;
+                    request.status = std::to_wstring(request.modsCards.size()) + L" of " + std::to_wstring(total);
+                    QueueModIconsAppend(request.modsCards, static_cast<size_t>(before));
+                }
+            } else { FetchModsTab(request, root); }
+        } catch (...) { request.isError = true; request.status = L"Mod lookup failed"; }
+        if (SUCCEEDED(initialized)) RoUninitialize();
+        return std::make_pair(generation, std::move(request));
+    });
+}
+
+static void PollBrowseJob(AuthUiState& state) {
+    if (g_browseJob.valid() && g_browseJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        auto result = g_browseJob.get();
+        if (result.first == g_browseGeneration) {
+            state.modsCards = std::move(result.second.modsCards);
+            state.modsTotalHits = result.second.modsTotalHits;
+            state.modsExhausted = result.second.modsExhausted;
+            state.isError = result.second.isError;
+            state.status = std::move(result.second.status);
+        }
+    }
+    StartBrowseJob();
+}
+
+static void RequestBrowseJob(AuthUiState& state, const std::wstring& root, bool append) {
+    ++g_browseGeneration;
+    g_browsePending = state;
+    g_browseRoot = root;
+    g_browseAppend = append;
+    state.status = L"Loading mods";
+    StartBrowseJob();
+}
+
+static void LoadModsTab(AuthUiState& state, const std::wstring& runtimeRoot) {
+    if (state.selectedModsTab == modstab::kProfiles) {
+        ++g_browseGeneration;
+        g_browsePending.reset();
+        FetchModsTab(state, runtimeRoot);
+    } else {
+        state.modsCards.clear();
+        state.selectedModIndex = 0;
+        state.modsScrollRow = 0;
+        RequestBrowseJob(state, runtimeRoot, false);
+    }
 }
 
 static winrt::Windows::UI::Core::CoreWindow g_modsCharWindow{nullptr};
@@ -2084,7 +2227,6 @@ void ShowModsPage(
     AuthScreenRenderer* renderer,
     AuthUiState& state,
     const std::wstring& runtimeRoot) {
-    const std::wstring userModsDir = runtimeRoot + L"\\game\\user-mods";
     compat::RefreshAsync();
     state.showMainMenu = false;
     state.showModsPage = true;
@@ -2168,22 +2310,8 @@ void ShowModsPage(
     };
 
     auto loadMore = [&]() {
-        if (state.modsExhausted || !ModsTabAt(state.selectedModsTab).searchesSource) return;
-        const int before = static_cast<int>(state.modsCards.size());
-        state.status = L"Loading more...";
-        RenderAuth(renderer, state);
-
-        int total = state.modsTotalHits;
-        std::wstring error;
-        if (!FetchTabPage(state, runtimeRoot, before, state.modsCards, total, error)) {
-            state.modsExhausted = true;
-            return;
-        }
-        const int after = static_cast<int>(state.modsCards.size());
-        state.modsTotalHits = total;
-        state.modsExhausted = after == before || after >= total;
-        QueueModIconsAppend(state.modsCards, static_cast<size_t>(before));
-        state.status = std::to_wstring(after) + L" of " + std::to_wstring(total);
+        if (state.modsExhausted || !ModsTabAt(state.selectedModsTab).searchesSource || g_browseJob.valid()) return;
+        RequestBrowseJob(state, runtimeRoot, true);
     };
 
     auto selectTab = [&](int tab) {
@@ -2207,6 +2335,7 @@ void ShowModsPage(
     WriteLog(L"Mods page opened");
     int lastEnsuredSel = -1;
     while (true) {
+        PollBrowseJob(state);
         g_modsSearchCapturing.store(state.modsSearchEditing || state.modsRenaming);
         if (state.modsSearchEditing) {
             std::lock_guard<std::mutex> lk(g_modsSearchMutex);
@@ -2271,6 +2400,8 @@ void ShowModsPage(
         });
 
         if (backDown && !backWasDown && !state.modsDetailOpen && !state.modsProfileOpen && !state.modsTargetOpen && !g_installRunning.load()) {
+            ++g_browseGeneration;
+            g_browsePending.reset();
             WriteLog(L"Mods page closed");
             EndModsSearchCapture();
             StopIconWorker();
@@ -2304,10 +2435,15 @@ void ShowModsPage(
             ModsSearchEndInput();
             state.modsRenaming = false;
             if (!buf.empty() && !state.modsProfileBuiltin) {
-                RenameProfile(runtimeRoot, state.modsProfileId, buf);
-                state.modsProfileName = buf;
-                if (state.activeProfileId == state.modsProfileId) state.activeProfileName = buf;
-                state.status = L"Renamed to " + buf;
+                if (RenameProfile(runtimeRoot, state.modsProfileId, buf)) {
+                    state.modsProfileName = buf;
+                    if (state.activeProfileId == state.modsProfileId) state.activeProfileName = buf;
+                    state.status = L"Renamed to " + buf;
+                    state.isError = false;
+                } else {
+                    state.status = L"Could not rename profile. Original name kept";
+                    state.isError = true;
+                }
             }
         }
         wasOskVisible = oskVisible;
@@ -2399,7 +2535,9 @@ void ShowModsPage(
                     }
                 } else {
                     if (hid == launchhit::kBack && clicked) {
-                        WriteLog(L"Mods page closed");
+                        ++g_browseGeneration;
+            g_browsePending.reset();
+            WriteLog(L"Mods page closed");
                         EndModsSearchCapture();
                         StopIconWorker();
                         state.showModsPage = false;
@@ -2514,21 +2652,21 @@ void ShowModsPage(
                     pmEnsureVisible();
                     state.status = removed > 1
                         ? L"Removed " + jar + L" and " + std::to_wstring(removed - 1) + L" unused dependenc" + (removed == 2 ? L"y" : L"ies")
-                        : L"Removed " + jar;
+                        : (removed == 0 ? L"Could not remove " + jar : L"Removed " + jar);
                 } else if (!state.modsProfileBuiltin) {
                     const std::wstring gone = state.modsProfileName;
-                    DeleteProfile(runtimeRoot, state.modsProfileId);
+                    const bool deleted = DeleteProfile(runtimeRoot, state.modsProfileId);
                     state.modsProfileOpen = false;
                     LoadModsTab(state, runtimeRoot);
-                    state.status = L"Deleted " + gone + L". Use Undo deleted profile to restore it.";
+                    state.status = deleted ? L"Deleted " + gone + L". Use Undo deleted profile to restore it." : L"Could not delete " + gone;
                 }
             } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                 if (state.modsProfileFocus == 1 && !state.modsProfileBuiltin) {
                     const std::wstring gone = state.modsProfileName;
-                    DeleteProfile(runtimeRoot, state.modsProfileId);
+                    const bool deleted = DeleteProfile(runtimeRoot, state.modsProfileId);
                     state.modsProfileOpen = false;
                     LoadModsTab(state, runtimeRoot);
-                    state.status = L"Deleted " + gone + L". Use Undo deleted profile to restore it.";
+                    state.status = deleted ? L"Deleted " + gone + L". Use Undo deleted profile to restore it." : L"Could not delete " + gone;
                 } else if (state.modsProfileFocus == 3 && !state.modsProfileBuiltin) {
                     std::wstring backupDir;
                     if (BackupProfile(runtimeRoot, state.modsProfileId, backupDir)) {
@@ -2551,7 +2689,12 @@ void ShowModsPage(
                     }
                 } else if (state.modsProfileFocus == 5 && !state.modsProfileBuiltin) {
                     state.modsProfileControllerModEnabled = !state.modsProfileControllerModEnabled;
-                    SetProfileControllerModEnabled(runtimeRoot, state.modsProfileId, state.modsProfileControllerModEnabled);
+                    if (!SetProfileControllerModEnabled(runtimeRoot, state.modsProfileId, state.modsProfileControllerModEnabled)) {
+                        state.modsProfileControllerModEnabled = !state.modsProfileControllerModEnabled;
+                        state.status = L"Could not save controller setting";
+                        state.isError = true;
+                        continue;
+                    }
                     if (state.modsProfileControllerModEnabled) {
                         const int removed = DeleteControlifyModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));
                         state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
@@ -2567,7 +2710,7 @@ void ShowModsPage(
                     }
                     state.isError = false;
                 } else if (state.modsProfileFocus == 0) {
-                    SetActiveProfileId(runtimeRoot, state.modsProfileId);
+                    if (!SetActiveProfileId(runtimeRoot, state.modsProfileId)) { state.status = L"Could not save active profile"; state.isError = true; continue; }
                     state.activeProfileId = state.modsProfileId;
                     state.activeProfileName = state.modsProfileName;
                     SetModsTargetFromProfile(state, runtimeRoot, state.modsProfileId);
@@ -2636,6 +2779,14 @@ void ShowModsPage(
             backWasDown = backDown; pageUpWasDown = pageUpDown; pageDownWasDown = pageDownDown; xWasDown = xDown; yWasDown = yDown;
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
+        }
+
+        if (wheelDelta != 0.0f && state.modsTargetOpen) {
+            const int wheelNotches = static_cast<int>(wheelDelta > 0.0f ? (wheelDelta + 0.5f) : (wheelDelta - 0.5f));
+            const int total = static_cast<int>(state.modsTargets.size());
+            const int visible = (std::min)(total, kModsTargetRowsVisible);
+            state.modsTargetScroll = (std::clamp)(state.modsTargetScroll - wheelNotches, 0, total - visible);
+            wheelDelta = 0.0f;
         }
 
         if (wheelDelta != 0.0f && count > 0) {
@@ -2787,14 +2938,15 @@ void ShowModsPage(
                 state.selectedModIndex >= 0 && state.selectedModIndex < count) {
                 const ModCard& sel = state.modsCards[static_cast<size_t>(state.selectedModIndex)];
                 if (sel.projectId == L"__profile__" && sel.filePath != kVanillaProfileId) {
-                    DeleteProfile(runtimeRoot, sel.filePath);
+                    const bool ok = DeleteProfile(runtimeRoot, sel.filePath);
                     const std::wstring deleted = sel.title;
                     LoadModsTab(state, runtimeRoot);
                     if (state.selectedModIndex >= static_cast<int>(state.modsCards.size())) {
                         state.selectedModIndex = (std::max)(0, static_cast<int>(state.modsCards.size()) - 1);
                     }
                     ensureSelectionVisible();
-                    state.status = L"Deleted " + deleted + L". Use Undo deleted profile to restore it.";
+                    state.status = ok ? L"Deleted " + deleted + L". Use Undo deleted profile to restore it." : L"Could not delete " + deleted;
+                    state.isError = !ok;
                 }
             }
 
@@ -2826,7 +2978,11 @@ void ShowModsPage(
                     } else if (selected.projectId == L"__new__") {
                         const LaunchTarget target = CurrentModsTarget(state);
                         const std::wstring pid = CreateAutoProfile(runtimeRoot, target);
-                        SetActiveProfileId(runtimeRoot, pid);
+                        if (pid.empty() || !SetActiveProfileId(runtimeRoot, pid)) {
+                            state.status = L"Could not save the new active profile";
+                            state.isError = true;
+                            continue;
+                        }
                         state.modsBrowseTargetId = target.targetId;
                         LoadModsTab(state, runtimeRoot);
                         ensureSelectionVisible();

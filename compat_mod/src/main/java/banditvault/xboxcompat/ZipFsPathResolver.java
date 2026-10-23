@@ -53,7 +53,7 @@ public final class ZipFsPathResolver {
             ZIP_FILE_SYSTEMS.put(jarPath, fileSystem);
         }
 
-        return fileSystem.getPath(spec.substring(sep + 1));
+        return fileSystem.getPath(URI.create("file:" + spec.substring(sep + 1)).getPath());
     }
 
     private static Method findPathNewFileSystemMethod() {

@@ -17,11 +17,7 @@ $gameDir = Get-ConfigPath "GameDir"
 $assetsDir = Get-ConfigPath "AssetsDir"
 $version = if ($MinecraftVersion) { $MinecraftVersion } else { $ProjectConfig.MinecraftVersion }
 $loaderVersion = if ($FabricLoaderVersion) { $FabricLoaderVersion } else { $ProjectConfig.FabricLoaderVersion }
-$nativesDir = if ($MinecraftVersion -and $MinecraftVersion -ne $ProjectConfig.MinecraftVersion) {
-    Join-Path (Get-ConfigPath "CacheDir") ("natives-" + ($MinecraftVersion -replace '[^A-Za-z0-9_.-]', '_'))
-} else {
-    Get-ConfigPath "NativesDir"
-}
+$nativesDir = Get-ConfigPath "NativesDir"
 $toolsDir = Get-ConfigPath "ToolsDir"
 $notesDir = Get-ConfigPath "NotesDir"
 $assetIndex = if ($AssetIndex) { $AssetIndex } else { "" }
@@ -41,20 +37,6 @@ function Get-MinecraftVersionJson {
     }
 
     return Get-CachedRemoteJson -Uri $entry.url
-}
-
-function Save-RemoteFile {
-    param(
-        [Parameter(Mandatory = $true)][string]$Uri,
-        [Parameter(Mandatory = $true)][string]$Path
-    )
-
-    if (Test-Path $Path) {
-        return
-    }
-
-    Ensure-Dir (Split-Path $Path -Parent)
-    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Path
 }
 
 function Expand-NativeJar {
@@ -233,7 +215,7 @@ foreach ($library in $versionJson.libraries) {
     $classifier = $classifierProperty.Value
     $zipName = Get-SafeFileName -Value $classifier.path
     $zipPath = Join-Path $toolsDir "natives-$zipName"
-    Save-RemoteFile -Uri $classifier.url -Path $zipPath
+    Save-RemoteFile -Uri $classifier.url -Path $zipPath -Sha1 $classifier.sha1 -Size $classifier.size
 
     Expand-NativeJar -Path $zipPath | Out-Null
 }
@@ -255,7 +237,7 @@ foreach ($library in $versionJson.libraries) {
     }
 
     $jarPath = Join-Path $gameDir ("libraries\" + $artifactPath.Replace('/', '\'))
-    Save-RemoteFile -Uri $artifact.url -Path $jarPath
+    Save-RemoteFile -Uri $artifact.url -Path $jarPath -Sha1 $artifact.sha1 -Size $artifact.size
     Expand-NativeJar -Path $jarPath | Out-Null
 }
 
@@ -274,7 +256,7 @@ if (-not $installerVersion) {
     throw "Could not determine Fabric installer version from Maven metadata."
 }
 
-$installerJar = Join-Path $toolsDir "fabric-installer.jar"
+$installerJar = Join-Path $toolsDir "fabric-installer-$installerVersion.jar"
 $installerUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-installer/$installerVersion/fabric-installer-$installerVersion.jar"
 Save-RemoteFile -Uri $installerUrl -Path $installerJar
 
@@ -295,7 +277,7 @@ $indexDir = Join-Path $assetsDir "indexes"
 Ensure-Dir $indexDir
 $assetIndexId = $versionJson.assetIndex.id
 $assetIndexPath = Join-Path $indexDir "$assetIndexId.json"
-Save-RemoteFile -Uri $versionJson.assetIndex.url -Path $assetIndexPath
+Save-RemoteFile -Uri $versionJson.assetIndex.url -Path $assetIndexPath -Sha1 $versionJson.assetIndex.sha1 -Size $versionJson.assetIndex.size
 if ($assetIndexId -ne $assetIndex) {
     Write-Warning "Configured asset index is $assetIndex, but Mojang metadata for $version reports $assetIndexId."
 }
@@ -308,174 +290,39 @@ if (-not (Test-FabricTargetHasIntermediary -GameDir $gameDir -MinecraftVersion $
 }
 
 $remappedJar = Join-Path $gameDir ".fabric\remappedJars\minecraft-$version-$loaderVersion\client-intermediary.jar"
-$existingRemappedJar = Get-Item -LiteralPath $remappedJar -ErrorAction SilentlyContinue
-if ($existingRemappedJar -and $existingRemappedJar.Length -le 0) {
-    Write-Warning "Discarding empty cached remapped client jar at $remappedJar."
-    Remove-Item -LiteralPath $remappedJar -Force
-    $existingRemappedJar = $null
-}
-if ($existingRemappedJar) {
-    Write-Host "Using cached Fabric remapped client jar -> $remappedJar"
-}
-if (-not (Test-Path $remappedJar)) {
+if (-not (Test-JarComplete $remappedJar "net/minecraft/class_310.class")) {
     $clientJar = Join-Path $gameDir "versions\$version\$version.jar"
-    if (-not (Test-Path $clientJar)) {
-        throw "Client jar missing at $clientJar."
-    }
-
-    $jarEntries = @{}
-    $jarKeyOrder = [System.Collections.Generic.List[string]]::new()
-    foreach ($library in $versionJson.libraries) {
-        if ($library.downloads -and $library.downloads.artifact) {
-            Add-LibraryJar -JarEntries $jarEntries -JarKeyOrder $jarKeyOrder -RelativePath ([string]$library.downloads.artifact.path)
-        }
-    }
-
-    $fabricVersionJsonPath = Join-Path $gameDir "versions\fabric-loader-$loaderVersion-$version\fabric-loader-$loaderVersion-$version.json"
-    if (-not (Test-Path $fabricVersionJsonPath)) {
-        throw "Fabric version JSON missing at $fabricVersionJsonPath."
-    }
-    $fabricVersionJson = Get-Content -Raw -Path $fabricVersionJsonPath | ConvertFrom-Json
-    foreach ($library in $fabricVersionJson.libraries) {
-        Add-LibraryJar -JarEntries $jarEntries -JarKeyOrder $jarKeyOrder -RelativePath (Convert-MavenNameToPath ([string]$library.name))
-    }
-
-    $jars = [System.Collections.Generic.List[string]]::new()
-    foreach ($key in $jarKeyOrder) {
-        $jars.Add($jarEntries[$key].Path)
-    }
-    $jars.Add($clientJar)
+    $profile = Get-Content -Raw (Join-Path $gameDir "versions\fabric-loader-$loaderVersion-$version\fabric-loader-$loaderVersion-$version.json") | ConvertFrom-Json
+    $jars = @($profile.libraries | ForEach-Object { Join-Path $gameDir ("libraries\" + (Convert-MavenNameToPath $_.name)) })
     $classpath = $jars -join ";"
-    $remapLog = Join-Path $notesDir "fabric-remap.log"
-    $remapStdoutLog = Join-Path $notesDir "fabric-remap.stdout.log"
-    $remapStderrLog = Join-Path $notesDir "fabric-remap.stderr.log"
-    $emptyModsDir = Join-Path $gameDir ".fabric\empty-mods-$version-$loaderVersion"
-    Ensure-Dir $emptyModsDir
-    Ensure-Dir (Join-Path $gameDir "logs")
-
-    $javaArgs = @(
-        "-Dfabric.gameJarPath=$clientJar",
-        "-Dfabric.modsFolder=$emptyModsDir",
-        "-Djava.library.path=$nativesDir",
-        "-Dorg.lwjgl.librarypath=$nativesDir",
-        "-Duser.dir=$gameDir",
-        "-cp", $classpath,
-        "net.fabricmc.loader.impl.launch.knot.KnotClient",
-        "--gameDir", $gameDir,
-        "--assetsDir", $assetsDir,
-        "--assetIndex", $assetIndex,
-        "--version", "fabric-loader-$loaderVersion-$version",
-        "--username", "DevPlayer",
-        "--uuid", "00000000-0000-0000-0000-000000000000",
-        "--accessToken", "0",
-        "--versionType", "release"
-    )
-
-    # fabric.modsFolder does not exist before loader 0.15, older ones read gameDir\mods
-    $modsDir = Join-Path $gameDir "mods"
-    $stashedModsDir = Join-Path $gameDir ".fabric\mods-stashed-$version-$loaderVersion"
-    $modsStashed = $false
-    if ((Test-Path $modsDir) -and @(Get-ChildItem $modsDir -File -ErrorAction SilentlyContinue).Count -gt 0) {
-        Remove-Item -Recurse -Force $stashedModsDir -ErrorAction SilentlyContinue
-        Move-Item -LiteralPath $modsDir -Destination $stashedModsDir -Force
-        $modsStashed = $true
-    }
-
+    $intermediary = $jars | Where-Object { $_ -match 'intermediary-[^\\]+\.jar$' } | Select-Object -First 1
+    if (-not $intermediary) { throw "Intermediary mappings missing" }
+    $work = Join-Path $toolsDir "fabric-remapper"
+    Ensure-Dir $work, (Split-Path $remappedJar -Parent)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($intermediary)
+    $mappingPath = Join-Path $work "mappings.tiny"
     try {
-
-    $javaArgumentLine = ($javaArgs | ForEach-Object { ConvertTo-QuotedProcessArgument ([string]$_) }) -join " "
-    Remove-Item -LiteralPath $remapStdoutLog, $remapStderrLog -Force -ErrorAction SilentlyContinue
-    $javaProcess = Start-Process `
-        -FilePath $javaExe `
-        -ArgumentList $javaArgumentLine `
-        -WorkingDirectory $gameDir `
-        -NoNewWindow `
-        -PassThru `
-        -RedirectStandardOutput $remapStdoutLog `
-        -RedirectStandardError $remapStderrLog
-
-    $fabricExitCode = $null
-    $remapReady = $false
-    $lastRemappedSize = -1
-    $stableChecks = 0
-    $deadline = (Get-Date).AddMinutes(10)
-    $nextStatus = (Get-Date).AddSeconds(15)
-
-    while (-not $javaProcess.HasExited) {
-        if (Test-Path $remappedJar) {
-            try {
-                $remappedFile = Get-Item -LiteralPath $remappedJar
-                if ($remappedFile.Length -gt 0 -and $remappedFile.Length -eq $lastRemappedSize) {
-                    $stableChecks++
-                } else {
-                    $stableChecks = 0
-                    $lastRemappedSize = $remappedFile.Length
-                }
-
-                if ($stableChecks -ge 2) {
-                    $remapReady = $true
-                    Write-Host "Fabric remapped client jar is ready -> $remappedJar"
-                    break
-                }
-            } catch {
-                $stableChecks = 0
-            }
+        $entry = $zip.GetEntry("mappings/mappings.tiny")
+        if (-not $entry) { throw "Intermediary mapping entry missing" }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $mappingPath, $true)
+    } finally { $zip.Dispose() }
+    $loaderJar = $jars | Where-Object { $_ -match 'fabric-loader-[^\\]+\.jar$' } | Select-Object -First 1
+    $remapperSource = Get-FabricRemapperSource -LoaderJar $loaderJar
+    $remapperSourcePath = Join-Path $work "RemapFabricClient.java"
+    [IO.File]::WriteAllText($remapperSourcePath, $remapperSource)
+    & (Join-Path $javaHome "bin\javac.exe") -cp $classpath -d $work $remapperSourcePath
+    if ($LASTEXITCODE -ne 0) { throw "Fabric remapper compile failed" }
+    $temp = "$remappedJar.tmp"
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    try {
+        & $javaExe -cp "$work;$classpath" RemapFabricClient $clientJar $temp $mappingPath @jars
+        if ($LASTEXITCODE -ne 0 -or -not (Test-JarComplete $temp "net/minecraft/class_310.class")) { throw "Fabric remap failed" }
+        if (Test-Path -LiteralPath $remappedJar) {
+            [IO.File]::Replace($temp, $remappedJar, "$remappedJar.previous")
+            Remove-Item -LiteralPath "$remappedJar.previous" -Force
         }
-
-        if ((Get-Date) -ge $deadline) {
-            Write-Warning "Fabric remap launch timed out after 10 minutes."
-            break
-        }
-
-        if ((Get-Date) -ge $nextStatus) {
-            Write-Host "Waiting for Fabric to finish generating the remapped client jar..."
-            $nextStatus = (Get-Date).AddSeconds(15)
-        }
-
-        Start-Sleep -Seconds 2
-        $javaProcess.Refresh()
-    }
-
-    if ($javaProcess.HasExited) {
-        $fabricExitCode = $javaProcess.ExitCode
-    } else {
-        if ($remapReady) {
-            Write-Host "Stopping Fabric remap launcher process after jar generation."
-            $fabricExitCode = 0
-        } else {
-            Write-Warning "Stopping Fabric remap launcher process before jar generation completed."
-            $fabricExitCode = 1
-        }
-
-        Stop-Process -Id $javaProcess.Id -Force -ErrorAction SilentlyContinue
-        $javaProcess.WaitForExit(10000) | Out-Null
-    }
-
-    $remapOutput = @()
-    if (Test-Path $remapStdoutLog) {
-        $remapOutput += @(Get-Content -Path $remapStdoutLog)
-    }
-    if (Test-Path $remapStderrLog) {
-        $remapOutput += @(Get-Content -Path $remapStderrLog)
-    }
-    if ($remapOutput.Count -gt 0) {
-        $remapOutput | Set-Content -Path $remapLog
-        $remapOutput | ForEach-Object { Write-Host $_ }
-    }
-
-    if (-not (Test-Path $remappedJar)) {
-        throw "Fabric remapped client jar was not created. See $remapLog."
-    }
-    if ($fabricExitCode -ne 0) {
-        Write-Warning "Fabric launch exited with code $fabricExitCode after creating the remapped jar."
-    }
-
-    } finally {
-        if ($modsStashed) {
-            Remove-Item -Recurse -Force $modsDir -ErrorAction SilentlyContinue
-            Move-Item -LiteralPath $stashedModsDir -Destination $modsDir -Force
-        }
-    }
+        else { [IO.File]::Move($temp, $remappedJar) }
+    } finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
 }
-
-Write-Host "CI cache is ready."
+Write-Host "Fabric remapped client ready $remappedJar"

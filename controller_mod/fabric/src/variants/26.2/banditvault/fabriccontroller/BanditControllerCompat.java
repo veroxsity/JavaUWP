@@ -677,7 +677,7 @@ public final class BanditControllerCompat {
             preservePhysicalInput && isBoundInputHeld(key),
             preservePhysicalInput);
         key.setDown(effectiveHeld);
-        KeyMapping.set(key.getDefaultKey(), effectiveHeld);
+        KeyMapping.set(((banditvault.fabriccontroller.mixin.BanditControllerKeyAccessor) key).banditvault$currentKey(), effectiveHeld);
     }
 
     private static boolean isBoundInputHeld(KeyMapping key) {
@@ -686,7 +686,7 @@ public final class BanditControllerCompat {
             return false;
         }
         long window = client.getWindow().handle();
-        int code = key.getDefaultKey().getValue();
+        int code = ((banditvault.fabriccontroller.mixin.BanditControllerKeyAccessor) key).banditvault$currentKey().getValue();
         if (code < 0) return false;
         return GLFW.glfwGetKey(window, code) == GLFW.GLFW_PRESS
             || (code >= 0 && code <= GLFW.GLFW_MOUSE_BUTTON_LAST
@@ -697,7 +697,7 @@ public final class BanditControllerCompat {
         if (key == null) {
             return;
         }
-        KeyMapping.click(key.getDefaultKey());
+        KeyMapping.click(((banditvault.fabriccontroller.mixin.BanditControllerKeyAccessor) key).banditvault$currentKey());
     }
 
     public static String radialKeyLabel(String keyId) {
@@ -767,7 +767,7 @@ public final class BanditControllerCompat {
     }
 
     private static boolean sendKeyboardKey(KeyMapping key, int action) {
-        InputConstants.Key input = key.getDefaultKey();
+        InputConstants.Key input = ((banditvault.fabriccontroller.mixin.BanditControllerKeyAccessor) key).banditvault$currentKey();
         InputConstants.Type type = input.getType();
         if (type != InputConstants.Type.KEYSYM && type != InputConstants.Type.SCANCODE) return false;
         Minecraft client = Minecraft.getInstance();
@@ -903,14 +903,6 @@ public final class BanditControllerCompat {
         return CONTROLLER_STATE.axis(axisFor(index));
     }
 
-    private static boolean trigger(int index) {
-        return CONTROLLER_STATE.trigger(axisFor(index), BanditControllerSettings.get().triggerDeadzone);
-    }
-
-    private static boolean triggerPressed(int index) {
-        return CONTROLLER_STATE.triggerPressed(axisFor(index), BanditControllerSettings.get().triggerDeadzone);
-    }
-
     private static boolean button(int index) {
         return CONTROLLER_STATE.button(buttonFor(index));
     }
@@ -939,20 +931,8 @@ public final class BanditControllerCompat {
         return settings.binding(action);
     }
 
-    private static void copyButtons() {
-        finishFrame();
-    }
-
-    private static float shapedLookAxis(float value, float deadzone) {
-        return ControllerRuntime.shapedLookAxis(value, deadzone);
-    }
-
     private static double shapedCursorAxis(float value, float deadzone) {
         return ControllerRuntime.shapedCursorAxis(value, deadzone);
-    }
-
-    private static float clampAxis(float value) {
-        return ControllerState.clampAxis(value);
     }
 
     private static float getEntityFloat(Object value, String fieldName) throws ReflectiveOperationException {

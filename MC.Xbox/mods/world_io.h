@@ -6,7 +6,7 @@
 bool IsSafeWorldName(const std::wstring& name);
 
 std::wstring WorldExportsDir(const std::wstring& runtimeRoot);
-std::wstring DefaultWorldExportPath(const std::wstring& runtimeRoot, const std::wstring& worldName);
+std::wstring DefaultWorldExportPath(const std::wstring& runtimeRoot, const std::wstring& profileId, const std::wstring& worldName);
 
 std::vector<std::wstring> ListProfileWorlds(const std::wstring& runtimeRoot, const std::wstring& profileId);
 

@@ -68,7 +68,8 @@ $mcBuildDir = Join-Path $buildDir "MC.Xbox"
 $glfwBuildDir = Join-Path $buildDir "glfw_shim"
 $mcExe = Join-Path $mcBuildDir "MC.Xbox.exe"
 $shimDll = Join-Path $glfwBuildDir "glfw.dll"
-$jreSrc = Resolve-JavaHome
+$currentJavaMajor = (@(Import-Csv (Join-Path $root $ProjectConfig.VersionCatalog) -Delimiter "`t" | Where-Object { $_.javaRuntime -eq "current" } | ForEach-Object { Get-MinecraftJavaMajorVersion $_.minecraftVersion }) | Measure-Object -Maximum).Maximum
+$jreSrc = Resolve-JavaHome -MajorVersion ([Math]::Max([int]$currentJavaMajor, [int]$ProjectConfig.JavaRelease))
 $jre21Src = Resolve-JavaHomeExact -MajorVersion 21
 $jarExe = Join-Path $jreSrc "bin\jar.exe"
 if (-not (Test-Path $jarExe)) { $jarExe = "jar" }
@@ -426,9 +427,6 @@ Write-Host "=== Building default Fabric controller mod ==="
     -LoaderVersion $ProjectConfig.FabricLoaderVersion `
     -OutputDir (Join-Path $gameDir "mods")
 
-Write-Host "=== Patching Fabric Loader for Xbox filesystem ==="
-& (Join-Path $root "scripts\patch-fabric.ps1")
-
 Write-Host "=== Assembling PackageContent ==="
 Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
 Ensure-Dir (Join-Path $pkg "Assets")
@@ -486,12 +484,8 @@ function Ensure-FabricLoaderJar {
 
     $loaderRelative = "net\fabricmc\fabric-loader\$LoaderVersion\fabric-loader-$LoaderVersion.jar"
     $loaderSrc = Join-Path $gameDir "libraries\$loaderRelative"
-    if (-not (Test-Path $loaderSrc)) {
-        $loaderUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-loader/$LoaderVersion/fabric-loader-$LoaderVersion.jar"
-        Write-Host "Downloading Fabric loader $LoaderVersion"
-        Ensure-Dir (Split-Path $loaderSrc -Parent)
-        Invoke-WebRequest -UseBasicParsing -Uri $loaderUrl -OutFile $loaderSrc -TimeoutSec 60
-    }
+    $loaderUrl = "https://maven.fabricmc.net/net/fabricmc/fabric-loader/$LoaderVersion/fabric-loader-$LoaderVersion.jar"
+    Save-RemoteFile -Uri $loaderUrl -Path $loaderSrc
 
     & (Join-Path $root "scripts\patch-fabric.ps1") -LoaderVersion $LoaderVersion
 
@@ -506,12 +500,8 @@ function Ensure-TinyRemapperJar {
 
     $tinyRelative = "net\fabricmc\tiny-remapper\$TinyRemapperVersion\tiny-remapper-$TinyRemapperVersion.jar"
     $tinySrc = Join-Path $gameDir "libraries\$tinyRelative"
-    if (-not (Test-Path $tinySrc)) {
-        $tinyUrl = "https://maven.fabricmc.net/net/fabricmc/tiny-remapper/$TinyRemapperVersion/tiny-remapper-$TinyRemapperVersion.jar"
-        Write-Host "Downloading TinyRemapper $TinyRemapperVersion"
-        Ensure-Dir (Split-Path $tinySrc -Parent)
-        Invoke-WebRequest -UseBasicParsing -Uri $tinyUrl -OutFile $tinySrc -TimeoutSec 60
-    }
+    $tinyUrl = "https://maven.fabricmc.net/net/fabricmc/tiny-remapper/$TinyRemapperVersion/tiny-remapper-$TinyRemapperVersion.jar"
+    Save-RemoteFile -Uri $tinyUrl -Path $tinySrc
 
     $java = Resolve-JavaHome
     $jarExe = Join-Path $java "bin\jar.exe"
@@ -632,7 +622,11 @@ if ($fabricLoaderVersions -contains "0.14.25") {
 }
 # Bundled mods (compat mod, optionally diagnostics) live under runtime\bundled-mods.
 # App.cpp copies them into LocalState\game\mods on launch.
-Copy-Item -Recurse (Join-Path $gameDir "mods\*") (Join-Path $pkg "runtime\bundled-mods\") -Force
+foreach ($name in @("banditvault-xbox-compat-1.0.0.jar", "banditvault-fabric-controller-1.0.0.jar")) {
+    $source = Join-Path $gameDir "mods\$name"
+    if (-not (Test-JarComplete $source)) { throw "Required bundled mod missing or incomplete $source" }
+    Copy-Item -LiteralPath $source -Destination (Join-Path $pkg "runtime\bundled-mods\$name") -Force
+}
 
 Write-Host "Copying natives..."
 Copy-Item (Join-Path $nativesSourceDir "*.dll") (Join-Path $pkg "natives\")
@@ -717,6 +711,10 @@ Copy-CachedVersionManifest `
 $manifestsDir = Join-Path $pkg "runtime\manifests"
 Ensure-Dir $manifestsDir
 $defaultTargetId = "$($ProjectConfig.MinecraftVersion)-fabric-$($ProjectConfig.FabricLoaderVersion)"
+Ensure-Dir (Join-Path $pkg "runtime\version-mods\$defaultTargetId")
+foreach ($name in @("banditvault-xbox-compat-1.0.0.jar", "banditvault-fabric-controller-1.0.0.jar")) {
+    Copy-Item (Join-Path $pkg "runtime\bundled-mods\$name") (Join-Path $pkg "runtime\version-mods\$defaultTargetId\$name") -Force
+}
 Copy-Item -Force $defaultDownloadManifest (Join-Path $manifestsDir "$defaultTargetId.tsv")
 Write-Host "Default per-version manifest: $defaultTargetId.tsv"
 
@@ -841,7 +839,6 @@ function Copy-PackagedJre {
     $jmods = Join-Path $dest "jmods"
     if (Test-Path $jmods) { Remove-Item -Recurse -Force $jmods }
     Copy-Item $SecurityPropertiesPath (Join-Path $dest "conf\security\xbox.properties") -Force
-    Copy-Item $SecurityPropertiesPath (Join-Path $dest "conf\security\java.security") -Force
 }
 
 function Build-JavaBaseUwpFilesystemPatch {
@@ -1131,16 +1128,14 @@ function Resolve-SecureJarHandlerJar {
     )
 
     foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
+        if (Test-JarComplete $candidate) {
             return (Resolve-Path $candidate).Path
         }
     }
 
     $downloadPath = Join-Path $gameDir "libraries\$relative"
     $url = "https://maven.neoforged.net/releases/cpw/mods/securejarhandler/$Version/securejarhandler-$Version.jar"
-    Write-Host "Downloading securejarhandler $Version"
-    Ensure-Dir (Split-Path $downloadPath -Parent)
-    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $downloadPath -TimeoutSec 60
+    Save-RemoteFile -Uri $url -Path $downloadPath
     return (Resolve-Path $downloadPath).Path
 }
 
@@ -1266,8 +1261,15 @@ if (-not $SkipStopAppProcesses) {
         -LockPaths $lockPaths
 }
 
+if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat -or $script:BuildFailures.Count -gt 0)) {
+    throw "Strict build requires every configured target before packaging"
+}
+if (-not $SkipVersionManifests -and -not $SkipVersionCompat) {
+    & (Join-Path $root "scripts\validate-modern-version-matrix.ps1") -PackagePath $pkg
+}
 & $makeappx pack /d $pkg /p $appx /overwrite
 if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed" }
+if ($StrictTargets) { & (Join-Path $root "scripts\validate-modern-version-matrix.ps1") -AppxPath $appx }
 
 function Invoke-AppxSign {
     param(
@@ -1281,7 +1283,7 @@ function Invoke-AppxSign {
         [string]$SigntoolPath
     )
 
-    & $SigntoolPath sign /fd SHA256 /sha1 $CertificateThumbprint $AppxPath
+    & $SigntoolPath sign /fd SHA256 /sha1 $CertificateThumbprint $AppxPath | Write-Host
     return ($LASTEXITCODE -eq 0)
 }
 

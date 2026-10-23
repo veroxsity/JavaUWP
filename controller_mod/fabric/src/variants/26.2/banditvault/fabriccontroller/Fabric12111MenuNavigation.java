@@ -54,10 +54,6 @@ final class Fabric12111MenuNavigation {
         recipeWidget = null;
     }
 
-    Region region() {
-        return region;
-    }
-
     Slot selectedSlot(Screen currentScreen) {
         return currentScreen == screen && region == Region.SLOT ? slot : null;
     }
@@ -191,7 +187,7 @@ final class Fabric12111MenuNavigation {
             region = Region.NONE;
             return discover(currentScreen, fromX, fromY);
         }
-        if (recipeBook != null && recipeBook.isVisible() && isNarrow(currentScreen)) {
+        if (recipeBook != null && recipeBook.isVisible() && (isNarrow(currentScreen) || region == Region.RECIPE_BOOK)) {
             List<AbstractWidget> targets = recipeTargets(recipeBook);
             if (region != Region.RECIPE_BOOK || !targets.contains(recipeWidget)) {
                 return selectRecipeTarget(currentScreen, targets, fromX, fromY, Region.RECIPE_BOOK);

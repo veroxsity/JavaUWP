@@ -35,12 +35,6 @@ void LoaderBeforeLaunch(const LoaderPreLaunchContext& ctx) {
     }
 }
 
-void LoaderCollectExtraClasspathJars(const LoaderPreLaunchContext& ctx, std::vector<std::wstring>& jars) {
-    if (IsLoader(ctx.versionInfo.loader, LoaderId::Fabric)) {
-        FabricCollectExtraClasspathJars(ctx, jars);
-    }
-}
-
 std::wstring LoaderDefaultMainClass(LoaderId loader, const std::wstring& mainClassName) {
     if (!mainClassName.empty()) return mainClassName;
     if (loader == LoaderId::Fabric) {

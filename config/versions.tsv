@@ -50,8 +50,8 @@ minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	contr
 1.20.4	1.20.4 NeoForge	neoforge	20.4.237	java17	experimental	none	Legacy target retained
 1.20.1	1.20.1 Fabric	fabric	0.19.5	java21	testing	fabric	Legacy target retained
 1.20.1	1.20.1 Forge	forge	47.4.20	java21	experimental	forge	Legacy target retained
-1.19.2	1.19.2 Fabric	fabric	0.14.25	java21	testing	fabric	Legacy target retained
+1.19.2	1.19.2 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
 1.18.2	1.18.2 Forge	forge	40.2.27	java17	experimental	none	Legacy target retained
-1.16.5	1.16.5 Fabric	fabric	0.14.25	java21	testing	fabric	Legacy target retained
+1.16.5	1.16.5 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
 1.12.2	1.12.2 Forge	forge	selected	legacy	experimental	none	Legacy provider not implemented yet
 1.12.2	1.12.2 Vanilla	vanilla	none	legacy	experimental	none	Legacy provider not implemented yet

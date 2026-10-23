@@ -235,24 +235,9 @@ HttpResult HttpGetBearer(const wchar_t* url, const std::string& token) {
 }
 
 HttpResult HttpGetString(const wchar_t* url) {
-    HttpResult result;
-    try {
-        using namespace winrt::Windows::Foundation;
-        using namespace winrt::Windows::Web::Http;
-
-        HttpClient client;
-        HttpRequestMessage request(HttpMethod::Get(), winrt::Windows::Foundation::Uri(url));
-        request.Headers().UserAgent().ParseAdd(L"BanditVault-BanditLauncher/1.0");
-        HttpResponseMessage response = client.SendRequestAsync(request).get();
-        result.status = static_cast<int>(response.StatusCode());
-        result.body = winrt::to_string(response.Content().ReadAsStringAsync().get());
-    } catch (const winrt::hresult_error& ex) {
-        WriteLogF(L"HTTP GET failed url=%s hr=0x%08X msg=%s",
-            url, static_cast<unsigned int>(ex.code()), ex.message().c_str());
-    }
-    return result;
+    std::string etag;
+    return HttpGetConditionalTimed(url, "", 5000, etag);
 }
-
 
 HttpResult HttpGetWithHeaders(const wchar_t* url, const HttpHeaders& headers) {
     HttpResult result;
@@ -266,9 +251,13 @@ HttpResult HttpGetWithHeaders(const wchar_t* url, const HttpHeaders& headers) {
         for (const auto& header : headers) {
             request.Headers().Append(header.first, header.second);
         }
-        HttpResponseMessage response = client.SendRequestAsync(request).get();
+        auto operation = client.SendRequestAsync(request);
+        if (operation.wait_for(std::chrono::seconds(5)) != AsyncStatus::Completed) { operation.Cancel(); return result; }
+        HttpResponseMessage response = operation.GetResults();
         result.status = static_cast<int>(response.StatusCode());
-        result.body = winrt::to_string(response.Content().ReadAsStringAsync().get());
+        auto body = response.Content().ReadAsStringAsync();
+        if (body.wait_for(std::chrono::seconds(5)) != AsyncStatus::Completed) { body.Cancel(); result.status = 0; return result; }
+        result.body = winrt::to_string(body.GetResults());
     } catch (const winrt::hresult_error& ex) {
         WriteLogF(L"HTTP GET failed url=%s hr=0x%08X msg=%s",
             url, static_cast<unsigned int>(ex.code()), ex.message().c_str());

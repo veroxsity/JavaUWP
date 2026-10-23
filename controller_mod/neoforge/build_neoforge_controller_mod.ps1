@@ -52,12 +52,9 @@ function Resolve-NeoFormVersion([string]$Version) {
         if ($cached) { return $cached }
     }
     $installerJar = Join-Path $installerDir "neoforge-$Version-installer.jar"
-    if (-not (Test-Path $installerJar)) {
-        Invoke-WebRequest -UseBasicParsing `
-            -Uri "https://maven.neoforged.net/releases/net/neoforged/neoforge/$Version/neoforge-$Version-installer.jar" `
-            -OutFile $installerJar `
-            -TimeoutSec 180
-    }
+    Save-RemoteFile `
+        -Uri "https://maven.neoforged.net/releases/net/neoforged/neoforge/$Version/neoforge-$Version-installer.jar" `
+        -Path $installerJar
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($installerJar)
@@ -85,44 +82,50 @@ function Resolve-NeoFormVersion([string]$Version) {
     throw "NeoForm version missing from NeoForge $Version profile"
 }
 
-$javaHome = Resolve-JavaHome
+$javaHome = Resolve-JavaHomeForMinecraft -MinecraftVersion $MinecraftVersion
 $javac = Join-Path $javaHome "bin\javac.exe"
 $jar = Join-Path $javaHome "bin\jar.exe"
-if (-not $NeoFormVersion) { $NeoFormVersion = Resolve-NeoFormVersion $NeoForgeVersion }
-$neoFormCoordinate = "$MinecraftVersion-$NeoFormVersion"
 $generatedRoot = Join-Path $root "prebuilt\neoforge\libraries"
-$srgClient = Join-Path $generatedRoot "net\minecraft\client\$neoFormCoordinate\client-$neoFormCoordinate-srg.jar"
-$patchedClient = Join-Path $generatedRoot "net\neoforged\neoforge\$NeoForgeVersion\neoforge-$NeoForgeVersion-client.jar"
+$modernArtifacts = [version]$MinecraftVersion -ge [version]"1.21.10"
+$requiredClientEntry = if ($modernArtifacts) { "net/minecraft/client/Minecraft.class" } else { "" }
+if ($modernArtifacts) {
+    $compileClients = @(Join-Path $generatedRoot "net\neoforged\minecraft-client-patched\$NeoForgeVersion\minecraft-client-patched-$NeoForgeVersion.jar")
+} else {
+    if (-not $NeoFormVersion) { $NeoFormVersion = Resolve-NeoFormVersion $NeoForgeVersion }
+    $neoFormCoordinate = "$MinecraftVersion-$NeoFormVersion"
+    $compileClients = @(
+        (Join-Path $generatedRoot "net\neoforged\neoforge\$NeoForgeVersion\neoforge-$NeoForgeVersion-client.jar"),
+        (Join-Path $generatedRoot "net\minecraft\client\$neoFormCoordinate\client-$neoFormCoordinate-srg.jar")
+    )
+}
 
-if (-not (Test-Path $srgClient) -or -not (Test-Path $patchedClient)) {
+if (@($compileClients | Where-Object { -not (Test-JarComplete -Path $_ -RequiredEntry $requiredClientEntry) }).Count -gt 0) {
     & (Join-Path $root "scripts\gen-neoforge-artifacts.ps1") `
         -NeoForgeVersion $NeoForgeVersion `
         -McVersion $MinecraftVersion `
-        -NeoFormVersion $NeoFormVersion
+        -NeoFormVersion $NeoFormVersion `
+        -JavaExe (Join-Path $javaHome "bin\java.exe")
 }
-if (-not (Test-Path $srgClient) -or -not (Test-Path $patchedClient)) {
-    throw "NeoForge compile-only client artifacts are missing after generation."
+$missingClients = @($compileClients | Where-Object { -not (Test-JarComplete -Path $_ -RequiredEntry $requiredClientEntry) })
+if ($missingClients.Count -gt 0) {
+    throw "NeoForge compile-only client artifacts are missing or invalid after generation $($missingClients -join ', ')"
 }
 
 $dependencyDir = Join-Path (Get-ConfigPath "StagingDir") "cache\neoforge\$NeoForgeVersion"
 Ensure-Dir $dependencyDir
 $universalJar = Join-Path $dependencyDir "neoforge-$NeoForgeVersion-universal.jar"
-if (-not (Test-Path $universalJar)) {
-    $universalUrl = "https://maven.neoforged.net/releases/net/neoforged/neoforge/$NeoForgeVersion/neoforge-$NeoForgeVersion-universal.jar"
-    Invoke-WebRequest -UseBasicParsing -Uri $universalUrl -OutFile $universalJar -TimeoutSec 180
-}
+$universalUrl = "https://maven.neoforged.net/releases/net/neoforged/neoforge/$NeoForgeVersion/neoforge-$NeoForgeVersion-universal.jar"
+Save-RemoteFile -Uri $universalUrl -Path $universalJar
 
 $mixinJar = Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries\net\fabricmc\sponge-mixin") -Recurse -Filter "sponge-mixin-*.jar" -ErrorAction SilentlyContinue |
+    Where-Object { Test-JarComplete $_.FullName } |
     Sort-Object FullName -Descending |
     Select-Object -First 1 -ExpandProperty FullName
 if (-not $mixinJar) {
     $mixinJar = Join-Path $dependencyDir "sponge-mixin-0.15.2+mixin.0.8.7.jar"
-    if (-not (Test-Path $mixinJar)) {
-        Invoke-WebRequest -UseBasicParsing `
-            -Uri "https://maven.neoforged.net/releases/net/fabricmc/sponge-mixin/0.15.2+mixin.0.8.7/sponge-mixin-0.15.2+mixin.0.8.7.jar" `
-            -OutFile $mixinJar `
-            -TimeoutSec 180
-    }
+    Save-RemoteFile `
+        -Uri "https://maven.neoforged.net/releases/net/fabricmc/sponge-mixin/0.15.2+mixin.0.8.7/sponge-mixin-0.15.2+mixin.0.8.7.jar" `
+        -Path $mixinJar
 }
 
 $compileOnlySources = @(Get-ChildItem $compileJava -Recurse -Filter "*.java")
@@ -149,7 +152,7 @@ $stamp = New-BuildStamp `
         "sources=$($sourcePaths -join ';')"
     ) `
     -ContentFiles (@($PSCommandPath) + $sourcePaths + $resourceFiles) `
-    -DependencyFiles @($patchedClient, $srgClient, $universalJar, $mixinJar)
+    -DependencyFiles ($compileClients + @($universalJar, $mixinJar))
 
 if (Test-BuildStampCurrent -StampPath $stampPath -Stamp $stamp -RequiredOutputs @($jarPath)) {
     Write-Host "NeoForge controller mod up to date ($MinecraftVersion / $NeoForgeVersion), skipping compile."
@@ -173,7 +176,7 @@ $libraryJars = @(Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Re
 Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
 Ensure-Dir $classesDir, $compileOnlyDir
 
-$classpath = @($patchedClient, $srgClient, $universalJar, $mixinJar) + $lwjglJars + $libraryJars
+$classpath = $compileClients + @($universalJar, $mixinJar) + $lwjglJars + $libraryJars
 
 function Invoke-Javac([string]$Name, [string[]]$Sources, [string]$Destination, [string[]]$Classpath) {
     $argsFile = Join-Path $buildRoot "$Name-args.txt"

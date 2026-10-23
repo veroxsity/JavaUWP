@@ -24,7 +24,7 @@ Ensure-Dir $versionDir
 
 $clientUrl = $vj.downloads.client.url
 $clientJar = Join-Path $versionDir "$version.jar"
-Invoke-WebRequest -UseBasicParsing -Uri $clientUrl -OutFile $clientJar
+Save-RemoteFile -Uri $clientUrl -Path $clientJar -Sha1 $vj.downloads.client.sha1 -Size $vj.downloads.client.size
 Write-Host "Client jar done -> $clientJar"
 
 $libs = $vj.libraries | Where-Object { $_.downloads.artifact -ne $null }
@@ -32,10 +32,8 @@ foreach ($lib in $libs) {
     $artifact = $lib.downloads.artifact
     $dest = Join-Path $gameDir ("libraries\" + $artifact.path.Replace('/', '\'))
     Ensure-Dir (Split-Path $dest)
-    if (-not (Test-Path $dest)) {
-        Invoke-WebRequest -UseBasicParsing -Uri $artifact.url -OutFile $dest
-        Write-Host "Downloaded: $($artifact.path)"
-    }
+    Save-RemoteFile -Uri $artifact.url -Path $dest -Sha1 $artifact.sha1 -Size $artifact.size
+    Write-Host "Verified $($artifact.path)"
 }
 
 Write-Host "All done"

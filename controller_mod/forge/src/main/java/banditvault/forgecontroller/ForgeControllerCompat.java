@@ -1,6 +1,8 @@
 package banditvault.forgecontroller;
 
 import banditvault.controllercore.ControllerAxis;
+import banditvault.controllercore.ControllerAction;
+import banditvault.controllercore.ControllerInput;
 import banditvault.controllercore.ControllerButton;
 import banditvault.controllercore.ControllerRuntime;
 import banditvault.controllercore.ControllerState;
@@ -61,6 +63,10 @@ public final class ForgeControllerCompat {
     private static double renderedCursorY = -1.0;
     private static long lastRenderedCursorNanos;
     private static boolean snapStickLatched;
+    private static KeyMapping radialPressedKey;
+    private static boolean radialPressedAsKeyboard;
+    private static final java.util.Map<String, KeyMapping> JAVA_KEYS_DOWN = new java.util.HashMap<String, KeyMapping>();
+    private static final java.util.Set<String> RAW_JAVA_KEYS_DOWN = new java.util.HashSet<String>();
     private static CursorMode cursorMode = CursorMode.SNAP;
 
     private enum CursorMode {
@@ -87,11 +93,18 @@ public final class ForgeControllerCompat {
         ensureInitialized();
         tickCount++;
         if (client == null) {
+            ForgeControllerKeyboard.close();
+            releaseJavaKeyMappings();
+            releaseRadialKey();
             return;
         }
         ensureMenuCursorMode(client);
+        releaseRadialKey();
 
         if (!poll()) {
+            releaseJavaKeyMappings();
+            if (client.f_91080_ instanceof ForgeControllerRadialScreen) client.m_91152_(null);
+            ForgeControllerKeyboard.close();
             if (!loggedNoGamepad || tickCount <= 5 || tickCount % 600 == 0) {
                 loggedNoGamepad = true;
                 ForgeControllerLog.log("No GLFW gamepad detected on joystick 1 (tick=" + tickCount + ")");
@@ -112,11 +125,13 @@ public final class ForgeControllerCompat {
             ForgeControllerLog.log("Forge controller compat active");
         }
 
+        tickJavaKeyMappings(client, ForgeControllerSettings.get(), client.f_91080_ == null && client.f_91074_ != null && client.m_91396_());
         if (client.f_91080_ != null) {
             lastLookNanos = 0L;
             releaseGameplayKeys(client, false);
             tickScreen(client, client.f_91080_);
         } else {
+            ForgeControllerKeyboard.close();
             tickGameplay(client);
         }
 
@@ -244,6 +259,12 @@ public final class ForgeControllerCompat {
         }
         ForgeControllerKeys keys = new ForgeControllerKeys(options);
 
+        if (pressed(settings, ControllerAction.RADIAL_MENU)) {
+            releaseGameplayKeys(client, true);
+            client.m_91152_(new ForgeControllerRadialScreen());
+            return;
+        }
+
         if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
             client.m_91152_(new ForgeControllerSettingsScreen(null));
             return;
@@ -255,54 +276,56 @@ public final class ForgeControllerCompat {
         setHeld(keys.back, ly > settings.moveDeadzone);
         setHeld(keys.left, lx < -settings.moveDeadzone);
         setHeld(keys.right, lx > settings.moveDeadzone);
-        setHeld(keys.jump, button(GLFW.GLFW_GAMEPAD_BUTTON_A));
+        setHeld(keys.jump, held(settings, ControllerAction.JUMP));
 
         boolean sneakHeld;
         if (settings.toggleCrouch) {
-            if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_B)) {
+            if (pressed(settings, ControllerAction.SNEAK)) {
                 crouchToggled = !crouchToggled;
             }
             sneakHeld = crouchToggled;
         } else {
             crouchToggled = false;
-            sneakHeld = button(GLFW.GLFW_GAMEPAD_BUTTON_B);
+            sneakHeld = held(settings, ControllerAction.SNEAK);
         }
         sneakHeld = setHeld(keys.sneak, sneakHeld);
         setSneakInput(client.f_91074_, sneakHeld);
 
-        setHeld(keys.attack, trigger(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER));
-        setHeld(keys.use, trigger(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER));
+        setHeld(keys.attack, held(settings, ControllerAction.ATTACK));
+        setHeld(keys.use, held(settings, ControllerAction.USE));
 
         if (settings.toggleSprint) {
-            if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_THUMB)) {
+            if (pressed(settings, ControllerAction.SPRINT)) {
                 sprintToggled = !sprintToggled;
             }
             setHeld(keys.sprint, sprintToggled);
         } else {
             sprintToggled = false;
-            setHeld(keys.sprint, button(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_THUMB));
+            setHeld(keys.sprint, held(settings, ControllerAction.SPRINT));
         }
 
-        if (triggerPressed(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
+        if (pressed(settings, ControllerAction.ATTACK)) {
             pressKey(keys.attack);
         }
-        if (triggerPressed(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER)) {
+        if (pressed(settings, ControllerAction.USE)) {
             pressKey(keys.use);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y)) {
+        if (pressed(settings, ControllerAction.DROP)) pressKey(keys.drop);
+        if (pressed(settings, ControllerAction.PICK_BLOCK)) pressKey(keys.pickItem);
+        if (pressed(settings, ControllerAction.INVENTORY)) {
             pressKey(keys.inventory);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+        if (pressed(settings, ControllerAction.SWAP_HANDS)) {
             pressKey(keys.swapOffhand);
         }
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_LEFT_BUMPER)) {
+        if (pressed(settings, ControllerAction.HOTBAR_PREVIOUS)) {
             changeHotbarSlot(client.f_91074_, -1);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER)) {
+        if (pressed(settings, ControllerAction.HOTBAR_NEXT)) {
             changeHotbarSlot(client.f_91074_, 1);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_START)) {
+        if (pressed(settings, ControllerAction.PAUSE)) {
             Method pause = findMethod(Minecraft.class, "m_91358_", boolean.class);
             if (pause != null) {
                 invokeMethod(pause, client, false);
@@ -320,6 +343,19 @@ public final class ForgeControllerCompat {
 
     private static void tickScreen(Minecraft client, Screen screen) {
         ForgeControllerSettings settings = ForgeControllerSettings.get();
+        if (screen instanceof ForgeControllerRadialScreen) {
+            ForgeControllerRadialScreen radial = (ForgeControllerRadialScreen) screen;
+            radial.setSelectedSlot(ControllerRuntime.radialSlot(axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X), axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y), settings.lookDeadzone));
+            if (pressed(settings, ControllerAction.MENU_CANCEL)) {
+                client.m_91152_(null);
+            } else if (settings.binding(ControllerAction.RADIAL_MENU).released(CONTROLLER_STATE, settings.triggerDeadzone)) {
+                int slot = radial.selectedSlot();
+                client.m_91152_(null);
+                activateRadialSlot(slot);
+            }
+            return;
+        }
+        if (ForgeControllerKeyboard.tick(screen)) return;
         ensureScreenCursor(screen);
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
 
@@ -327,7 +363,7 @@ public final class ForgeControllerCompat {
             applySnapTarget(screen, MENU_NAVIGATION.synchronize(screen, cursorX, cursorY));
         }
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_BACK)) {
+        if (pressed(settings, ControllerAction.SNAP_FREE_TOGGLE)) {
             takeControllerCursor();
             cursorMode = cursorMode == CursorMode.SNAP ? CursorMode.FREE : CursorMode.SNAP;
             snapStickLatched = false;
@@ -353,26 +389,27 @@ public final class ForgeControllerCompat {
             snapStickLatched = false;
         }
 
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_A)) {
+        if (pressed(settings, ControllerAction.MENU_ACCEPT)) {
             takeControllerCursor();
+            if (ForgeControllerKeyboard.activate(screen, cursorX, cursorY)) return;
             if (cursorMode == CursorMode.SNAP && MENU_NAVIGATION.usesNativeActivation(screen)) {
                 invokeScreenKeyPressed(screen, GLFW.GLFW_KEY_ENTER, 0, 0);
             } else {
                 invokeScreenMousePressed(screen, cursorX, cursorY, LEFT_CLICK);
             }
         }
-        if (released(GLFW.GLFW_GAMEPAD_BUTTON_A) &&
+        if (settings.binding(ControllerAction.MENU_ACCEPT).released(CONTROLLER_STATE, settings.triggerDeadzone) &&
             (cursorMode == CursorMode.FREE || !MENU_NAVIGATION.usesNativeActivation(screen))) {
             invokeScreenMouseReleased(screen, cursorX, cursorY, LEFT_CLICK);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+        if (pressed(settings, ControllerAction.MENU_SECONDARY)) {
             takeControllerCursor();
             invokeScreenMousePressed(screen, cursorX, cursorY, RIGHT_CLICK);
         }
-        if (released(GLFW.GLFW_GAMEPAD_BUTTON_X)) {
+        if (settings.binding(ControllerAction.MENU_SECONDARY).released(CONTROLLER_STATE, settings.triggerDeadzone)) {
             invokeScreenMouseReleased(screen, cursorX, cursorY, RIGHT_CLICK);
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_B)) {
+        if (pressed(settings, ControllerAction.MENU_CANCEL)) {
             takeControllerCursor();
             if (MENU_NAVIGATION.handleBack(screen)) {
                 if (cursorMode == CursorMode.SNAP) {
@@ -383,7 +420,7 @@ public final class ForgeControllerCompat {
             }
             return;
         }
-        if (pressed(GLFW.GLFW_GAMEPAD_BUTTON_Y)) {
+        if (pressed(settings, ControllerAction.QUICK_MOVE)) {
             takeControllerCursor();
             quickMoveFocusedSlot(screen);
         }
@@ -406,6 +443,18 @@ public final class ForgeControllerCompat {
                 invokeScreenMouseScrolled(screen, cursorX, cursorY, scroll);
                 scrollCooldown = 5;
             }
+        }
+    }
+
+    static void resumeMenuAfterKeyboard(Screen screen) {
+        Minecraft client = Minecraft.m_91087_();
+        if (screen == null || client == null || client.f_91080_ != screen) return;
+        takeControllerCursor();
+        snapStickLatched = false;
+        ensureScreenCursor(screen);
+        MENU_NAVIGATION.reset(screen);
+        if (cursorMode == CursorMode.SNAP) {
+            applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
         }
     }
 
@@ -651,6 +700,113 @@ public final class ForgeControllerCompat {
         }
     }
 
+    public static String radialKeyLabel(String keyId) {
+        if (keyId == null || keyId.isEmpty()) return "Empty";
+        KeyMapping key = findKey(keyId);
+        return key == null
+            ? "Missing " + keyId
+            : key.m_90863_().getString() + " - " + key.m_90860_();
+    }
+
+    public static String radialKeyGlyph(String keyId) {
+        if (keyId == null || keyId.isEmpty()) return "+";
+        KeyMapping key = findKey(keyId);
+        if (key == null) return "?";
+        String glyph = key.m_90863_().getString();
+        return glyph.toLowerCase(java.util.Locale.ROOT).contains("not bound") ? "?" : glyph;
+    }
+
+    public static String[] radialKeyIds() {
+        Minecraft client = Minecraft.m_91087_();
+        KeyMapping[] keys = client == null || client.f_91066_ == null ? null : client.f_91066_.f_92059_;
+        if (keys == null || keys.length == 0) return new String[] { "" };
+        String[] ids = new String[keys.length + 1];
+        ids[0] = "";
+        int index = 1;
+        for (KeyMapping key : keys) {
+            if (key != null) ids[index++] = key.m_90860_();
+        }
+        if (index == ids.length) return ids;
+        return java.util.Arrays.copyOf(ids, index);
+    }
+
+    private static KeyMapping findKey(String keyId) {
+        Minecraft client = Minecraft.m_91087_();
+        KeyMapping[] keys = client == null || client.f_91066_ == null ? null : client.f_91066_.f_92059_;
+        if (keys == null) return null;
+        for (KeyMapping key : keys) {
+            if (key != null && key.m_90860_().equals(keyId)) return key;
+        }
+        return null;
+    }
+
+    private static void activateRadialSlot(int slot) {
+        if (slot < 0 || slot >= 8) return;
+        KeyMapping key = findKey(ForgeControllerSettings.get().radialSlot(slot));
+        if (key == null) return;
+        radialPressedKey = key;
+        radialPressedAsKeyboard = sendKeyboardKey(key, GLFW.GLFW_PRESS);
+        if (!radialPressedAsKeyboard) {
+            pressKey(key);
+            key.m_7249_(true);
+        }
+    }
+
+    private static void releaseRadialKey() {
+        if (radialPressedKey == null) return;
+        if (radialPressedAsKeyboard) sendKeyboardKey(radialPressedKey, GLFW.GLFW_RELEASE);
+        radialPressedKey.m_7249_(isBoundInputHeld(radialPressedKey.getKey()));
+        radialPressedKey = null;
+        radialPressedAsKeyboard = false;
+    }
+
+    private static boolean sendKeyboardKey(KeyMapping key, int action) {
+        InputConstants.Key input = key.getKey();
+        if (input == null || input.m_84873_() < 0) return false;
+        if (input.m_84868_() != InputConstants.Type.KEYSYM && input.m_84868_() != InputConstants.Type.SCANCODE) return false;
+        int code = input.m_84868_() == InputConstants.Type.KEYSYM ? input.m_84873_() : GLFW.GLFW_KEY_UNKNOWN;
+        int scan = input.m_84868_() == InputConstants.Type.SCANCODE ? input.m_84873_() : 0;
+        Minecraft client = Minecraft.m_91087_();
+        if (client == null || client.m_91268_() == null) return false;
+        client.f_91068_.m_90893_(client.m_91268_().m_85439_(), code, scan, action, 0);
+        return true;
+    }
+
+    private static void tickJavaKeyMappings(Minecraft client, ForgeControllerSettings settings, boolean enabled) {
+        java.util.Iterator<java.util.Map.Entry<String, KeyMapping>> activeKeys = JAVA_KEYS_DOWN.entrySet().iterator();
+        while (activeKeys.hasNext()) {
+            java.util.Map.Entry<String, KeyMapping> entry = activeKeys.next();
+            ControllerInput input = settings.javaBinding(entry.getKey());
+            if (enabled && input.held(CONTROLLER_STATE, settings.triggerDeadzone)) continue;
+            if (RAW_JAVA_KEYS_DOWN.remove(entry.getKey())) sendKeyboardKey(entry.getValue(), GLFW.GLFW_RELEASE);
+            entry.getValue().m_7249_(isBoundInputHeld(entry.getValue().getKey()));
+            activeKeys.remove();
+        }
+        if (!enabled || client.f_91066_ == null || client.f_91066_.f_92059_ == null) return;
+        for (KeyMapping key : client.f_91066_.f_92059_) {
+            if (key == null) continue;
+            String keyId = key.m_90860_();
+            ControllerInput input = settings.javaBinding(keyId);
+            if (JAVA_KEYS_DOWN.containsKey(keyId) || !input.pressed(CONTROLLER_STATE, settings.triggerDeadzone)) continue;
+            boolean raw = sendKeyboardKey(key, GLFW.GLFW_PRESS);
+            if (!raw) {
+                pressKey(key);
+                key.m_7249_(true);
+            }
+            if (raw) RAW_JAVA_KEYS_DOWN.add(keyId);
+            JAVA_KEYS_DOWN.put(keyId, key);
+        }
+    }
+
+    private static void releaseJavaKeyMappings() {
+        for (java.util.Map.Entry<String, KeyMapping> entry : JAVA_KEYS_DOWN.entrySet()) {
+            if (RAW_JAVA_KEYS_DOWN.contains(entry.getKey())) sendKeyboardKey(entry.getValue(), GLFW.GLFW_RELEASE);
+            entry.getValue().m_7249_(isBoundInputHeld(entry.getValue().getKey()));
+        }
+        JAVA_KEYS_DOWN.clear();
+        RAW_JAVA_KEYS_DOWN.clear();
+    }
+
     private static void changeHotbarSlot(LocalPlayer player, int direction) {
         if (player == null) {
             return;
@@ -731,13 +887,15 @@ public final class ForgeControllerCompat {
         return CONTROLLER_STATE.axis(axisFor(index));
     }
 
-    private static boolean trigger(int index) {
-        return CONTROLLER_STATE.trigger(axisFor(index), ForgeControllerSettings.get().triggerDeadzone);
+    private static boolean held(ForgeControllerSettings settings, ControllerAction action) {
+        return settings.binding(action).held(CONTROLLER_STATE, settings.triggerDeadzone);
     }
 
-    private static boolean triggerPressed(int index) {
-        return CONTROLLER_STATE.triggerPressed(axisFor(index), ForgeControllerSettings.get().triggerDeadzone);
+    private static boolean pressed(ForgeControllerSettings settings, ControllerAction action) {
+        return settings.binding(action).pressed(CONTROLLER_STATE, settings.triggerDeadzone);
     }
+
+
 
     private static boolean button(int index) {
         return CONTROLLER_STATE.button(buttonFor(index));
@@ -747,25 +905,13 @@ public final class ForgeControllerCompat {
         return CONTROLLER_STATE.pressed(buttonFor(index));
     }
 
-    private static boolean released(int index) {
-        return CONTROLLER_STATE.released(buttonFor(index));
-    }
 
-    private static void copyButtons() {
-        finishFrame();
-    }
 
-    private static float shapedLookAxis(float value, float deadzone) {
-        return ControllerRuntime.shapedLookAxis(value, deadzone);
-    }
 
     private static double shapedCursorAxis(float value, float deadzone) {
         return ControllerRuntime.shapedCursorAxis(value, deadzone);
     }
 
-    private static float clampAxis(float value) {
-        return ControllerState.clampAxis(value);
-    }
 
     private static double clamp(double value, double min, double max) {
         return ControllerRuntime.clamp(value, min, max);
@@ -864,8 +1010,6 @@ public final class ForgeControllerCompat {
         private final Method getInventoryMethod = findMethod(LocalPlayer.class, "m_150109_");
         private final Field selectedSlotField = findField(findClass("net.minecraft.world.entity.player.Inventory"), "f_35977_");
         private final Field hoveredSlotField = findField(AbstractContainerScreen.class, "f_97734_");
-        private final Method slotClickedMethod = findMethod(AbstractContainerScreen.class, "m_6597_",
-            Slot.class, int.class, int.class, ClickType.class);
         private final Method mouseMovedMethod = findMethod(Screen.class, "m_5953_", double.class, double.class);
         private final Method mouseClickedMethod = findInterfaceMethod(
             "net.minecraft.client.gui.components.events.ContainerEventHandler",

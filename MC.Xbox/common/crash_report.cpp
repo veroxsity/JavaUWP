@@ -36,13 +36,20 @@ static void AddCrashZipFileEntry(
     std::vector<CrashZipEntry>& entries,
     const std::wstring& path,
     const std::string& archiveName) {
-    if (archiveName.empty() || archiveName.size() > 65535) return;
+    if (archiveName.empty() || archiveName.size() > 65535 || entries.size() >= 64) return;
+    size_t collected = 0;
+    for (const auto& existing : entries) {
+        if (existing.name == archiveName) return;
+        collected += existing.data.size();
+    }
+    constexpr size_t budget = 32ull * 1024ull * 1024ull;
+    if (collected >= budget) return;
     const DWORD attrs = GetFileAttributesW(path.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) return;
 
     CrashZipEntry entry;
     entry.name = archiveName;
-    if (!ReadBinaryFileLimited(path, entry.data)) return;
+    if (!ReadBinaryFileLimited(path, entry.data, (std::min)(budget - collected, size_t(8ull * 1024ull * 1024ull)))) return;
     entry.crc = static_cast<mz_uint32>(mz_crc32(MZ_CRC32_INIT, entry.data.data(), entry.data.size()));
     entries.push_back(std::move(entry));
 }
@@ -52,7 +59,7 @@ static void AddCrashZipMatchingFiles(
     const std::wstring& dir,
     const std::wstring& pattern,
     const std::string& archivePrefix,
-    size_t newestLimit = 0) {
+    size_t newestLimit = 16) {
     WIN32_FIND_DATAW fd = {};
     HANDLE h = FindFirstFileW((dir + L"\\" + pattern).c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return;
@@ -184,7 +191,7 @@ static bool WriteStoredZip(const std::wstring& zipPath, std::vector<CrashZipEntr
         ZipWriteLe32(f, cdOffset) &&
         ZipWriteLe16(f, 0);
 
-    fclose(f);
+    if (fclose(f) != 0) ok = false;
     if (!ok) {
         DeleteFileW(zipPath.c_str());
     }
@@ -199,7 +206,8 @@ bool RewriteZipTextEntry(
     std::ifstream in(zipPath, std::ios::binary);
     if (!in) return false;
     std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (bytes.empty()) return false;
+    in.close();
+    if (bytes.empty() || in.fail()) return false;
 
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_mem(&zip, bytes.data(), bytes.size(), 0)) return false;
@@ -250,7 +258,7 @@ bool RewriteZipTextEntry(
     if (!replaced || entries.empty()) return false;
     if (!backupPath.empty() && GetFileAttributesW(backupPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
         EnsureDirectoryTree(GetParentDir(backupPath));
-        CopyFileW(zipPath.c_str(), backupPath.c_str(), FALSE);
+        if (!CopyFileW(zipPath.c_str(), backupPath.c_str(), TRUE)) return false;
     }
 
     const std::wstring tempPath = zipPath + L".rewrite";
@@ -321,6 +329,8 @@ bool CreateCrashReportZip(const std::wstring& runtimeRoot, const std::wstring& r
     AddCrashZipMatchingFiles(entries, reportGameDir, L"hs_err_pid*.log", "profile/game");
     AddCrashZipMatchingFiles(entries, reportGameDir + L"\\crash-reports", L"*.txt", "profile/game/crash-reports", 4);
     AddCrashZipMatchingFiles(entries, currentLogs, L"*.log", "logs/current");
+    AddCrashZipFileEntry(entries, previousLogs + L"\\java_args.txt", "logs_previous/java_args.txt");
+    AddCrashZipFileEntry(entries, previousLogs + L"\\java_classpath_final.txt", "logs_previous/java_classpath_final.txt");
     AddCrashZipMatchingFiles(entries, previousLogs, L"*.log", "logs_previous");
     AddCrashZipMatchingFiles(entries, reportsDir, L"*.txt", "crash-reports");
 

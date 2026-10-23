@@ -10,7 +10,6 @@
 #   FABRIC_LOADER_VERSION   -> FabricLoaderVersion
 $ProjectConfig = [ordered]@{
     DefaultMinecraftVersion  = if ($env:DEFAULT_MC_VERSION)    { $env:DEFAULT_MC_VERSION }    else { "1.21.11" }
-    DefaultLoader            = if ($env:DEFAULT_MC_LOADER)     { $env:DEFAULT_MC_LOADER }     else { "fabric" }
     VersionCatalog           = if ($env:VERSION_CATALOG)       { $env:VERSION_CATALOG }       else { "config/versions.tsv" }
     MinecraftVersion         = if ($env:MC_VERSION)            { $env:MC_VERSION }            else { "1.21.11" }
     MinecraftAssetIndex      = if ($env:MC_ASSET_INDEX)        { $env:MC_ASSET_INDEX }        else { "29" }
@@ -26,7 +25,7 @@ $ProjectConfig = [ordered]@{
     OutputDir                = "output"
     GameDir                  = "staging/cache/gameDir"
     AssetsDir                = "staging/cache/assets"
-    NativesDir               = "staging/cache/natives-1.21"
+    NativesDir               = "staging/cache/natives-" + $(if ($env:MC_VERSION) { $env:MC_VERSION } else { "1.21.11" })
     MesaRuntimeDir           = "mesa-runtime"
     ToolsDir                 = "staging/cache/tools"
     NotesDir                 = "staging/notes"

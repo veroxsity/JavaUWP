@@ -26,6 +26,7 @@ struct JavaRuntimeInfo {
     std::wstring selectedDir;
     std::wstring javaBasePatchName;
     std::wstring zipfsPatchName;
+    std::wstring javaDesktopPatchName;
 };
 
 struct MinecraftVersionInfo {
@@ -41,9 +42,7 @@ struct MinecraftVersionInfo {
     std::vector<std::wstring> extraGameArgs;
     std::wstring neoFormVersion;
     std::wstring neoForgeInstallToolsVersion;
-    std::wstring neoForgeJarSplitterVersion;
     std::wstring neoForgeBinaryPatcherVersion;
-    std::wstring neoForgeAutoRenamingToolVersion;
     std::wstring manifestPath;
     std::wstring loaderJar;
     std::wstring clientJar;
@@ -62,7 +61,7 @@ bool SeedLocalRuntime(
     const std::wstring& packageDir,
     const std::wstring& localDir,
     const RuntimeSeedProgressCallback& progress = RuntimeSeedProgressCallback());
-void CopyDirectoryContentsAlways(const std::wstring& src, const std::wstring& dst);
+bool CopyDirectoryContentsAlways(const std::wstring& src, const std::wstring& dst);
 int DeleteBanditControllerModsFromDir(const std::wstring& modsDir);
 int DeleteControlifyModsFromDir(const std::wstring& modsDir);
 std::wstring PrepareEffectiveBundledModsDir(

@@ -27,7 +27,7 @@ $vj = Get-CachedRemoteJson -Uri $v.url
 $assetIndexUrl = $vj.assetIndex.url
 $assetIndexId = $vj.assetIndex.id
 Write-Host "Downloading asset index: $assetIndexId"
-Invoke-WebRequest -UseBasicParsing -Uri $assetIndexUrl -OutFile "$assetsDir\indexes\$assetIndexId.json"
+Save-RemoteFile -Uri $assetIndexUrl -Path "$assetsDir\indexes\$assetIndexId.json" -Sha1 $vj.assetIndex.sha1 -Size $vj.assetIndex.size
 
 # Download all assets
 $index = Get-Content "$assetsDir\indexes\$assetIndexId.json" | ConvertFrom-Json
@@ -41,10 +41,8 @@ foreach ($obj in $objects) {
     $destDir = "$assetsDir\objects\$subdir"
     $dest = "$destDir\$hash"
     Ensure-Dir $destDir
-    if (-not (Test-Path $dest)) {
-        $url = "https://resources.download.minecraft.net/$subdir/$hash"
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $dest
-    }
+    $url = "https://resources.download.minecraft.net/$subdir/$hash"
+    Save-RemoteFile -Uri $url -Path $dest -Sha1 $hash -Size $obj.Value.size
     $i++
     if ($i % 100 -eq 0) { Write-Host "$i / $total assets downloaded" }
 }

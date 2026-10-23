@@ -6,7 +6,6 @@
 
 std::wstring NeoForgeVersionFromLaunchVersion(const std::wstring& launchVersion);
 std::wstring NeoForgeSrgJarSummary(const std::wstring& zipPath);
-void EnsureNeoForgeFmlConfig(const std::wstring& gameDir);
 
 void NeoForgeFinalizeVersionInfo(
     MinecraftVersionInfo& info,

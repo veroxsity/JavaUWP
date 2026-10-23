@@ -26,3 +26,5 @@ bool ExtractZipEntryToFile(const std::wstring& zipPath, const char* entryName, c
 bool FileExistsNonEmpty(const std::wstring& path);
 bool EndsWithAscii(const char* text, const char* suffix);
 bool ZipIsValid(const std::wstring& zipPath);
+
+bool EnsureFmlConfig(const std::wstring& gameDir);

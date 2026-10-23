@@ -155,10 +155,6 @@ public final class BanditControllerSettingsScreen extends class_437 {
         class_310.method_1551().method_1507(parent);
     }
 
-    public boolean isCapturingBinding() {
-        return captureOption != null;
-    }
-
     public boolean handleControllerInput(ControllerState state, float triggerDeadzone) {
         if (captureOption != null) {
             handleControllerCapture(state, triggerDeadzone);

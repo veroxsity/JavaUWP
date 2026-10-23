@@ -48,6 +48,7 @@ class AuthScreenRenderer {
 public:
     bool Initialize(ICoreWindow* window) {
         if (!window) return false;
+        ResetDeviceResources();
         WriteLog(L"Auth screen Initialize started");
         window_ = window;
 
@@ -187,8 +188,14 @@ public:
     }
 
     void Render(const AuthUiState& state) {
-        if (!d2dContext_ || !targetBitmap_) return;
+        if (deviceRecoveryNeeded_) {
+            const auto window = window_;
+            if (!Initialize(window.Get())) return;
+            deviceRecoveryNeeded_ = false;
+        }
+        if (!d2dContext_ || !swapChain_) return;
         if (!EnsureRenderTargetSize()) return;
+        if (!targetBitmap_ && !CreateTargetBitmap()) return;
 
         mainMenuRectCount_ = 0;
         hitRegions_.clear();
@@ -243,11 +250,17 @@ public:
             HRESULT hr = d2dContext_->EndDraw();
             if (FAILED(hr)) {
                 WriteLogF(L"Auth screen EndDraw failed hr=0x%08X", hr);
+                d2dContext_->SetTarget(nullptr);
+                targetBitmap_.Reset();
+                deviceRecoveryNeeded_ = true;
+                ProcessAuthUiEvents();
+                return;
             }
             if (!swapChain_) return;
             hr = swapChain_->Present(1, 0);
             if (FAILED(hr)) {
                 WriteLogF(L"Auth screen Present failed hr=0x%08X", hr);
+                deviceRecoveryNeeded_ = true;
             } else if (!presentOkLogged_) {
                 presentOkLogged_ = true;
                 WriteLogF(L"Auth screen Present OK driver=%s backbuffer=%ux%u",
@@ -461,7 +474,6 @@ public:
                 const int total = static_cast<int>(state.modsProfileMods.size());
 
                 if (total == 0) {
-                    g_profileMaxScroll.store(0);
                     g_profileRowsVisible.store(1);
                     DrawText(state.modsProfileBuiltin ? L"No mods. This is the clean vanilla game."
                                                       : L"No mods yet. Set this profile active, then install mods from the other tabs.",
@@ -476,7 +488,6 @@ public:
                     g_profileRowsVisible.store(rowsVisible);
                     const int totalRows = (total + 1) / 2;
                     const int maxScroll = (std::max)(0, totalRows - rowsVisible);
-                    g_profileMaxScroll.store(maxScroll);
                     const int scroll = (std::min)((std::max)(0, state.modsProfileScroll), maxScroll);
 
                     d2dContext_->PushAxisAlignedClip(bodyInner, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -1093,6 +1104,7 @@ private:
     ComPtr<IDXGISwapChain1> swapChain_;
     ComPtr<ID2D1Factory1> d2dFactory_;
 public:
+    bool NeedsRecovery() const { return deviceRecoveryNeeded_ || !targetBitmap_; }
     float Width() const { return width_; }
     float Height() const { return height_; }
     void SetCursor(float x, float y, bool visible) { cursorX_ = x; cursorY_ = y; cursorVisible_ = visible; }
@@ -1145,6 +1157,34 @@ private:
     UINT renderHeightPx_ = 720;
     D3D_DRIVER_TYPE d3dDriverType_ = D3D_DRIVER_TYPE_UNKNOWN;
     bool presentOkLogged_ = false;
+    bool deviceRecoveryNeeded_ = false;
+
+    void ResetDeviceResources() {
+        if (d2dContext_) d2dContext_->SetTarget(nullptr);
+        bitmapCache_.clear();
+        targetBitmap_.Reset();
+        d2dContext_.Reset();
+        d2dDevice_.Reset();
+        d2dFactory_.Reset();
+        swapChain_.Reset();
+        if (d3dContext_) { d3dContext_->ClearState(); d3dContext_->Flush(); }
+        d3dContext_.Reset();
+        d3dDevice_.Reset();
+        wicFactory_.Reset();
+        dwriteFactory_.Reset();
+        codeFormat_.Reset();
+        bodyFormat_.Reset();
+        smallFormat_.Reset();
+        cardTitleFormat_.Reset();
+        titleFormat_.Reset();
+        captionFormat_.Reset();
+        bodyMid_.Reset();
+        smallMid_.Reset();
+        pillFormat_.Reset();
+        iconFormat_.Reset();
+        iconLgFormat_.Reset();
+        presentOkLogged_ = false;
+    }
 
     static const wchar_t* DriverTypeName(D3D_DRIVER_TYPE type) {
         switch (type) {
@@ -1208,6 +1248,7 @@ private:
         HRESULT hr = swapChain_->ResizeBuffers(0, pixelW, pixelH, DXGI_FORMAT_UNKNOWN, 0);
         if (FAILED(hr)) {
             WriteLogF(L"Auth screen ResizeBuffers failed hr=0x%08X target=%ux%u scale=%.3f", hr, pixelW, pixelH, scale);
+            deviceRecoveryNeeded_ = hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET;
             return false;
         }
 
@@ -1471,20 +1512,6 @@ private:
             D2D1::RoundedRect(D2D1::RectF(r.left - 10.0f, r.top - 10.0f, r.right + 10.0f, r.bottom + 10.0f), radius + 9.0f, radius + 9.0f), g1.Get());
         if (g2) d2dContext_->FillRoundedRectangle(
             D2D1::RoundedRect(D2D1::RectF(r.left - 5.0f, r.top - 5.0f, r.right + 5.0f, r.bottom + 5.0f), radius + 5.0f, radius + 5.0f), g2.Get());
-    }
-
-    void FillVerticalGradient(D2D1_RECT_F r, UINT32 topColor, UINT32 bottomColor) {
-        D2D1_GRADIENT_STOP stops[2];
-        stops[0].position = 0.0f; stops[0].color = D2D1::ColorF(topColor);
-        stops[1].position = 1.0f; stops[1].color = D2D1::ColorF(bottomColor);
-        ComPtr<ID2D1GradientStopCollection> coll;
-        if (FAILED(d2dContext_->CreateGradientStopCollection(stops, 2, coll.GetAddressOf()))) return;
-        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES props{};
-        props.startPoint = D2D1::Point2F(r.left, r.top);
-        props.endPoint = D2D1::Point2F(r.left, r.bottom);
-        ComPtr<ID2D1LinearGradientBrush> br;
-        if (FAILED(d2dContext_->CreateLinearGradientBrush(props, coll.Get(), br.GetAddressOf()))) return;
-        d2dContext_->FillRectangle(r, br.Get());
     }
 
     ComPtr<ID2D1Bitmap1> GetCachedBitmap(const std::wstring& path) {

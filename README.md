@@ -4,10 +4,11 @@
 ![Xbox Series X|S](https://img.shields.io/badge/platform-Xbox%20Series%20X%7CS-107c10)
 ![Minecraft Java Edition](https://img.shields.io/badge/Minecraft-Java%20Edition-62b47a)
 
-Bandit Launcher runs **Minecraft Java Edition directly on Xbox Series X|S in Developer Mode**, with Fabric, Forge and NeoForge. It signs in through Microsoft, verifies Java Edition ownership and downloads the official game files.
+Bandit Launcher runs **Minecraft Java Edition directly on Xbox Series X|S in Developer Mode**, with Fabric, Forge and NeoForge. It signs in through Microsoft, verifies Java Edition ownership and downloads the official game files. Website and downloads at [launcher.banditvault.co.uk](https://launcher.banditvault.co.uk/).
 
 > **Xbox One, Xbox One S and Xbox One X are not supported.** Both launcher builds are for Xbox Series S and Xbox Series X only.
 
+[Website](https://launcher.banditvault.co.uk/) ·
 [Download](#download) · [Getting started](#getting-started) · [Minecraft versions](#minecraft-versions) · [Discord](https://discord.gg/XTFYUKbG7g) · [Video guide](https://youtu.be/ATHiVaBenY8)
 
 ## Requirements

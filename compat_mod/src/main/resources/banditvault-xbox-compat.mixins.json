@@ -4,8 +4,6 @@
   "package": "banditvault.xboxcompat.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "BanditMouseCursorRecipeBookScreenMixin",
-    "BanditMouseCursorScreenMixin",
     "CobblemonShowdownFileSystemMixin",
     "MinecraftClientExitMixin",
     "MinecraftClientProbeMixin",

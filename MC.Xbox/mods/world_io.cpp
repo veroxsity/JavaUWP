@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <memory>
 
 bool IsSafeWorldName(const std::wstring& name) {
     if (name.empty()) return false;
@@ -20,8 +21,8 @@ std::wstring WorldExportsDir(const std::wstring& runtimeRoot) {
     return runtimeRoot + L"\\exports\\worlds";
 }
 
-std::wstring DefaultWorldExportPath(const std::wstring& runtimeRoot, const std::wstring& worldName) {
-    return WorldExportsDir(runtimeRoot) + L"\\" + SafeFileName(worldName) + L".zip";
+std::wstring DefaultWorldExportPath(const std::wstring& runtimeRoot, const std::wstring& profileId, const std::wstring& worldName) {
+    return WorldExportsDir(runtimeRoot) + L"\\" + SafeFileName(profileId) + L"\\" + SafeFileName(worldName) + L".zip";
 }
 
 std::vector<std::wstring> ListProfileWorlds(const std::wstring& runtimeRoot, const std::wstring& profileId) {
@@ -52,25 +53,28 @@ static std::string ArchivePathJoin(const std::string& prefix, const std::wstring
     return prefix + relA;
 }
 
-static void CollectDirectoryFiles(
+static bool CollectDirectoryFiles(
     const std::wstring& rootDir,
     const std::wstring& relDir,
     std::vector<std::pair<std::wstring, std::wstring>>& out) {
     const std::wstring scanDir = relDir.empty() ? rootDir : rootDir + L"\\" + relDir;
     WIN32_FIND_DATAW fd = {};
     HANDLE h = FindFirstFileW((scanDir + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;
+    bool ok = true;
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
         const std::wstring childRel = relDir.empty() ? fd.cFileName : relDir + L"\\" + fd.cFileName;
         const std::wstring fullPath = rootDir + L"\\" + childRel;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            CollectDirectoryFiles(rootDir, childRel, out);
+            if (!CollectDirectoryFiles(rootDir, childRel, out)) { ok = false; break; }
         } else {
             out.push_back({ fullPath, childRel });
         }
     } while (FindNextFileW(h, &fd));
+    if (GetLastError() != ERROR_NO_MORE_FILES) ok = false;
     FindClose(h);
+    return ok;
 }
 
 struct ZipFileWriterState {
@@ -84,11 +88,21 @@ static size_t ZipFileWriteCallback(void* opaque, mz_uint64 file_ofs, const void*
     return fwrite(pBuf, 1, n, state->file) == n ? n : 0;
 }
 
+static size_t ZipReadFileCallback(void* opaque, mz_uint64 offset, void* data, size_t size) {
+    FILE* file = static_cast<FILE*>(opaque);
+    if (_fseeki64(file, static_cast<__int64>(offset), SEEK_SET) != 0) return 0;
+    return fread(data, 1, size, file);
+}
+
 static bool ZipAddFileFromPath(mz_zip_archive* zip, const std::string& archiveName, const std::wstring& path) {
-    std::vector<unsigned char> bytes;
-    if (!ReadBinaryFileLimited(path, bytes, 256ull * 1024ull * 1024ull)) return false;
-    if (bytes.empty()) return false;
-    return mz_zip_writer_add_mem(zip, archiveName.c_str(), bytes.data(), bytes.size(), static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION)) != 0;
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, path.c_str(), L"rb") != 0 || !file) return false;
+    if (_fseeki64(file, 0, SEEK_END) != 0) { fclose(file); return false; }
+    const __int64 size = _ftelli64(file);
+    bool ok = size >= 0 && mz_zip_writer_add_read_buf_callback(zip, archiveName.c_str(), ZipReadFileCallback,
+        file, static_cast<mz_uint64>(size), nullptr, nullptr, 0, static_cast<mz_uint>(MZ_DEFAULT_COMPRESSION), nullptr, 0, nullptr, 0) != 0;
+    if (fclose(file) != 0) ok = false;
+    return ok;
 }
 
 bool ExportWorldZip(
@@ -116,17 +130,18 @@ bool ExportWorldZip(
     }
 
     std::vector<std::pair<std::wstring, std::wstring>> files;
-    CollectDirectoryFiles(worldDir, L"", files);
+    if (!CollectDirectoryFiles(worldDir, L"", files)) { error = L"Could not read every world folder"; return false; }
     if (files.empty()) {
         error = L"World folder is empty";
         return false;
     }
 
-    DeleteFileW(outputPath.c_str());
+    const std::wstring temporary = outputPath + L".exporting";
+    DeleteFileW(temporary.c_str());
     EnsureDirectoryTree(GetParentDir(outputPath));
 
     FILE* outFile = nullptr;
-    if (_wfopen_s(&outFile, outputPath.c_str(), L"wb") != 0 || !outFile) {
+    if (_wfopen_s(&outFile, temporary.c_str(), L"wb") != 0 || !outFile) {
         error = L"Could not create world archive";
         return false;
     }
@@ -137,29 +152,34 @@ bool ExportWorldZip(
     zip.m_pWrite = ZipFileWriteCallback;
     if (!mz_zip_writer_init(&zip, 0)) {
         fclose(outFile);
-        DeleteFileW(outputPath.c_str());
+        DeleteFileW(temporary.c_str());
         error = L"Could not start world archive";
         return false;
     }
 
     const std::string prefix = w2a(worldName) + "/";
     int added = 0;
+    bool complete = true;
     for (const auto& entry : files) {
         const std::string archiveName = ArchivePathJoin(prefix, entry.second);
         if (ZipAddFileFromPath(&zip, archiveName, entry.first)) {
             ++added;
         } else {
-            WriteLogF(L"Export world skipped file: %s", entry.second.c_str());
+            WriteLogF(L"Export world failed file %s", entry.second.c_str());
+            complete = false;
+            break;
         }
     }
 
-    if (added == 0 || !mz_zip_writer_finalize_archive(&zip) || !mz_zip_writer_end(&zip)) {
-        fclose(outFile);
-        DeleteFileW(outputPath.c_str());
-        error = L"Could not finalize world archive";
+    const bool finalized = complete && added > 0 && mz_zip_writer_finalize_archive(&zip) != 0;
+    const bool ended = mz_zip_writer_end(&zip) != 0;
+    const bool closed = fclose(outFile) == 0;
+    if (!finalized || !ended || !closed ||
+        !MoveFileExW(temporary.c_str(), outputPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(temporary.c_str());
+        error = L"Could not finish world archive. Previous export kept";
         return false;
     }
-    fclose(outFile);
 
     WriteLogF(L"Exported world %s to %s files=%d", worldName.c_str(), outputPath.c_str(), added);
     return true;
@@ -249,19 +269,23 @@ bool ImportWorldFromZip(
         return false;
     }
 
-    std::vector<unsigned char> packBytes;
-    if (!ReadBinaryFileLimited(zipPath, packBytes, 512ull * 1024ull * 1024ull)) {
-        error = L"World archive is too large or could not be read";
+    FILE* inputFile = nullptr;
+    if (_wfopen_s(&inputFile, zipPath.c_str(), L"rb") != 0 || !inputFile) {
+        error = L"Could not open world archive";
         return false;
     }
-    if (packBytes.empty()) {
-        error = L"World archive was empty";
+    std::unique_ptr<FILE, decltype(&fclose)> input(inputFile, fclose);
+    if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = L"Could not read archive size"; return false; }
+    const __int64 archiveSize = _ftelli64(input.get());
+    if (archiveSize <= 0 || archiveSize > 128ll * 1024ll * 1024ll) {
+        error = L"World archive is empty or exceeds the 128 MB input limit";
         return false;
     }
-
     mz_zip_archive zip{};
-    if (!mz_zip_reader_init_mem(&zip, packBytes.data(), packBytes.size(), 0)) {
-        error = L"World archive is not a valid zip file";
+    zip.m_pRead = ZipReadFileCallback;
+    zip.m_pIO_opaque = input.get();
+    if (!mz_zip_reader_init(&zip, static_cast<mz_uint64>(archiveSize), 0)) {
+        error = L"World archive is not a valid ZIP archive";
         return false;
     }
 
@@ -279,63 +303,56 @@ bool ImportWorldFromZip(
         error = L"A world with that name already exists. Enable replace to overwrite it.";
         return false;
     }
-    if (DirectoryExists(destDir) && replaceExisting) {
-        if (!DeleteDirectoryTree(destDir)) {
-            mz_zip_reader_end(&zip);
-            error = L"Could not remove the existing world";
-            return false;
-        }
-    }
-    EnsureDirectoryTree(destDir);
-
+    const std::wstring temporary = destDir + L".importing-" + std::to_wstring(GetTickCount64());
+    if (!EnsureDirectoryTree(temporary)) { mz_zip_reader_end(&zip); error = L"Could not stage world"; return false; }
     int extracted = 0;
+    bool ok = true;
+    unsigned long long total = 0;
     const mz_uint count = mz_zip_reader_get_num_files(&zip);
-    for (mz_uint i = 0; i < count; ++i) {
+    if (count > 20000) ok = false;
+    for (mz_uint i = 0; ok && i < count; ++i) {
         if (mz_zip_reader_is_file_a_directory(&zip, i)) continue;
         mz_zip_archive_file_stat st{};
-        if (!mz_zip_reader_file_stat(&zip, i, &st)) continue;
+        if (!mz_zip_reader_file_stat(&zip, i, &st)) { ok = false; break; }
+        if (st.m_uncomp_size > 64ull * 1024ull * 1024ull || st.m_uncomp_size > 2ull * 1024ull * 1024ull * 1024ull - total) { ok = false; break; }
+        total += st.m_uncomp_size;
         std::string name = NormalizeZipEntryName(st.m_filename);
-        if (name.empty()) continue;
         if (!stripPrefix.empty()) {
             if (name.rfind(stripPrefix, 0) != 0) continue;
             name = name.substr(stripPrefix.size());
         }
         if (name.empty()) continue;
-        if (name.find("..") != std::string::npos) continue;
-
         std::wstring rel = a2w(name.c_str());
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
-        const std::wstring destPath = destDir + L"\\" + rel;
-        if (!IsSafeRelativePathForWorld(rel)) {
-            WriteLogF(L"Skipping unsafe world zip entry: %s", rel.c_str());
-            continue;
-        }
-        EnsureDirectoryTree(GetParentDir(destPath));
-
-        size_t outSize = 0;
-        void* p = mz_zip_reader_extract_to_heap(&zip, i, &outSize, 0);
-        if (!p) {
-            WriteLogF(L"Import world could not unpack entry: %s", rel.c_str());
-            continue;
-        }
-        if (WriteAllBytes(destPath, p, outSize)) {
-            ++extracted;
-        } else {
-            WriteLogF(L"Import world could not write entry: %s err=%lu", rel.c_str(), GetLastError());
-        }
-        mz_free(p);
+        if (!IsSafeRelativePathForWorld(rel)) { ok = false; break; }
+        size_t size = 0;
+        void* data = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+        ok = data && WriteAllBytes(temporary + L"\\" + rel, data, size);
+        mz_free(data);
+        if (ok) ++extracted;
     }
-
     mz_zip_reader_end(&zip);
-    if (extracted == 0) {
-        error = L"No world files were extracted";
+    ok = ok && extracted > 0 &&
+        (GetFileAttributesW((temporary + L"\\level.dat").c_str()) != INVALID_FILE_ATTRIBUTES ||
+         GetFileAttributesW((temporary + L"\\level.dat_old").c_str()) != INVALID_FILE_ATTRIBUTES);
+    if (!ok) {
+        DeleteDirectoryTree(temporary);
+        error = L"World import failed or exceeded archive limits. Existing world kept";
         return false;
     }
-    if (GetFileAttributesW((destDir + L"\\level.dat").c_str()) == INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((destDir + L"\\level.dat_old").c_str()) == INVALID_FILE_ATTRIBUTES) {
-        error = L"Imported archive did not produce a valid world";
+    const std::wstring previous = destDir + L".previous-" + std::to_wstring(GetTickCount64());
+    const bool hadWorld = DirectoryExists(destDir);
+    if (hadWorld && !MoveFileExW(destDir.c_str(), previous.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        DeleteDirectoryTree(temporary); error = L"Could not preserve existing world"; return false;
+    }
+    if (!MoveFileExW(temporary.c_str(), destDir.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        if (hadWorld && !MoveFileExW(previous.c_str(), destDir.c_str(), MOVEFILE_WRITE_THROUGH)) {
+            error = L"Could not restore world. Original retained at " + previous;
+        } else { error = L"Could not install replacement. Existing world kept"; }
+        DeleteDirectoryTree(temporary);
         return false;
     }
+    if (hadWorld) DeleteDirectoryTree(previous);
 
     WriteLogF(L"Imported world %s into profile %s files=%d", worldName.c_str(), profileId.c_str(), extracted);
     return true;

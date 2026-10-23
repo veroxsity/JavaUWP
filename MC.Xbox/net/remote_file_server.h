@@ -7,3 +7,5 @@ void StopRemoteFileServer();
 bool RemoteFileServerRunning();
 std::wstring RemoteFileServerUrl();
 std::string RemoteFileServerPin();
+
+bool RemoteFileImportRunning();

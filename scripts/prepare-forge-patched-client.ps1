@@ -28,11 +28,8 @@ if ($MinecraftVersion -ne "1.20.1") {
 
     Ensure-Dir $cacheRoot, $installRoot
     '{"profiles":{},"settings":{},"version":3}' | Set-Content (Join-Path $installRoot "launcher_profiles.json") -Encoding ascii
-    if (-not (Test-Path $installerJar)) {
-        $installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/$forgeCoordinate/forge-$forgeCoordinate-installer.jar"
-        Write-Host "Downloading $installerUrl"
-        Invoke-WebRequest -UseBasicParsing -Uri $installerUrl -OutFile $installerJar -TimeoutSec 180
-    }
+    $installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/$forgeCoordinate/forge-$forgeCoordinate-installer.jar"
+    Save-RemoteFile -Uri $installerUrl -Path $installerJar
 
     $installerLog = Join-Path $cacheRoot "installer.log"
     & $javaExe -jar $installerJar --installClient $installRoot *> $installerLog
@@ -71,10 +68,7 @@ function Join-MavenPath {
 function Ensure-LibraryArtifact {
     param([Parameter(Mandatory = $true)]$Artifact)
     $dest = Join-Path $libraryDir ($Artifact.path.Replace("/", "\"))
-    if (Test-Path $dest) { return $dest }
-    Ensure-Dir (Split-Path $dest -Parent)
-    Write-Host "Downloading $($Artifact.path)"
-    Invoke-WebRequest -UseBasicParsing -Uri $Artifact.url -OutFile $dest
+    Save-RemoteFile -Uri $Artifact.url -Path $dest -Sha1 $Artifact.sha1 -Size $Artifact.size
     return $dest
 }
 
@@ -92,7 +86,7 @@ function Invoke-ForgeTool {
         [Parameter(Mandatory = $true)][string[]]$ToolJars
     )
     $cp = ($ToolJars | Select-Object -Unique) -join ";"
-    & $javaExe -cp $cp $MainClass @Arguments
+    & $javaExe -cp $cp $MainClass @Arguments | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) {
         throw "Forge tool failed: $MainClass ($LASTEXITCODE)"
     }
@@ -129,12 +123,8 @@ Ensure-LibraryByName "net.minecraftforge:ForgeAutoRenamingTool:0.1.22:all" | Out
 Ensure-LibraryByName "net.minecraftforge:binarypatcher:1.1.1" | Out-Null
 Ensure-LibraryByName "net.minecraftforge:forge:${ForgeVersion}:universal" | Out-Null
 # 1.20.1 never runs the installer, it only needs client.lzma out of it
-if (-not (Test-Path $installerJar)) {
-    $installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/$ForgeVersion/forge-$ForgeVersion-installer.jar"
-    Ensure-Dir (Split-Path $installerJar)
-    Write-Host "Downloading $installerUrl"
-    Invoke-WebRequest -UseBasicParsing -Uri $installerUrl -OutFile $installerJar -TimeoutSec 180
-}
+$installerUrl = "https://maven.minecraftforge.net/net/minecraftforge/forge/$ForgeVersion/forge-$ForgeVersion-installer.jar"
+Save-RemoteFile -Uri $installerUrl -Path $installerJar
 
 if (-not (Test-Path $binPatch)) {
     Ensure-Dir (Split-Path $binPatch)

@@ -17,8 +17,8 @@ public abstract class BanditControllerKeyboardInputMixin extends class_744 {
             return;
         }
 
-        field_3907 = movement[0];
-        field_3905 = movement[1];
+        field_3907 = movement[0] * (slowDown ? slowDownFactor : 1.0f);
+        field_3905 = movement[1] * (slowDown ? slowDownFactor : 1.0f);
         field_3910 = movement[1] > 0.0f;
         field_3909 = movement[1] < 0.0f;
         field_3908 = movement[0] > 0.0f;

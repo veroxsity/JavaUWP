@@ -192,6 +192,7 @@ final class BanditControllerKeyboard {
         Object focused = findTarget(screen);
         if (focused instanceof class_339 && ((class_339)focused).method_25405(cursorX, cursorY)) return focused;
         class_364 hovered = screen.method_19355(cursorX, cursorY).orElse(null);
+        if (hovered == null && screen instanceof class_7743) return focused;
         return hovered instanceof class_342 || hovered instanceof class_7529 ? hovered : null;
     }
 

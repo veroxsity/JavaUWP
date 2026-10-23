@@ -25,6 +25,10 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <bcrypt.h>
+#include <winrt/Windows.Networking.h>
+#include <winrt/Windows.Networking.Connectivity.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
 
 static std::string HtmlEscape(const std::wstring& value) {
     std::string out;
@@ -108,18 +112,25 @@ static std::string UrlDecode(const std::string& value) {
     return out;
 }
 
-static std::string QueryValue(const std::string& query, const std::string& key) {
+static std::string QueryValue(const std::string& query, const std::string& key, bool* supplied = nullptr) {
+    if (supplied) *supplied = false;
+    std::string found;
+    bool present = false;
     size_t pos = 0;
     while (pos <= query.size()) {
         const size_t amp = query.find('&', pos);
         const std::string part = query.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
         const size_t eq = part.find('=');
-        const std::string k = UrlDecode(eq == std::string::npos ? part : part.substr(0, eq));
-        if (k == key) return UrlDecode(eq == std::string::npos ? std::string() : part.substr(eq + 1));
+        if (UrlDecode(eq == std::string::npos ? part : part.substr(0, eq)) == key) {
+            if (supplied) *supplied = true;
+            if (present) return {};
+            present = true;
+            found = UrlDecode(eq == std::string::npos ? std::string() : part.substr(eq + 1));
+        }
         if (amp == std::string::npos) break;
         pos = amp + 1;
     }
-    return {};
+    return found;
 }
 
 static bool SendAll(SOCKET s, const char* data, size_t len) {
@@ -228,23 +239,26 @@ static bool GenerateRemotePin(std::string& pin) {
 class RemoteFileServer {
 public:
     void Start(const std::wstring& runtimeRoot) {
-        if (running_.load()) return;
+        if (running_.load() || starting_.exchange(true)) return;
         if (thread_.joinable()) thread_.join();
         pin_.clear();
         if (!GenerateRemotePin(pin_)) {
             WriteLog(L"Remote file server not started, secure PIN generation failed");
+            starting_.store(false);
             return;
         }
         runtimeRoot_ = runtimeRoot;
+        address_ = LocalAddress();
         attempts_.clear();
         stop_.store(false);
-        running_.store(true);
         thread_ = std::thread([this]() { ThreadMain(); });
     }
 
     void Stop() {
+        stop_.store(true);
         if (!running_.load()) {
             if (thread_.joinable()) thread_.join();
+            if (importThread_.joinable()) importThread_.join();
             return;
         }
         stop_.store(true);
@@ -254,30 +268,39 @@ public:
         }
         WakeListener();
         if (thread_.joinable()) thread_.join();
+        if (importThread_.joinable()) importThread_.join();
         running_.store(false);
     }
 
     bool Running() const { return running_.load(); }
+    bool ImportRunning() const {
+        std::lock_guard<std::mutex> guard(packImport_->lock);
+        return packImport_->running;
+    }
     std::string Pin() const { return pin_; }
     int Port() const { return port_; }
 
     std::wstring BaseUrl() const {
-        return L"http://" + a2w(LocalAddress().c_str()) + L":" + std::to_wstring(port_);
+        return address_.empty() ? std::wstring() : L"http://" + a2w(address_.c_str()) + L":" + std::to_wstring(port_);
     }
 
     std::wstring Url() const {
-        return BaseUrl() + L"/?pin=" + a2w(pin_.c_str());
+        const std::wstring base = BaseUrl();
+        return base.empty() ? std::wstring() : base + L"/?pin=" + a2w(pin_.c_str());
     }
 
 private:
     static constexpr int kPort = 27632;
     std::atomic<bool> running_{ false };
+    std::atomic<bool> starting_{ false };
     std::atomic<bool> stop_{ false };
     std::atomic<SOCKET> listenSocket_{ INVALID_SOCKET };
     std::atomic<SOCKET> clientSocket_{ INVALID_SOCKET };
     std::thread thread_;
+    std::thread importThread_;
     std::wstring runtimeRoot_;
     std::string pin_;
+    std::string address_;
 
     // a pack installs off the server thread, which serves one request at a time and would
     // otherwise freeze every page until the install ends
@@ -311,28 +334,26 @@ private:
     std::map<unsigned long, PinAttempts> attempts_;
 
     std::string LocalAddress() const {
-        char host[256] = {};
-        if (gethostname(host, sizeof(host)) != 0) return "127.0.0.1";
-        addrinfo hints = {};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfo* result = nullptr;
-        if (getaddrinfo(host, nullptr, &hints, &result) != 0 || !result) return "127.0.0.1";
-        std::string fallback = "127.0.0.1";
-        for (addrinfo* p = result; p; p = p->ai_next) {
-            sockaddr_in* sin = reinterpret_cast<sockaddr_in*>(p->ai_addr);
-            char ip[INET_ADDRSTRLEN] = {};
-            if (inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip))) {
-                std::string s = ip;
-                if (s.rfind("127.", 0) != 0 && s.rfind("169.254.", 0) != 0) {
-                    freeaddrinfo(result);
-                    return s;
+        try {
+            using namespace winrt::Windows::Networking;
+            using namespace winrt::Windows::Networking::Connectivity;
+            const auto profiles = NetworkInformation::GetConnectionProfiles();
+            for (const auto& host : NetworkInformation::GetHostNames()) {
+                if (host.Type() != HostNameType::Ipv4 || !host.IPInformation()) continue;
+                const auto adapter = host.IPInformation().NetworkAdapter();
+                if (!adapter) continue;
+                const std::string address = winrt::to_string(host.CanonicalName());
+                if (address == "0.0.0.0" || address.rfind("127.", 0) == 0 || address.rfind("169.254.", 0) == 0) continue;
+                for (const auto& profile : profiles) {
+                    const auto connected = profile.NetworkAdapter();
+                    if (connected && connected.NetworkAdapterId() == adapter.NetworkAdapterId() &&
+                        profile.GetNetworkConnectivityLevel() != NetworkConnectivityLevel::None) return address;
                 }
-                fallback = s;
             }
+        } catch (...) {
+            WriteLog(L"Remote Files LAN address discovery failed");
         }
-        freeaddrinfo(result);
-        return fallback;
+        return {};
     }
 
     void WakeListener() {
@@ -351,6 +372,7 @@ private:
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
             WriteLog(L"Remote file server WSAStartup failed");
             running_.store(false);
+            starting_.store(false);
             return;
         }
 
@@ -359,6 +381,7 @@ private:
             WriteLogF(L"Remote file server socket failed err=%d", WSAGetLastError());
             WSACleanup();
             running_.store(false);
+            starting_.store(false);
             return;
         }
 
@@ -375,10 +398,13 @@ private:
             closesocket(s);
             WSACleanup();
             running_.store(false);
+            starting_.store(false);
             return;
         }
 
         listenSocket_.store(s);
+        running_.store(true);
+        starting_.store(false);
         WriteLogF(L"Remote file server started url=%s", BaseUrl().c_str());
 
         while (!stop_.load()) {
@@ -398,8 +424,13 @@ private:
                 closesocket(client);
                 break;
             }
+            const DWORD receiveTimeout = 2000;
+            const DWORD sendTimeout = 15000;
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&receiveTimeout), sizeof(receiveTimeout));
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&sendTimeout), sizeof(sendTimeout));
             clientSocket_.store(client);
-            HandleClient(client, peerAddr.sin_addr.s_addr);
+            try { HandleClient(client, peerAddr.sin_addr.s_addr); }
+            catch (const std::exception&) { SendHttpResponse(client, 500, "Internal Server Error", "text/plain", "Request exceeded available resources"); }
             clientSocket_.compare_exchange_strong(client, INVALID_SOCKET);
             closesocket(client);
         }
@@ -410,20 +441,25 @@ private:
         WriteLog(L"Remote file server stopped");
     }
 
-    static constexpr unsigned long long kMaxUploadBytes = 512ull * 1024ull * 1024ull;
+    static constexpr unsigned long long kMaxUploadBytes = 128ull * 1024ull * 1024ull;
 
-    bool ReadRequest(SOCKET s, std::string& request, std::string& body, std::map<std::string, std::string>& headers) {
+    bool ReadRequest(SOCKET s, std::string& request, std::string& body, std::map<std::string, std::string>& headers, unsigned long peer) {
+        if (PeerLockedOut(peer)) {
+            SendHttpResponse(s, 429, "Too Many Requests", "text/plain", "Too many PIN attempts");
+            return false;
+        }
+        const ULONGLONG headerDeadline = GetTickCount64() + 5000;
         std::string data;
         char buffer[8192];
         size_t headerEnd = std::string::npos;
-        while (data.size() < 1024 * 1024) {
+        while (data.size() < 16 * 1024 && GetTickCount64() < headerDeadline) {
             const int read = recv(s, buffer, sizeof(buffer), 0);
             if (read <= 0) return false;
             data.append(buffer, read);
             headerEnd = data.find("\r\n\r\n");
             if (headerEnd != std::string::npos) break;
         }
-        if (headerEnd == std::string::npos) return false;
+        if (headerEnd == std::string::npos || headerEnd > 16 * 1024) return false;
 
         request = data.substr(0, headerEnd);
         size_t lineStart = request.find("\r\n");
@@ -437,6 +473,7 @@ private:
                 std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
                 size_t valueStart = colon + 1;
                 while (valueStart < line.size() && line[valueStart] == ' ') ++valueStart;
+                if (headers.find(key) != headers.end()) return false;
                 headers[key] = line.substr(valueStart);
             }
             if (next == std::string::npos) break;
@@ -446,6 +483,7 @@ private:
         unsigned long long contentLength = 0;
         auto it = headers.find("content-length");
         if (it != headers.end()) {
+            if (it->second.empty() || it->second.find_first_not_of("0123456789") != std::string::npos || it->second.size() > 10) return false;
             contentLength = strtoull(it->second.c_str(), nullptr, 10);
         }
         if (contentLength > kMaxUploadBytes) {
@@ -456,10 +494,25 @@ private:
             return false;
         }
 
+        if (headers.find("transfer-encoding") != headers.end()) return false;
+        const size_t targetStart = request.find(' ');
+        const size_t targetEnd = request.find(' ', targetStart + 1);
+        if (targetStart == std::string::npos || targetEnd == std::string::npos) return false;
+        const std::string target = request.substr(targetStart + 1, targetEnd - targetStart - 1);
+        const size_t question = target.find('?');
+        const std::string query = question == std::string::npos ? std::string() : target.substr(question + 1);
+        const bool multipart = headers["content-type"].rfind("multipart/form-data", 0) == 0;
+        if ((multipart || target.rfind("/api/write", 0) == 0 || contentLength > 64 * 1024) && !Authorized(query, {})) {
+            NotePinFailure(peer);
+            SendHttpResponse(s, 401, "Unauthorized", "text/plain", "PIN required in request URL");
+            return false;
+        }
+        const ULONGLONG bodyDeadline = GetTickCount64() + 120000;
         body = data.substr(headerEnd + 4);
         // string doubles its way up to contentLength without this
         if (contentLength > body.size()) body.reserve(static_cast<size_t>(contentLength));
         while (body.size() < contentLength) {
+            if (GetTickCount64() >= bodyDeadline) return false;
             const int read = recv(s, buffer, sizeof(buffer), 0);
             if (read <= 0) return false;
             body.append(buffer, read);
@@ -469,10 +522,11 @@ private:
     }
 
     bool Authorized(const std::string& query, const std::string& body) const {
-        if (QueryValue(query, "pin") == pin_) return true;
-        // multipart uploads carry the pin as a part, plain forms as an urlencoded field
-        if (body.find("name=\"pin\"\r\n\r\n" + pin_) != std::string::npos) return true;
-        return !pin_.empty() && FormFieldValue(body, "pin") == pin_;
+        if (pin_.empty()) return false;
+        bool queryHasPin = false;
+        const std::string queryPin = QueryValue(query, "pin", &queryHasPin);
+        const std::string formPin = body.size() <= 64 * 1024 ? QueryValue(body, "pin") : std::string();
+        return queryPin == pin_ || (!queryHasPin && formPin == pin_);
     }
 
     static bool SuppliedPin(const std::string& query, const std::string& body) {
@@ -568,7 +622,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         std::string request;
         std::string body;
         std::map<std::string, std::string> headers;
-        if (!ReadRequest(s, request, body, headers)) {
+        if (!ReadRequest(s, request, body, headers, peer)) {
             SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad request.");
             return;
         }
@@ -601,6 +655,11 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
             return;
         }
         NotePinSuccess(peer);
+        const bool exportsProfile = method == "GET" && path == "/download" && QueryValue(query, "file").rfind("export:", 0) == 0;
+        if ((method == "POST" || exportsProfile) && ImportRunning()) {
+            SendHttpResponse(s, 409, "Conflict", "text/plain; charset=utf-8", "Pack import in progress. Wait before changing files.");
+            return;
+        }
 
         if (method == "GET" && path == "/") {
             SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8", Layout("Bandit Launcher", HomeHtml(query)));
@@ -655,9 +714,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         }
     }
 
-    std::string LinkFor(const std::wstring& label, const std::string& key) {
-        return "<li><a href=\"/download?pin=" + pin_ + "&file=" + key + "\">" + HtmlEscape(label) + "</a></li>";
-    }
+
 
     std::string UrlWithPin(const std::string& pathAndQuery) const {
         return pathAndQuery + (pathAndQuery.find('?') == std::string::npos ? "?pin=" : "&pin=") + pin_;
@@ -668,17 +725,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
     }
 
     std::string FormFieldValue(const std::string& body, const std::string& key) const {
-        size_t pos = 0;
-        while (pos <= body.size()) {
-            const size_t amp = body.find('&', pos);
-            const std::string part = body.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
-            const size_t eq = part.find('=');
-            const std::string k = UrlDecode(eq == std::string::npos ? part : part.substr(0, eq));
-            if (k == key) return UrlDecode(eq == std::string::npos ? std::string() : part.substr(eq + 1));
-            if (amp == std::string::npos) break;
-            pos = amp + 1;
-        }
-        return {};
+        return QueryValue(body, key);
     }
 
     std::string SidebarHtml(const std::wstring& profileId) const {
@@ -772,7 +819,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         std::wstring& outFull, std::wstring& outRoot, std::wstring& outRelNorm, bool& writable) {
         std::wstring title;
         if (!ResolveBrowseScope(scope, profileId, outRoot, title, writable)) return false;
-        std::wstring rel = a2w(UrlDecode(relRaw).c_str());
+        std::wstring rel = a2w(relRaw.c_str());
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
         if (!IsSafeRelativePath(rel)) return false;
         outFull = rel.empty() ? outRoot : outRoot + L"\\" + rel;
@@ -810,7 +857,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
     std::string ModpackImportHtml(const std::wstring& profileId) {
         std::ostringstream out;
         out << "<details class=\"disclosure\"><summary>Import a modpack</summary><div class=\"disclosure-body\">"
-            << "<form method=\"post\" action=\"/upload-modpack\" enctype=\"multipart/form-data\">"
+            << "<form method=\"post\" action=\"/upload-modpack?pin=" << pin_ << "\" enctype=\"multipart/form-data\">"
             << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
             << "<input type=\"hidden\" name=\"profile\" value=\"" << HtmlEscape(profileId) << "\">"
             << "<div class=\"field\"><label for=\"modpackfile\">Modrinth .mrpack or CurseForge .zip</label>"
@@ -969,7 +1016,7 @@ async function uploadManual(input){
         }
         EnsureProfilesInitialized(runtimeRoot_);
         const std::wstring active = NormalizeProfileId(FormFieldValue(body, "profile"));
-        const std::wstring exportPath = DefaultWorldExportPath(runtimeRoot_, worldName);
+        const std::wstring exportPath = DefaultWorldExportPath(runtimeRoot_, active, worldName);
         std::wstring exportError;
         if (!ExportWorldZip(runtimeRoot_, active, worldName, exportPath, exportError)) {
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
@@ -983,7 +1030,7 @@ async function uploadManual(input){
                 "<p><a class=\"button\" href=\"/download?pin=" + pin_ + "&amp;profile=" + FormUrlEncode(w2a(active)) + "&amp;file=export:world:" + FormUrlEncode(w2a(worldName)) + "\">Download world zip</a></p>"));
     }
 
-    void HandleWorldUpload(SOCKET s, const std::map<std::string, std::string>& headers, const std::string& body) {
+    void HandleWorldUpload(SOCKET s, const std::map<std::string, std::string>& headers, std::string& body) {
         std::wstring name;
         std::vector<unsigned char> data;
         if (!ExtractMultipartFile(headers, body, name, data)) {
@@ -1027,22 +1074,16 @@ async function uploadManual(input){
         const std::wstring importDir = runtimeRoot_ + L"\\imports";
         EnsureDirectoryTree(importDir);
         const std::wstring path = importDir + L"\\" + SafeFileName(name);
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
-                Layout("Import failed", "<h1>Import failed</h1><p>Could not save the uploaded world zip.</p>"));
-            return;
-        }
-        const bool wrote = fwrite(data.data(), 1, data.size(), f) == data.size();
-        fclose(f);
+        const bool wrote = WriteAllBytes(path, data.data(), data.size());
         if (!wrote) {
-            DeleteFileW(path.c_str());
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
                 Layout("Import failed", "<h1>Import failed</h1><p>Could not finish writing the world zip.</p>"));
             return;
         }
 
         WriteLogF(L"Remote world upload saved: %s bytes=%zu", path.c_str(), data.size());
+        std::vector<unsigned char>().swap(data);
+        std::string().swap(body);
         std::wstring importError;
         const bool ok = ImportWorldFromZip(path, runtimeRoot_, active, saveName, replaceExisting, importError);
         DeleteFileW(path.c_str());
@@ -1087,7 +1128,7 @@ async function uploadManual(input){
                 "<p><a class=\"button\" href=\"/download?pin=" + pin_ + "&amp;profile=" + FormUrlEncode(w2a(active)) + "&amp;file=export:profile\">Download .mrpack</a></p>"));
     }
 
-    void HandleModpackUpload(SOCKET s, const std::map<std::string, std::string>& headers, const std::string& body) {
+    void HandleModpackUpload(SOCKET s, const std::map<std::string, std::string>& headers, std::string& body) {
         std::wstring name;
         std::vector<unsigned char> data;
         if (!ExtractMultipartFile(headers, body, name, data)) {
@@ -1123,22 +1164,16 @@ async function uploadManual(input){
         const std::wstring importDir = runtimeRoot_ + L"\\imports";
         EnsureDirectoryTree(importDir);
         const std::wstring path = importDir + L"\\" + name;
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
-                Layout("Import failed", "<h1>Import failed</h1><p>Could not save the uploaded pack.</p>"));
-            return;
-        }
-        const bool wrote = fwrite(data.data(), 1, data.size(), f) == data.size();
-        fclose(f);
+        const bool wrote = WriteAllBytes(path, data.data(), data.size());
         if (!wrote) {
-            DeleteFileW(path.c_str());
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
                 Layout("Import failed", "<h1>Import failed</h1><p>Could not finish writing the pack.</p>"));
             return;
         }
 
         WriteLogF(L"Remote modpack upload saved: %s bytes=%zu", path.c_str(), data.size());
+        std::vector<unsigned char>().swap(data);
+        std::string().swap(body);
         {
             std::lock_guard<std::mutex> guard(packImport_->lock);
             packImport_->running = true;
@@ -1152,7 +1187,8 @@ async function uploadManual(input){
             packImport_->message.clear();
         }
 
-        std::thread([status = packImport_, path, root = runtimeRoot_, active]() {
+        if (importThread_.joinable()) importThread_.join();
+        importThread_ = std::thread([status = packImport_, path, root = runtimeRoot_, active]() {
             const ModpackProgressFactory progressFor = [status](const std::wstring& label, unsigned long long total) {
                 {
                     std::lock_guard<std::mutex> guard(status->lock);
@@ -1167,7 +1203,9 @@ async function uploadManual(input){
             };
             std::wstring error;
             std::wstring note;
-            const bool ok = InstallModpackFromFile(path, root, active, error, &note, progressFor);
+            bool ok = false;
+            try { ok = InstallModpackFromFile(path, root, active, error, &note, progressFor); }
+            catch (const std::exception&) { error = L"Pack import ran out of resources"; }
             DeleteFileW(path.c_str());
 
             std::lock_guard<std::mutex> guard(status->lock);
@@ -1175,7 +1213,7 @@ async function uploadManual(input){
             status->finished = true;
             status->ok = ok;
             status->message = ok ? note : (error.empty() ? std::wstring(L"Pack install failed") : error);
-        }).detach();
+        });
 
         SendHttpRedirect(s, UrlWithPin("/pack-import"));
     }
@@ -1249,15 +1287,8 @@ pollPackImport();
         const std::wstring folder = ProfileGameDir(runtimeRoot_, profileId) + L"\\" + match->folder;
         EnsureDirectoryTree(folder);
         const std::wstring path = folder + L"\\" + SafeFileName(match->fileName);
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Could not save the file.");
-            return;
-        }
-        const bool wrote = fwrite(data.data(), 1, data.size(), f) == data.size();
-        fclose(f);
+        const bool wrote = WriteAllBytes(path, data.data(), data.size());
         if (!wrote) {
-            DeleteFileW(path.c_str());
             SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Could not finish writing the file.");
             return;
         }
@@ -1277,7 +1308,7 @@ pollPackImport();
         } else {
             out << "<div class=\"world-list\">";
             for (const std::wstring& save : saves) {
-                const std::wstring exportPath = DefaultWorldExportPath(runtimeRoot_, save);
+                const std::wstring exportPath = DefaultWorldExportPath(runtimeRoot_, profileId, save);
                 const bool hasExport = GetFileAttributesW(exportPath.c_str()) != INVALID_FILE_ATTRIBUTES;
                 out << "<div class=\"world-card\"><div><strong>" << HtmlEscape(save) << "</strong>"
                     << "<div class=\"muted\">World save</div></div><div class=\"world-actions\">"
@@ -1293,7 +1324,7 @@ pollPackImport();
             out << "</div>";
         }
         out << "<details class=\"disclosure\"><summary>Import a world</summary><div class=\"disclosure-body\">"
-            << "<form method=\"post\" action=\"/upload-world\" enctype=\"multipart/form-data\">"
+            << "<form method=\"post\" action=\"/upload-world?pin=" << pin_ << "\" enctype=\"multipart/form-data\">"
             << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
             << "<input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
             << "<div class=\"grid\"><div class=\"field\"><label for=\"worldname\">Save as</label>"
@@ -1307,7 +1338,7 @@ pollPackImport();
         if (saves.empty()) {
             out << "<div class=\"empty\">Create a world first to upload datapacks.</div>";
         } else {
-            out << "<form method=\"post\" action=\"/upload-datapack\" enctype=\"multipart/form-data\">"
+            out << "<form method=\"post\" action=\"/upload-datapack?pin=" << pin_ << "\" enctype=\"multipart/form-data\">"
                 << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
                 << "<input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
                 << "<div class=\"grid\"><div class=\"field\"><label for=\"datapacksave\">World</label><select id=\"datapacksave\" name=\"save\">";
@@ -1370,12 +1401,12 @@ pollPackImport();
                 << "<p class=\"section-note\">Add files to this profile or transfer a complete modpack.</p></div>"
                 << "<a class=\"button secondary\" href=\"" << UrlWithPinProfile("/browse?scope=mods", profileId) << "\">Browse mods</a></div>"
                 << "<div class=\"grid\"><section class=\"panel\"><h3>Add a mod</h3>"
-                << "<form method=\"post\" action=\"/upload-mod\" enctype=\"multipart/form-data\">"
+                << "<form method=\"post\" action=\"/upload-mod?pin=" << pin_ << "\" enctype=\"multipart/form-data\">"
                 << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\"><input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
                 << "<div class=\"field\"><label for=\"modfile\">Mod .jar</label><div class=\"upload\"><input id=\"modfile\" type=\"file\" name=\"file\" accept=\".jar\" required><button>Upload mod</button></div></div>"
                 << "</form><p>Saved to this profile's mods folder.</p></section>"
                 << "<section class=\"panel\"><h3>Add a resource pack</h3>"
-                << "<form method=\"post\" action=\"/upload-resourcepack\" enctype=\"multipart/form-data\">"
+                << "<form method=\"post\" action=\"/upload-resourcepack?pin=" << pin_ << "\" enctype=\"multipart/form-data\">"
                 << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\"><input type=\"hidden\" name=\"profile\" value=\"" << profEsc << "\">"
                 << "<div class=\"field\"><label for=\"packfile\">Resource pack .zip</label><div class=\"upload\"><input id=\"packfile\" type=\"file\" name=\"file\" accept=\".zip\" required><button class=\"secondary\">Upload pack</button></div></div>"
                 << "</form></section></div>" << ModpackImportHtml(profileId) << ExportPackHtml(profileId)
@@ -1486,13 +1517,10 @@ pollPackImport();
             SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", "This area is read only.");
             return;
         }
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, full.c_str(), L"wb") != 0 || !f) {
+        if (!WriteAllBytes(full, body.data(), body.size())) {
             SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Write failed.");
             return;
         }
-        if (!body.empty()) fwrite(body.data(), 1, body.size(), f);
-        fclose(f);
         SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
     }
 
@@ -1586,13 +1614,10 @@ pollPackImport();
         }
         EnsureDirectoryTree(full);
         const std::wstring path = full + L"\\" + name;
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
+        if (!WriteAllBytes(path, data.data(), data.size())) {
             SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Write failed.");
             return;
         }
-        if (!data.empty()) fwrite(data.data(), 1, data.size(), f);
-        fclose(f);
         WriteLogF(L"Remote explorer upload: %s bytes=%zu", path.c_str(), data.size());
         SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
     }
@@ -1823,7 +1848,7 @@ initChrome();load(CFG.path||'');
 
     void ServeBrowseDownload(SOCKET s, const std::string& query) {
         const std::string scope = QueryValue(query, "scope");
-        std::wstring rel = a2w(UrlDecode(QueryValue(query, "path")).c_str());
+        std::wstring rel = a2w(QueryValue(query, "path").c_str());
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
         if (!IsSafeRelativePath(rel) || rel.empty()) {
             SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad path.");
@@ -1875,7 +1900,7 @@ initChrome();load(CFG.path||'');
             }
             path = ProfileGameDir(runtimeRoot_, profileId) + L"\\" + name;
         } else if (file.rfind("crash:", 0) == 0) {
-            name = a2w(UrlDecode(file.substr(6)).c_str());
+            name = a2w(file.substr(6).c_str());
             if (name.find(L'\\') != std::wstring::npos || name.find(L'/') != std::wstring::npos) {
                 SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad file.");
                 return;
@@ -1890,25 +1915,23 @@ initChrome();load(CFG.path||'');
             }
             path = DefaultProfileExportPath(runtimeRoot_, active);
             std::wstring exportError;
-            if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES &&
-                !ExportProfileMrpack(runtimeRoot_, active, path, exportError)) {
+            if (!ExportProfileMrpack(runtimeRoot_, active, path, exportError)) {
                 SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", w2a(exportError.c_str()));
                 return;
             }
             const size_t slash = path.find_last_of(L'\\');
             name = slash == std::wstring::npos ? path : path.substr(slash + 1);
         } else if (file.rfind("export:world:", 0) == 0) {
-            const std::wstring worldName = a2w(UrlDecode(file.substr(13)).c_str());
+            const std::wstring worldName = a2w(file.substr(13).c_str());
             if (!IsSafeWorldName(worldName)) {
                 SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad world.");
                 return;
             }
             EnsureProfilesInitialized(runtimeRoot_);
             const std::wstring active = profileId;
-            path = DefaultWorldExportPath(runtimeRoot_, worldName);
+            path = DefaultWorldExportPath(runtimeRoot_, active, worldName);
             std::wstring exportError;
-            if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES &&
-                !ExportWorldZip(runtimeRoot_, active, worldName, path, exportError)) {
+            if (!ExportWorldZip(runtimeRoot_, active, worldName, path, exportError)) {
                 SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", w2a(exportError.c_str()));
                 return;
             }
@@ -1943,7 +1966,7 @@ initChrome();load(CFG.path||'');
             const size_t headerStart = body.find("\r\n", partStart);
             if (headerStart == std::string::npos) return false;
             const size_t headerEnd = body.find("\r\n\r\n", headerStart + 2);
-            if (headerEnd == std::string::npos) return false;
+            if (headerEnd == std::string::npos || headerEnd > 16 * 1024) return false;
             const std::string partHeader = body.substr(headerStart + 2, headerEnd - headerStart - 2);
             if (partHeader.find("name=\"file\"") != std::string::npos) {
                 const size_t fn = partHeader.find("filename=\"");
@@ -1986,7 +2009,7 @@ initChrome();load(CFG.path||'');
             const size_t headerStart = body.find("\r\n", partStart);
             if (headerStart == std::string::npos) return false;
             const size_t headerEnd = body.find("\r\n\r\n", headerStart + 2);
-            if (headerEnd == std::string::npos) return false;
+            if (headerEnd == std::string::npos || headerEnd > 16 * 1024) return false;
             const std::string partHeader = body.substr(headerStart + 2, headerEnd - headerStart - 2);
             const size_t dataStart = headerEnd + 4;
             size_t dataEnd = body.find("\r\n" + boundary, dataStart);
@@ -2034,15 +2057,8 @@ initChrome();load(CFG.path||'');
 
         EnsureDirectoryTree(dir);
         const std::wstring path = dir + L"\\" + name;
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8", Layout("Upload failed", "<h1>Upload failed</h1><p>Could not write the file.</p>"));
-            return;
-        }
-        const bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
-        fclose(f);
+        const bool ok = WriteAllBytes(path, data.data(), data.size());
         if (!ok) {
-            DeleteFileW(path.c_str());
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8", Layout("Upload failed", "<h1>Upload failed</h1><p>Could not finish writing the file.</p>"));
             return;
         }
@@ -2092,15 +2108,8 @@ initChrome();load(CFG.path||'');
         const std::wstring dir = saveDir + L"\\datapacks";
         EnsureDirectoryTree(dir);
         const std::wstring path = dir + L"\\" + name;
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8", Layout("Upload failed", "<h1>Upload failed</h1><p>Could not write the datapack.</p>"));
-            return;
-        }
-        const bool ok = fwrite(data.data(), 1, data.size(), f) == data.size();
-        fclose(f);
+        const bool ok = WriteAllBytes(path, data.data(), data.size());
         if (!ok) {
-            DeleteFileW(path.c_str());
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8", Layout("Upload failed", "<h1>Upload failed</h1><p>Could not finish writing the datapack.</p>"));
             return;
         }
@@ -2124,3 +2133,5 @@ void StopRemoteFileServer() {
 bool RemoteFileServerRunning() { return g_remoteFileServer.Running(); }
 std::wstring RemoteFileServerUrl() { return g_remoteFileServer.Url(); }
 std::string RemoteFileServerPin() { return g_remoteFileServer.Pin(); }
+
+bool RemoteFileImportRunning() { return g_remoteFileServer.ImportRunning(); }

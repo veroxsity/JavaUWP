@@ -66,9 +66,6 @@ function Test-ClientJarHasClass {
 $disabledMixins = @()
 $disabledSources = @()
 $mixinAuthorVersion = $ProjectConfig.DefaultMinecraftVersion
-# cursor overlay now lives in the glfw shim, so the mod never draws it on any version
-$disabledMixins += @("BanditMouseCursorRecipeBookScreenMixin", "BanditMouseCursorScreenMixin")
-$disabledSources += "BanditMouseCursorOverlay"
 
 $sources = Get-ChildItem $srcJava -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName
 

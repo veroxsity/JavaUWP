@@ -14,6 +14,7 @@ struct LaunchTarget {
     std::wstring javaRuntime;
     std::wstring supportLevel;
     std::wstring notes;
+    std::wstring controllerProvider;
 };
 
 struct Profile {
@@ -43,7 +44,7 @@ LaunchTarget ResolveProfileTarget(const std::wstring& runtimeRoot, const Profile
 
 std::vector<Profile> LoadProfiles(const std::wstring& runtimeRoot);
 std::wstring GetActiveProfileId(const std::wstring& runtimeRoot);
-void SetActiveProfileId(const std::wstring& runtimeRoot, const std::wstring& id);
+bool SetActiveProfileId(const std::wstring& runtimeRoot, const std::wstring& id);
 Profile GetProfileById(const std::wstring& runtimeRoot, const std::wstring& id);
 
 std::wstring CreateProfile(const std::wstring& runtimeRoot, const std::wstring& name, const LaunchTarget& target);
@@ -52,10 +53,10 @@ std::wstring CreateAutoProfile(const std::wstring& runtimeRoot, const LaunchTarg
 
 bool BackupProfile(const std::wstring& runtimeRoot, const std::wstring& id, std::wstring& backupDir);
 bool RestoreProfileBackup(const std::wstring& runtimeRoot, const std::wstring& backupDir, bool removeBackup, std::wstring& restoredName);
-void DeleteProfilePermanent(const std::wstring& runtimeRoot, const std::wstring& id);
-void DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id);
-void RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName);
-void SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled);
+bool DeleteProfilePermanent(const std::wstring& runtimeRoot, const std::wstring& id);
+bool DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id);
+bool RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName);
+bool SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled);
 
 void EnsureProfilesInitialized(const std::wstring& runtimeRoot);
 void EnsureProfileGameDataInitialized(const std::wstring& runtimeRoot, const std::wstring& profileId);

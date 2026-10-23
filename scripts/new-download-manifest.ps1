@@ -279,21 +279,6 @@ function Get-ZipJson([string]$JarPath, [string]$EntryName) {
     }
 }
 
-function Save-ZipEntry([string]$JarPath, [string]$EntryName, [string]$OutputPath) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($JarPath)
-    try {
-        $entry = $zip.GetEntry($EntryName)
-        if (-not $entry) {
-            throw "$EntryName not found in $JarPath"
-        }
-        Ensure-Dir (Split-Path $OutputPath -Parent)
-        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $OutputPath, $true)
-    } finally {
-        $zip.Dispose()
-    }
-}
-
 function Add-InstallerMavenEntries(
     [string]$JarPath,
     [string]$BaseUrl,
@@ -386,20 +371,14 @@ function Get-LoaderProfile([string]$Loader, [string]$MinecraftVersion, [string]$
         $forgeVersion = Get-ForgeInstallerVersion $MinecraftVersion $LoaderVersion
         $jar = Join-Path $tmp "forge-$forgeVersion-installer.jar"
         $url = "https://maven.minecraftforge.net/net/minecraftforge/forge/$forgeVersion/forge-$forgeVersion-installer.jar"
-        if (-not (Test-Path $jar)) {
-            Write-Host "Fetch $url"
-            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $jar -TimeoutSec 120
-        }
+        Save-RemoteFile -Uri $url -Path $jar
         return Get-ZipJson $jar "version.json"
     }
 
     if ($Loader -eq "neoforge") {
         $jar = Join-Path $tmp "neoforge-$LoaderVersion-installer.jar"
         $url = "https://maven.neoforged.net/releases/net/neoforged/neoforge/$LoaderVersion/neoforge-$LoaderVersion-installer.jar"
-        if (-not (Test-Path $jar)) {
-            Write-Host "Fetch $url"
-            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $jar -TimeoutSec 120
-        }
+        Save-RemoteFile -Uri $url -Path $jar
         return Get-ZipJson $jar "version.json"
     }
 

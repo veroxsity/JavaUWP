@@ -81,6 +81,9 @@ function Resolve-VariantSources([string]$Version) {
         $layerDir = Join-Path $variantRootDir $layers[$i]
         Get-ChildItem $layerDir -Recurse -Filter "*.java" | ForEach-Object { $resolved[$_.Name] = $_.FullName }
     }
+    if ($Version -in @("1.21.9", "1.21.10")) {
+        $resolved["BanditControllerRecipeBookAccessor.java"] = Join-Path $variantRootDir "1.20.1\banditvault\fabriccontroller\mixin\BanditControllerRecipeBookAccessor.java"
+    }
     return @($resolved.Values)
 }
 

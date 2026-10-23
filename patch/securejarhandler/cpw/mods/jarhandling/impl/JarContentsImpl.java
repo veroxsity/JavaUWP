@@ -51,6 +51,8 @@ public class JarContentsImpl implements JarContents {
     final JarSigningData signingData = new JarSigningData();
     private final Manifest manifest;
     private final Map<Path, Integer> nameOverrides;
+    private final UnionPathFilter pathFilter;
+    private final Map<Path, UnionFileSystem> backingFileSystems = new HashMap<>();
 
     private Set<String> packages;
     private List<SecureJar.Provider> providers;
@@ -60,6 +62,7 @@ public class JarContentsImpl implements JarContents {
         if (validPaths.length == 0) {
             throw new UncheckedIOException(new IOException("Invalid paths argument, contained no existing paths: " + Arrays.toString(paths)));
         }
+        this.pathFilter = pathFilter;
         this.filesystem = UFSP.newFileSystem(pathFilter, validPaths);
         this.manifest = readManifestAndSigningData(defaultManifest, validPaths);
         this.nameOverrides = readMultiReleaseInfo();
@@ -133,9 +136,7 @@ public class JarContentsImpl implements JarContents {
         }
 
         var rel = filesystem.getPath(name);
-        if (this.nameOverrides.containsKey(rel)) {
-            rel = this.filesystem.getPath("META-INF", "versions", this.nameOverrides.get(rel).toString()).resolve(rel);
-        }
+        if (this.nameOverrides.containsKey(rel)) return findBackingFileUri(name);
         var unionPath = this.filesystem.getRoot().resolve(rel);
         if (Files.exists(unionPath)) {
             return Optional.of(unionPath.toUri());
@@ -179,6 +180,7 @@ public class JarContentsImpl implements JarContents {
 
         Set<String> packages = new HashSet<>();
         final Path root = this.filesystem.getRoot();
+        IOException unionFailure = null;
         try {
             Files.walkFileTree(root, new SimpleFileVisitor<>() {
                 @Override
@@ -200,12 +202,14 @@ public class JarContentsImpl implements JarContents {
                     return FileVisitResult.CONTINUE;
                 }
             });
-            addPackagesFromBackingJars(packages, ignoredRootPackages);
-            logPackageScan(root, packages);
-            return Set.copyOf(packages);
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            unionFailure = e;
+            System.err.println("[banditvault] Union package scan failed " + e.getMessage());
         }
+        boolean recovered = addPackagesFromBackingJars(packages, ignoredRootPackages);
+        if (unionFailure != null && !recovered) throw new UncheckedIOException(unionFailure);
+        logPackageScan(root, packages);
+        return Set.copyOf(packages);
     }
 
     private void logPackageScan(Path root, Set<String> packages) {
@@ -246,14 +250,15 @@ public class JarContentsImpl implements JarContents {
         return pathText.replace('/', '.');
     }
 
-    private void addPackagesFromBackingJars(Set<String> packages, Set<String> ignoredRootPackages) {
+    private boolean addPackagesFromBackingJars(Set<String> packages, Set<String> ignoredRootPackages) {
+        boolean recovered = true;
         for (Path basePath : getBackingPaths()) {
-            if (Files.isDirectory(basePath)) {
-                addPackagesFromDirectory(packages, ignoredRootPackages, basePath);
-            } else {
-                addPackagesFromJar(packages, ignoredRootPackages, basePath);
-            }
+            boolean read = Files.isDirectory(basePath)
+                    ? addPackagesFromDirectory(packages, ignoredRootPackages, basePath)
+                    : addPackagesFromJar(packages, ignoredRootPackages, basePath);
+            recovered &= read;
         }
+        return recovered;
     }
 
     @SuppressWarnings("unchecked")
@@ -267,18 +272,23 @@ public class JarContentsImpl implements JarContents {
         }
     }
 
+    private boolean allowed(String name, Path base) {
+        return pathFilter == null || pathFilter.test(name, base);
+    }
+
     public byte[] readBackingFileBytes(String name) {
         for (Path basePath : getBackingPaths()) {
+            if (!allowed(name, basePath)) continue;
             try {
                 if (Files.isDirectory(basePath)) {
-                    Path file = basePath.resolve(name.replace('/', basePath.getFileSystem().getSeparator().charAt(0)));
+                    Path file = findDirectoryFile(basePath, name);
                     if (Files.exists(file)) {
                         return Files.readAllBytes(file);
                     }
                 } else if (isOnDefaultFileSystem(basePath)) {
-                    try (var jar = new JarFile(basePath.toFile())) {
-                        var entry = jar.getJarEntry(name);
-                        if (entry != null && !entry.isDirectory()) {
+                    try (var jar = new JarFile(basePath.toFile(), true, JarFile.OPEN_READ, JarFile.baseVersion())) {
+                        var entry = findJarEntry(jar, name, basePath);
+                        if (entry != null && !entry.isDirectory() && allowed(entry.getName(), basePath)) {
                             try (var in = jar.getInputStream(entry)) {
                                 return in.readAllBytes();
                             }
@@ -296,35 +306,94 @@ public class JarContentsImpl implements JarContents {
         return new byte[0];
     }
 
-    private static byte[] readEntryByStreaming(Path jarPath, String name) throws IOException {
+    private byte[] readEntryByStreaming(Path jarPath, String name) throws IOException {
+        byte[] selected = null;
+        int selectedVersion = -1;
         try (var in = Files.newInputStream(jarPath); var jar = new JarInputStream(in)) {
+            boolean multiRelease = Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"));
             for (var entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
-                if (!entry.isDirectory() && entry.getName().equals(name)) {
-                    return jar.readAllBytes();
+                String logical = logicalEntryName(entry.getName(), multiRelease);
+                if (!entry.isDirectory() && name.equals(logical) && allowed(logical, jarPath) && allowed(entry.getName(), jarPath)) {
+                    int version = entry.getName().equals(name) ? 0 : Integer.parseInt(entry.getName().split("/", 4)[2]);
+                    if (version > selectedVersion) {
+                        selected = jar.readAllBytes();
+                        selectedVersion = version;
+                    }
                 }
             }
         }
-        return null;
+        return selected;
+    }
+
+    private Path findDirectoryFile(Path base, String name) {
+        if (Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"))) {
+            for (int version = Runtime.version().feature(); version >= 9; --version) {
+                String versioned = "META-INF/versions/" + version + "/" + name;
+                Path file = base.resolve(versioned);
+                if (Files.isRegularFile(file) && allowed(versioned, base)) return file;
+            }
+        }
+        return base.resolve(name.replace('/', base.getFileSystem().getSeparator().charAt(0)));
+    }
+
+    private java.util.jar.JarEntry findJarEntry(JarFile jar, String name, Path base) throws IOException {
+        if (Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"))) {
+            for (int version = Runtime.version().feature(); version >= 9; --version) {
+                String versioned = "META-INF/versions/" + version + "/" + name;
+                var entry = jar.getJarEntry(versioned);
+                if (entry != null && allowed(versioned, base)) return entry;
+            }
+        }
+        return jar.getJarEntry(name);
+    }
+
+    private static String logicalEntryName(String name, boolean multiRelease) {
+        if (!name.startsWith("META-INF/versions/")) return name;
+        if (!multiRelease) return null;
+        String[] parts = name.split("/", 4);
+        if (parts.length != 4) return null;
+        try {
+            int version = Integer.parseInt(parts[2]);
+            return version >= 9 && version <= Runtime.version().feature() ? parts[3] : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private Optional<URI> findBackingFileUri(String name) {
         for (Path basePath : getBackingPaths()) {
+            if (!allowed(name, basePath)) continue;
             try {
                 if (Files.isDirectory(basePath)) {
-                    Path file = basePath.resolve(name.replace('/', basePath.getFileSystem().getSeparator().charAt(0)));
+                    Path file = findDirectoryFile(basePath, name);
                     if (Files.exists(file)) {
                         return Optional.of(file.toUri());
                     }
+                } else if (!isOnDefaultFileSystem(basePath)) {
+                    String selected = null;
+                    int selectedVersion = -1;
+                    try (var in = Files.newInputStream(basePath); var jar = new JarInputStream(in)) {
+                        boolean multiRelease = Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"));
+                        for (var entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
+                            if (!entry.isDirectory() && name.equals(logicalEntryName(entry.getName(), multiRelease)) && allowed(entry.getName(), basePath)) {
+                                int version = entry.getName().equals(name) ? 0 : Integer.parseInt(entry.getName().split("/", 4)[2]);
+                                if (version > selectedVersion) { selected = entry.getName(); selectedVersion = version; }
+                            }
+                        }
+                    }
+                    if (selected != null) {
+                        return Optional.of(backingFileUri(basePath, selected));
+                    }
                 } else {
-                    try (var jar = new JarFile(basePath.toFile())) {
-                        var entry = jar.getJarEntry(name);
-                        if (entry != null && !entry.isDirectory()) {
+                    try (var jar = new JarFile(basePath.toFile(), true, JarFile.OPEN_READ, JarFile.baseVersion())) {
+                        var entry = findJarEntry(jar, name, basePath);
+                        if (entry != null && !entry.isDirectory() && allowed(entry.getName(), basePath)) {
                             if (Boolean.getBoolean("banditvault.securejarhandler.debug")
                                     && (name.endsWith("mods.toml") || name.startsWith("META-INF/services/"))) {
                                 System.err.println("[banditvault] JarContentsImpl UWP backing resource "
                                         + name + " -> " + basePath);
                             }
-                            return Optional.of(URI.create("jar:" + basePath.toUri() + "!/" + name));
+                            return Optional.of(backingFileUri(basePath, entry.getName()));
                         }
                     }
                 }
@@ -338,45 +407,68 @@ public class JarContentsImpl implements JarContents {
         return path.getFileSystem() == FileSystems.getDefault();
     }
 
-    private static void addPackagesFromJar(Set<String> packages, Set<String> ignoredRootPackages, Path jarPath) {
+    private synchronized URI backingFileUri(Path basePath, String entry) {
+        var backing = backingFileSystems.computeIfAbsent(basePath, path -> UFSP.newFileSystem(pathFilter, path));
+        return backing.getRoot().resolve(entry).toUri();
+    }
+
+    private boolean addPackagesFromJar(Set<String> packages, Set<String> ignoredRootPackages, Path jarPath) {
         // a jar-in-jar base path lives in the parent's zipfs, so toFile throws UnsupportedOperationException
         if (!isOnDefaultFileSystem(jarPath)) {
-            addPackagesByStreaming(packages, ignoredRootPackages, jarPath);
-            return;
+            return addPackagesByStreaming(packages, ignoredRootPackages, jarPath);
         }
 
         try (var jar = new JarFile(jarPath.toFile())) {
+            boolean multiRelease = Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"));
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 var entry = entries.nextElement();
                 if (entry.isDirectory()) {
                     continue;
                 }
-                addPackageFromEntryName(packages, ignoredRootPackages, entry.getName());
+                String logical = logicalEntryName(entry.getName(), multiRelease);
+                if (logical != null && allowed(logical, jarPath) && allowed(entry.getName(), jarPath)) addPackageFromEntryName(packages, ignoredRootPackages, logical);
             }
-        } catch (IOException | RuntimeException ignored) {
+            return true;
+        } catch (IOException | RuntimeException ex) {
+            System.err.println("[banditvault] Backing package scan failed " + jarPath + " " + ex);
+            return false;
         }
     }
 
-    private static void addPackagesByStreaming(Set<String> packages, Set<String> ignoredRootPackages, Path jarPath) {
+    private boolean addPackagesByStreaming(Set<String> packages, Set<String> ignoredRootPackages, Path jarPath) {
         try (var in = Files.newInputStream(jarPath); var jar = new JarInputStream(in)) {
+            boolean multiRelease = Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"));
             for (var entry = jar.getNextJarEntry(); entry != null; entry = jar.getNextJarEntry()) {
                 if (entry.isDirectory()) {
                     continue;
                 }
-                addPackageFromEntryName(packages, ignoredRootPackages, entry.getName());
+                String logical = logicalEntryName(entry.getName(), multiRelease);
+                if (logical != null && allowed(logical, jarPath) && allowed(entry.getName(), jarPath)) addPackageFromEntryName(packages, ignoredRootPackages, logical);
             }
-        } catch (IOException | RuntimeException ignored) {
+            return true;
+        } catch (IOException | RuntimeException ex) {
+            System.err.println("[banditvault] Backing package scan failed " + jarPath + " " + ex);
+            return false;
         }
     }
 
-    private static void addPackagesFromDirectory(Set<String> packages, Set<String> ignoredRootPackages, Path directory) {
+    private boolean addPackagesFromDirectory(Set<String> packages, Set<String> ignoredRootPackages, Path directory) {
         try (var walk = Files.walk(directory)) {
+            boolean multiRelease = Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"));
             walk
                     .filter(path -> !Files.isDirectory(path))
-                    .forEach(path -> addPackageFromEntryName(packages, ignoredRootPackages,
-                            directory.relativize(path).toString().replace('\\', '/')));
-        } catch (IOException ignored) {
+                    .forEach(path -> {
+                        String name = directory.relativize(path).toString().replace('\\', '/');
+                        String logical = logicalEntryName(name, multiRelease);
+                        if (logical != null && allowed(logical, directory) && allowed(name, directory)) {
+                            addPackageFromEntryName(packages, ignoredRootPackages, logical);
+                        }
+                    });
+            return true;
+        } catch (IOException | UncheckedIOException ex) {
+            System.err.println("[banditvault] Backing package scan failed " + directory + " " + ex);
+            return false;
         }
     }
 
@@ -433,7 +525,18 @@ public class JarContentsImpl implements JarContents {
     }
 
     @Override
-    public void close() throws IOException {
-        filesystem.close();
+    public synchronized void close() throws IOException {
+        IOException failure = null;
+        var filesystems = new java.util.ArrayList<>(backingFileSystems.values());
+        filesystems.add(filesystem);
+        for (var current : filesystems) {
+            try { current.close(); }
+            catch (IOException error) {
+                if (failure == null) failure = error;
+                else failure.addSuppressed(error);
+            }
+        }
+        backingFileSystems.clear();
+        if (failure != null) throw failure;
     }
 }

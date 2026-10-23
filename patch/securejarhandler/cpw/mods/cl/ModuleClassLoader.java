@@ -55,7 +55,7 @@ public class ModuleClassLoader extends ClassLoader {
     private static final MethodHandle MODULES_FIND_LOADED_MODULE;
     private static final Set<String> UWP_ADDED_READ_EDGES = Collections.synchronizedSet(new HashSet<>());
     private static final Set<String> UWP_REPORTED_READ_EDGE_MISSES = Collections.synchronizedSet(new HashSet<>());
-    private static final Set<String> UWP_RESOURCE_FALLBACK_MISSES = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> UWP_RESOURCE_FALLBACK_MISSES = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<Set<String>> UWP_RESOURCE_FALLBACK_IN_PROGRESS = ThreadLocal.withInitial(HashSet::new);
     private static final ThreadLocal<Set<String>> UWP_LOAD_CLASS_IN_PROGRESS = ThreadLocal.withInitial(HashSet::new);
     private static final Map<String, Module> UWP_SEEN_MODULES = Collections.synchronizedMap(new HashMap<>());
@@ -218,12 +218,6 @@ public class ModuleClassLoader extends ClassLoader {
         var modroot = this.resolvedRoots.get(ref.descriptor().name());
 
         var primaryPath = pathFromLocation(ref.location());
-        var primaryBytes = readClassBytesFromPath(primaryPath, classResourceName);
-        if (primaryBytes.length != 0) {
-            logBackingClassRead("primary", className, ref.descriptor().name(), primaryPath);
-            return primaryBytes;
-        }
-
         Object jar = modroot != null ? modroot.jar() : null;
         if (jar == null && ref instanceof JarModuleFinder.JarModuleReference jarRef) {
             jar = jarRef.jar();

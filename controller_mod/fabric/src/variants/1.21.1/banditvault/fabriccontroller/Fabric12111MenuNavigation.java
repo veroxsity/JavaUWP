@@ -57,10 +57,6 @@ final class Fabric12111MenuNavigation {
         recipeWidget = null;
     }
 
-    Region region() {
-        return region;
-    }
-
     class_1735 selectedSlot(class_437 currentclass_437) {
         return currentclass_437 == screen && region == Region.SLOT ? slot : null;
     }
@@ -194,7 +190,7 @@ final class Fabric12111MenuNavigation {
             region = Region.NONE;
             return discover(currentclass_437, fromX, fromY);
         }
-        if (recipeBook != null && recipeBook.method_2605() && isNarrow(currentclass_437)) {
+        if (recipeBook != null && recipeBook.method_2605() && (isNarrow(currentclass_437) || region == Region.RECIPE_BOOK)) {
             List<class_339> targets = recipeTargets(recipeBook);
             if (region != Region.RECIPE_BOOK || !targets.contains(recipeWidget)) {
                 return selectRecipeTarget(currentclass_437, targets, fromX, fromY, Region.RECIPE_BOOK);
@@ -361,6 +357,7 @@ final class Fabric12111MenuNavigation {
         try {
             BanditControllerRecipeBookAccessor accessor = (BanditControllerRecipeBookAccessor) recipeBook;
             addVisible(targets, accessor.banditvault$searchBox());
+            addVisible(targets, accessor.banditvault$filterButton());
             for (class_339 tab : accessor.banditvault$tabButtons()) {
                 addVisible(targets, tab);
             }

@@ -87,18 +87,6 @@ static std::wstring ForgeSrgJarSummary(const std::wstring& zipPath) {
     return L"stamp=" + FileStamp(zipPath) + L" classes=" + std::to_wstring(classCount);
 }
 
-std::wstring ForgeVersionFromLaunchVersion(const std::wstring& launchVersion) {
-    const std::wstring marker = L"-forge-";
-    const size_t pos = launchVersion.find(marker);
-    if (pos != std::wstring::npos) {
-        return launchVersion.substr(pos + marker.size());
-    }
-    if (launchVersion.rfind(L"forge-", 0) == 0) {
-        return launchVersion.substr(6);
-    }
-    return launchVersion;
-}
-
 std::wstring ForgeMavenVersion(const std::wstring& launchVersion) {
     const std::wstring marker = L"-forge-";
     const size_t pos = launchVersion.find(marker);
@@ -252,10 +240,7 @@ static bool PrepareForgeClientArtifacts(
     const std::wstring& launchVersion,
     const std::wstring& manifestMcpVersion,
     const std::vector<std::wstring>& extraGameArgs,
-    const std::wstring& installToolsVersion,
-    const std::wstring& jarSplitterVersion,
-    const std::wstring& binaryPatcherVersion,
-    const std::wstring& autoRenamingToolVersion) {
+    const std::wstring& binaryPatcherVersion) {
     const std::wstring forgeMavenVersion = ForgeMavenVersion(launchVersion);
     const std::wstring mcpVersion = ForgeMcpVersion(manifestMcpVersion, extraGameArgs);
     if (forgeMavenVersion.empty()) {
@@ -271,15 +256,6 @@ static bool PrepareForgeClientArtifacts(
             forgeMavenVersion,
             binaryPatcherVersion);
     }
-
-    const std::wstring toolsVersion = installToolsVersion.empty() ? L"1.4.1" : installToolsVersion;
-    const std::wstring splitterVersion = jarSplitterVersion.empty() ? L"1.1.4" : jarSplitterVersion;
-    const std::wstring patcherVersion = binaryPatcherVersion.empty() ? L"1.1.1" : binaryPatcherVersion;
-    const std::wstring artVersion = autoRenamingToolVersion.empty() ? L"0.1.22" : autoRenamingToolVersion;
-    (void)toolsVersion;
-    (void)splitterVersion;
-    (void)patcherVersion;
-    (void)artVersion;
 
     const std::wstring libraryDir = runtimeRoot + L"\\game\\libraries";
     const std::wstring mcAndMcp = minecraftVersion + L"-" + mcpVersion;
@@ -402,41 +378,6 @@ static bool PrepareForgeClientArtifacts(
         FileStamp(mcExtra).c_str(),
         FileStamp(patchedClient).c_str());
     return ready;
-}
-
-static void EnsureForgeFmlConfig(const std::wstring& gameDir) {
-    const std::wstring configDir = gameDir + L"\\config";
-    EnsureDirectoryTree(configDir);
-
-    const std::wstring configPath = configDir + L"\\fml.toml";
-    std::wstring body;
-    ReadTextFile(configPath, body);
-
-    std::wstringstream in(body);
-    std::wstring line;
-    std::wstring out;
-    bool foundEarlyWindowControl = false;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == L'\r') line.pop_back();
-        const std::wstring trimmed = TrimWhitespace(line);
-        if (trimmed.rfind(L"earlyWindowControl", 0) == 0) {
-            out += L"earlyWindowControl = false\n";
-            foundEarlyWindowControl = true;
-        } else {
-            out += line + L"\n";
-        }
-    }
-
-    if (!foundEarlyWindowControl) {
-        if (!out.empty() && out.back() != L'\n') out += L"\n";
-        out += L"earlyWindowControl = false\n";
-    }
-
-    if (WriteTextFile(configPath, out)) {
-        WriteLogF(L"Forge FML early window disabled in %s", configPath.c_str());
-    } else {
-        WriteLogF(L"Failed to write Forge FML config %s err=%u", configPath.c_str(), GetLastError());
-    }
 }
 
 static bool IsForgePrepOrModuleJar(const std::wstring& entry) {
@@ -591,7 +532,7 @@ void ForgeBeforeLaunch(const LoaderPreLaunchContext& ctx) {
     DeleteDirectoryTree(ctx.sharedGameDir + L"\\.cache");
     DeleteDirectoryTree(ctx.gameDir + L"\\config\\.cache");
     DeleteDirectoryTree(ctx.gameDir + L"\\mods\\.index");
-    EnsureForgeFmlConfig(ctx.gameDir);
+    EnsureFmlConfig(ctx.gameDir);
 }
 
 void ForgeAdjustClasspath(const LoaderJvmContext& ctx, std::wstring& classPath, LoaderJvmSetupResult& result) {
@@ -664,10 +605,7 @@ bool ForgePrepareArtifactsAfterJvm(
             ctx.launchVersion,
             ctx.neoFormVersion,
             ctx.extraGameArgs,
-            ctx.neoForgeInstallToolsVersion,
-            ctx.neoForgeJarSplitterVersion,
-            ctx.neoForgeBinaryPatcherVersion,
-            ctx.neoForgeAutoRenamingToolVersion)) {
+            ctx.neoForgeBinaryPatcherVersion)) {
         WriteLog(L"Forge client artifact preparation failed");
         return false;
     }

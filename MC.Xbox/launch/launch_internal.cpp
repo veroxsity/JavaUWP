@@ -1,4 +1,4 @@
-#include "launch_internal.h"
+﻿#include "launch_internal.h"
 
 #include "crash_fingerprint.h"
 #include "launcher_common.h"
@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <string>
+#include <sstream>
 #include <vector>
 
 namespace {
@@ -204,7 +205,10 @@ static bool CheckAndLogJavaExceptionImpl(JNIEnv* env, const wchar_t* stage, bool
     }
 
     env->CallVoidMethod(throwable, printStackTrace, printWriter);
-    jstring trace = static_cast<jstring>(env->CallObjectMethod(stringWriter, toString));
+    jstring trace = nullptr;
+    if (!env->ExceptionCheck()) {
+        trace = static_cast<jstring>(env->CallObjectMethod(stringWriter, toString));
+    }
     if (trace && !env->ExceptionCheck()) {
         const char* utf8 = env->GetStringUTFChars(trace, nullptr);
         if (utf8) {
@@ -234,59 +238,134 @@ bool CheckAndLogJavaMainException(JNIEnv* env, const wchar_t* stage) {
     return CheckAndLogJavaExceptionImpl(env, stage, true);
 }
 
-bool LaunchInvokeJavaMain(JNIEnv* env, const std::wstring& className, const std::vector<std::string>& args) {
-    std::wstring classPath = className;
-    std::replace(classPath.begin(), classPath.end(), L'.', L'/');
-
-    jclass mainClass = env->FindClass(w2a(classPath).c_str());
-    if (!mainClass || CheckAndLogJavaException(env, (L"FindClass(" + className + L")").c_str())) {
+bool LaunchInvokeJavaMain(JNIEnv* env, const std::wstring& className, const std::vector<std::string>& args,
+    const std::wstring& isolatedClassPath) {
+    if (env->PushLocalFrame(32) != JNI_OK) {
+        CheckAndLogJavaException(env, L"Prep tool local frame");
         return false;
     }
 
-    jmethodID mainMethod = env->GetStaticMethodID(mainClass, "main", "([Ljava/lang/String;)V");
-    if (!mainMethod || CheckAndLogJavaException(env, (L"GetStaticMethodID(" + className + L".main)").c_str())) {
-        env->DeleteLocalRef(mainClass);
-        return false;
-    }
+    jobject loader = nullptr;
+    jobject thread = nullptr;
+    jobject previousLoader = nullptr;
+    jmethodID setContextLoader = nullptr;
+    jmethodID closeLoader = nullptr;
+    bool contextChanged = false;
+    auto failed = [&]() { return CheckAndLogJavaException(env, (L"Prep tool " + className).c_str()); };
+    const bool invoked = [&]() {
+        jclass mainClass = nullptr;
+        if (isolatedClassPath.empty()) {
+            std::wstring classPath = className;
+            std::replace(classPath.begin(), classPath.end(), L'.', L'/');
+            mainClass = env->FindClass(w2a(classPath).c_str());
+            if (failed() || !mainClass) return false;
+        } else {
+            jclass classLoaderClass = env->FindClass("java/lang/ClassLoader");
+            if (failed() || !classLoaderClass) return false;
+            jmethodID getPlatform = env->GetStaticMethodID(classLoaderClass, "getPlatformClassLoader", "()Ljava/lang/ClassLoader;");
+            if (failed() || !getPlatform) return false;
+            jobject platform = env->CallStaticObjectMethod(classLoaderClass, getPlatform);
+            if (failed() || !platform) return false;
 
-    jclass stringClass = env->FindClass("java/lang/String");
-    if (!stringClass || CheckAndLogJavaException(env, L"FindClass(String)")) {
-        env->DeleteLocalRef(mainClass);
-        return false;
-    }
+            jclass fileClass = env->FindClass("java/io/File");
+            if (failed() || !fileClass) return false;
+            jmethodID fileCtor = env->GetMethodID(fileClass, "<init>", "(Ljava/lang/String;)V");
+            if (failed() || !fileCtor) return false;
+            jmethodID toUri = env->GetMethodID(fileClass, "toURI", "()Ljava/net/URI;");
+            if (failed() || !toUri) return false;
+            jclass uriClass = env->FindClass("java/net/URI");
+            if (failed() || !uriClass) return false;
+            jmethodID toUrl = env->GetMethodID(uriClass, "toURL", "()Ljava/net/URL;");
+            if (failed() || !toUrl) return false;
+            jclass urlClass = env->FindClass("java/net/URL");
+            if (failed() || !urlClass) return false;
+            std::vector<std::wstring> paths;
+            std::wstringstream input(isolatedClassPath);
+            std::wstring entry;
+            while (std::getline(input, entry, L';')) {
+                if (!entry.empty()) paths.push_back(entry);
+            }
+            if (paths.empty()) return false;
+            jobjectArray urls = env->NewObjectArray(static_cast<jsize>(paths.size()), urlClass, nullptr);
+            if (failed() || !urls) return false;
+            for (jsize i = 0; i < static_cast<jsize>(paths.size()); ++i) {
+                jstring path = env->NewString(reinterpret_cast<const jchar*>(paths[i].data()), static_cast<jsize>(paths[i].size()));
+                if (failed() || !path) return false;
+                jobject file = env->NewObject(fileClass, fileCtor, path);
+                if (failed() || !file) return false;
+                jobject uri = env->CallObjectMethod(file, toUri);
+                if (failed() || !uri) return false;
+                jobject url = env->CallObjectMethod(uri, toUrl);
+                if (failed() || !url) return false;
+                env->SetObjectArrayElement(urls, i, url);
+                if (failed()) return false;
+                env->DeleteLocalRef(url);
+                env->DeleteLocalRef(uri);
+                env->DeleteLocalRef(file);
+                env->DeleteLocalRef(path);
+            }
+            jclass urlLoaderClass = env->FindClass("java/net/URLClassLoader");
+            if (failed() || !urlLoaderClass) return false;
+            jmethodID loaderCtor = env->GetMethodID(urlLoaderClass, "<init>", "([Ljava/net/URL;Ljava/lang/ClassLoader;)V");
+            if (failed() || !loaderCtor) return false;
+            closeLoader = env->GetMethodID(urlLoaderClass, "close", "()V");
+            if (failed() || !closeLoader) return false;
+            loader = env->NewObject(urlLoaderClass, loaderCtor, urls, platform);
+            if (failed() || !loader) return false;
 
-    jobjectArray argv = env->NewObjectArray(static_cast<jsize>(args.size()), stringClass, nullptr);
-    if (!argv || CheckAndLogJavaException(env, (L"NewObjectArray(" + className + L")").c_str())) {
-        env->DeleteLocalRef(stringClass);
-        env->DeleteLocalRef(mainClass);
-        return false;
-    }
-
-    for (jsize i = 0; i < static_cast<jsize>(args.size()); ++i) {
-        jstring value = env->NewStringUTF(args[i].c_str());
-        if (!value || CheckAndLogJavaException(env, (L"NewStringUTF(" + className + L")").c_str())) {
-            env->DeleteLocalRef(argv);
-            env->DeleteLocalRef(stringClass);
-            env->DeleteLocalRef(mainClass);
-            return false;
+            jclass threadClass = env->FindClass("java/lang/Thread");
+            if (failed() || !threadClass) return false;
+            jmethodID currentThread = env->GetStaticMethodID(threadClass, "currentThread", "()Ljava/lang/Thread;");
+            if (failed() || !currentThread) return false;
+            jmethodID getContextLoader = env->GetMethodID(threadClass, "getContextClassLoader", "()Ljava/lang/ClassLoader;");
+            if (failed() || !getContextLoader) return false;
+            setContextLoader = env->GetMethodID(threadClass, "setContextClassLoader", "(Ljava/lang/ClassLoader;)V");
+            if (failed() || !setContextLoader) return false;
+            thread = env->CallStaticObjectMethod(threadClass, currentThread);
+            if (failed() || !thread) return false;
+            previousLoader = env->CallObjectMethod(thread, getContextLoader);
+            if (failed()) return false;
+            env->CallVoidMethod(thread, setContextLoader, loader);
+            if (failed()) return false;
+            contextChanged = true;
+            jmethodID loadClass = env->GetMethodID(classLoaderClass, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+            if (failed() || !loadClass) return false;
+            jstring name = env->NewString(reinterpret_cast<const jchar*>(className.data()), static_cast<jsize>(className.size()));
+            if (failed() || !name) return false;
+            mainClass = static_cast<jclass>(env->CallObjectMethod(loader, loadClass, name));
+            if (failed() || !mainClass) return false;
         }
-        env->SetObjectArrayElement(argv, i, value);
-        env->DeleteLocalRef(value);
-        if (CheckAndLogJavaException(env, (L"SetObjectArrayElement(" + className + L")").c_str())) {
-            env->DeleteLocalRef(argv);
-            env->DeleteLocalRef(stringClass);
-            env->DeleteLocalRef(mainClass);
-            return false;
-        }
-    }
 
-    WriteLogF(L"Invoking NeoForge prep tool %s", className.c_str());
-    env->CallStaticVoidMethod(mainClass, mainMethod, argv);
-    const bool failed = CheckAndLogJavaException(env, (L"CallStaticVoidMethod(" + className + L".main)").c_str());
-    env->DeleteLocalRef(argv);
-    env->DeleteLocalRef(stringClass);
-    env->DeleteLocalRef(mainClass);
-    return !failed;
+        jmethodID mainMethod = env->GetStaticMethodID(mainClass, "main", "([Ljava/lang/String;)V");
+        if (failed() || !mainMethod) return false;
+        jclass stringClass = env->FindClass("java/lang/String");
+        if (failed() || !stringClass) return false;
+        jobjectArray argv = env->NewObjectArray(static_cast<jsize>(args.size()), stringClass, nullptr);
+        if (failed() || !argv) return false;
+        for (jsize i = 0; i < static_cast<jsize>(args.size()); ++i) {
+            jstring value = env->NewStringUTF(args[i].c_str());
+            if (failed() || !value) return false;
+            env->SetObjectArrayElement(argv, i, value);
+            env->DeleteLocalRef(value);
+            if (failed()) return false;
+        }
+
+        WriteLogF(L"Invoking prep tool %s isolated=%d", className.c_str(), isolatedClassPath.empty() ? 0 : 1);
+        env->CallStaticVoidMethod(mainClass, mainMethod, argv);
+        return !failed();
+    }();
+
+    bool cleanupFailed = false;
+    if (contextChanged) {
+        env->CallVoidMethod(thread, setContextLoader, previousLoader);
+        cleanupFailed = failed();
+    }
+    if (loader) {
+        env->CallVoidMethod(loader, closeLoader);
+        cleanupFailed = failed() || cleanupFailed;
+    }
+    env->PopLocalFrame(nullptr);
+    return invoked && !cleanupFailed;
 }
 
 void LaunchSetJavaSystemProperty(JNIEnv* env, const std::wstring& key, const std::wstring& value) {

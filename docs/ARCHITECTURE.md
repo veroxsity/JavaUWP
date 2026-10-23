@@ -36,7 +36,7 @@ MC.Xbox/
       loader_common.*     Shared loader parsing/helpers
       fabric.*            Fabric launch provider
       neoforge.*          NeoForge launch provider
-      forge.*             Forge launch provider (1.20.1 implemented)
+      forge.*             Forge launch provider with legacy and modern paths
 ```
 
 `build.ps1` compiles sources from these folders with include paths for `.`, `common`, `net`, `auth`, `ui`, `mods`, `profiles`, `launch`, and `launch/loaders`.
@@ -175,7 +175,7 @@ Changing the default target requires updating `scripts/config.ps1` and usually `
 
 | Path | Role in launch |
 | --- | --- |
-| `glfw_shim/` | Replaces desktop `glfw.dll` behavior for UWP windowing, input, and EGL. |
+| `glfw_shim/` | Replaces desktop `glfw.dll` behavior for UWP windowing, input, and WGL. |
 | `compat_mod/` | Fabric compatibility mod: filesystem, graphics, and sandbox fixes per target. |
 | `controller_mod/` | Shared controller core plus loader-specific controller mods built into `runtime/version-mods/<target-id>/`. |
 | `patch/` | Supplies patched Fabric Loader classes and securejarhandler UWP changes packaged into the APPX. |

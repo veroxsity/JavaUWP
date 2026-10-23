@@ -210,7 +210,8 @@ DevicePollResult PollDeviceToken(const std::string& deviceCode) {
     return result;
 }
 
-bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenResponse& out, std::string& error) {
+bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenResponse& out, std::string& error, bool* invalidGrant) {
+    if (invalidGrant) *invalidGrant = false;
     const std::string body = MakeFormBody({
         { "grant_type", "refresh_token" },
         { "client_id", kMicrosoftAuthClientId },
@@ -222,7 +223,11 @@ bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenRespon
         body,
         L"application/x-www-form-urlencoded");
     if (!response.success()) {
-        error = "Saved Microsoft session expired.";
+        JsonObject failure = nullptr;
+        if (invalidGrant && ParseAuthJson(response.body, failure)) {
+            *invalidGrant = JsonText(failure, L"error") == "invalid_grant";
+        }
+        error = "Microsoft session refresh failed. " + HttpFailureSummary(response);
         return false;
     }
 
@@ -404,6 +409,11 @@ bool BuildMinecraftAuth(const std::string& microsoftAccessToken, LaunchAuthConfi
         return false;
     }
 
+    if (minecraftToken.expiresIn <= 0) {
+        error = "Minecraft token response did not include a valid lifetime.";
+        return false;
+    }
+    const auto expiresAt = std::chrono::steady_clock::now() + std::chrono::seconds(minecraftToken.expiresIn);
     if (!EnsureMinecraftEntitlement(minecraftToken.accessToken, error)) {
         return false;
     }
@@ -412,6 +422,7 @@ bool BuildMinecraftAuth(const std::string& microsoftAccessToken, LaunchAuthConfi
         return false;
     }
 
+    out.expiresAt = expiresAt;
     WriteLogF(L"Minecraft auth resolved username=%s uuid=%s",
         a2w(out.username.c_str()).c_str(),
         a2w(out.uuid.c_str()).c_str());

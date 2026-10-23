@@ -22,6 +22,8 @@ struct LoaderPreLaunchContext {
 
 struct LoaderJvmContext {
     LoaderId loader = LoaderId::Unknown;
+    std::wstring mainClass;
+    std::wstring prepClassPath;
     std::wstring exeDir;
     std::wstring packageDir;
     std::wstring gameDir;
@@ -33,9 +35,7 @@ struct LoaderJvmContext {
     std::wstring minecraftVersion;
     std::wstring neoFormVersion;
     std::wstring neoForgeInstallToolsVersion;
-    std::wstring neoForgeJarSplitterVersion;
     std::wstring neoForgeBinaryPatcherVersion;
-    std::wstring neoForgeAutoRenamingToolVersion;
     std::vector<std::wstring> extraGameArgs;
     std::wstring launcherOverrideDir;
     std::wstring launcherLogDir;
@@ -56,7 +56,6 @@ void LoaderFinalizeVersionInfo(
     const std::wstring& packageDir,
     const LaunchTarget& defaultTarget);
 void LoaderBeforeLaunch(const LoaderPreLaunchContext& ctx);
-void LoaderCollectExtraClasspathJars(const LoaderPreLaunchContext& ctx, std::vector<std::wstring>& jars);
 std::wstring LoaderDefaultMainClass(LoaderId loader, const std::wstring& mainClassName);
 const wchar_t* LoaderTailLogLabel(LoaderId loader);
 void LoaderAdjustClasspath(const LoaderJvmContext& ctx, std::wstring& classPath, LoaderJvmSetupResult& result);

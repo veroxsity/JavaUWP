@@ -57,18 +57,15 @@ if (-not (Test-Path $patchedClient)) {
 $forgeCache = Join-Path (Get-ConfigPath "StagingDir") "cache\forge\$forgeCoordinate"
 Ensure-Dir $forgeCache
 $universalJar = Join-Path $forgeCache "forge-$forgeCoordinate-universal.jar"
-if (-not (Test-Path $universalJar)) {
-    Invoke-WebRequest -UseBasicParsing `
-        -Uri "https://maven.minecraftforge.net/net/minecraftforge/forge/$forgeCoordinate/forge-$forgeCoordinate-universal.jar" `
-        -OutFile $universalJar `
-        -TimeoutSec 180
-}
+Save-RemoteFile `
+    -Uri "https://maven.minecraftforge.net/net/minecraftforge/forge/$forgeCoordinate/forge-$forgeCoordinate-universal.jar" `
+    -Path $universalJar
 
 $libraryJars = @(Get-ChildItem -LiteralPath (Join-Path $gameDir "libraries") -Recurse -Filter "*.jar" -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike "*natives*" } |
     Select-Object -ExpandProperty FullName)
 
-$mixinJar = @($libraryJars | Where-Object { (Split-Path $_ -Leaf) -like "*mixin*" } | Sort-Object -Descending) |
+$mixinJar = @($libraryJars | Where-Object { (Split-Path $_ -Leaf) -like "*mixin*" -and (Test-JarComplete $_) } | Sort-Object -Descending) |
     Select-Object -First 1
 if (-not $mixinJar) {
     throw "Mixin compile dependency is missing. prepare the Fabric cache first"

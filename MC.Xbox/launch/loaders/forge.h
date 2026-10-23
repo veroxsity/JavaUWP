@@ -5,7 +5,6 @@
 
 #include "loader.h"
 
-std::wstring ForgeVersionFromLaunchVersion(const std::wstring& launchVersion);
 std::wstring ForgeMavenVersion(const std::wstring& launchVersion);
 
 void ForgeFinalizeVersionInfo(

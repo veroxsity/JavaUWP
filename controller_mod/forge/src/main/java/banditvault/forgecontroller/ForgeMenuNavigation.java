@@ -181,7 +181,7 @@ final class ForgeMenuNavigation {
             region = Region.NONE;
             return discover(currentScreen, fromX, fromY);
         }
-        if (recipeBook != null && recipeBook.m_100385_() && isNarrow(currentScreen)) {
+        if (recipeBook != null && recipeBook.m_100385_() && (isNarrow(currentScreen) || region == Region.RECIPE_BOOK)) {
             List<AbstractWidget> targets = recipeTargets(recipeBook);
             if (region != Region.RECIPE_BOOK || !targets.contains(recipeWidget)) {
                 return selectRecipeTarget(currentScreen, targets, fromX, fromY, Region.RECIPE_BOOK);
@@ -403,7 +403,7 @@ final class ForgeMenuNavigation {
         return currentScreen.f_96543_ < 379;
     }
 
-    private static GuiEventListener deepestFocused(ContainerEventHandler container) {
+    static GuiEventListener deepestFocused(ContainerEventHandler container) {
         GuiEventListener focused = container.m_7222_();
         while (focused instanceof ContainerEventHandler) {
             GuiEventListener child = ((ContainerEventHandler) focused).m_7222_();

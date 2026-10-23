@@ -2,6 +2,7 @@ package banditvault.fabriccontroller.mixin;
 
 import java.util.List;
 import net.minecraft.class_342;
+import net.minecraft.class_361;
 import net.minecraft.class_507;
 import net.minecraft.class_512;
 import net.minecraft.class_513;
@@ -12,6 +13,9 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface BanditControllerRecipeBookAccessor {
     @Accessor("field_3089")
     class_342 banditvault$searchBox();
+
+    @Accessor("field_3088")
+    class_361 banditvault$filterButton();
 
     @Accessor("field_3094")
     List<class_512> banditvault$tabButtons();

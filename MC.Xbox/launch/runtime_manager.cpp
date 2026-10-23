@@ -21,7 +21,7 @@
 #include "third_party/miniz/miniz.h"
 
 static std::wstring RuntimeSeedStamp(const std::wstring& packageDir) {
-    return std::wstring(L"seedVersion=5\n") +
+    return std::wstring(L"seedVersion=6\n") +
         L"packageDir=" + packageDir + L"\n" +
         L"exe=" + FileStamp(packageDir + L"\\MC.Xbox.exe") + L"\n" +
         L"manifest=" + FileStamp(packageDir + L"\\AppxManifest.xml") + L"\n" +
@@ -90,79 +90,74 @@ bool IsLocalRuntimeSeedCurrent(const std::wstring& packageDir, const std::wstrin
     return hasGameSupport && hasNatives && hasGraphics && hasJre && hasJavaBasePatch && hasJavaZipfsPatch && hasJavaDesktopPatch && hasJre21 && hasJavaBasePatch21 && hasJavaZipfsPatch21 && hasJavaDesktopPatch21 && hasSecureJarHandlerPatch;
 }
 
-static void MarkLocalRuntimeSeedCurrent(const std::wstring& packageDir, const std::wstring& localDir) {
+static bool MarkLocalRuntimeSeedCurrent(const std::wstring& packageDir, const std::wstring& localDir) {
     const std::wstring markerPath = localDir + L"\\.runtime_seed";
     if (WriteTextFile(markerPath, RuntimeSeedStamp(packageDir))) {
         WriteLog(L"LocalState runtime seed marker written");
+        return true;
     } else {
         WriteLogF(L"Failed to write LocalState runtime seed marker err=%u", GetLastError());
+        return false;
     }
 }
 
-static void CopyFileIfNeeded(const std::wstring& src, const std::wstring& dst) {
-    if (GetFileAttributesW(src.c_str()) == INVALID_FILE_ATTRIBUTES) return;
-
-    WIN32_FILE_ATTRIBUTE_DATA srcData = {};
-    WIN32_FILE_ATTRIBUTE_DATA dstData = {};
-    const bool hasDst = GetFileAttributesExW(dst.c_str(), GetFileExInfoStandard, &dstData);
-    if (hasDst && GetFileAttributesExW(src.c_str(), GetFileExInfoStandard, &srcData)) {
-        if (srcData.nFileSizeHigh == dstData.nFileSizeHigh &&
-            srcData.nFileSizeLow == dstData.nFileSizeLow &&
-            CompareFileTime(&srcData.ftLastWriteTime, &dstData.ftLastWriteTime) <= 0) {
-            return;
-        }
+static bool CopyFileIfNeeded(const std::wstring& src, const std::wstring& dst) {
+    WIN32_FILE_ATTRIBUTE_DATA srcData{}, dstData{};
+    if (!GetFileAttributesExW(src.c_str(), GetFileExInfoStandard, &srcData)) {
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
     }
-
-    EnsureDirectoryTree(GetParentDir(dst));
-    CopyFileW(src.c_str(), dst.c_str(), FALSE);
+    if (GetFileAttributesExW(dst.c_str(), GetFileExInfoStandard, &dstData) &&
+        srcData.nFileSizeHigh == dstData.nFileSizeHigh && srcData.nFileSizeLow == dstData.nFileSizeLow &&
+        CompareFileTime(&srcData.ftLastWriteTime, &dstData.ftLastWriteTime) <= 0) return true;
+    if (!EnsureDirectoryTree(GetParentDir(dst))) return false;
+    const std::wstring temp = dst + L".seed-temp";
+    if (!CopyFileW(src.c_str(), temp.c_str(), FALSE)) {
+        DeleteFileW(temp.c_str());
+        return false;
+    }
+    SetFileAttributesW(temp.c_str(), FILE_ATTRIBUTE_NORMAL);
+    if (MoveFileExW(temp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    DeleteFileW(temp.c_str());
+    return false;
 }
 
-static void CopyFileAlways(const std::wstring& src, const std::wstring& dst) {
-    if (GetFileAttributesW(src.c_str()) == INVALID_FILE_ATTRIBUTES) return;
-
-    EnsureDirectoryTree(GetParentDir(dst));
-    SetFileAttributesW(dst.c_str(), FILE_ATTRIBUTE_NORMAL);
-    CopyFileW(src.c_str(), dst.c_str(), FALSE);
+static bool CopyFileAlways(const std::wstring& src, const std::wstring& dst) {
+    if (!EnsureDirectoryTree(GetParentDir(dst))) return false;
+    const std::wstring temp = dst + L".seed-temp";
+    if (!CopyFileW(src.c_str(), temp.c_str(), FALSE)) {
+        DeleteFileW(temp.c_str());
+        return false;
+    }
+    SetFileAttributesW(temp.c_str(), FILE_ATTRIBUTE_NORMAL);
+    if (MoveFileExW(temp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    DeleteFileW(temp.c_str());
+    return false;
 }
 
-static void CopyDirectoryContentsIfNeeded(const std::wstring& src, const std::wstring& dst) {
-    WIN32_FIND_DATAW fd;
+static bool CopyDirectoryContentsIfNeeded(const std::wstring& src, const std::wstring& dst) {
+    WIN32_FIND_DATAW fd{};
     HANDLE h = FindFirstFileW((src + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-
-    EnsureDirectoryTree(dst);
+    if (h == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+    }
+    bool ok = EnsureDirectoryTree(dst);
     do {
+        if (!ok) break;
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
         const std::wstring srcPath = src + L"\\" + fd.cFileName;
         const std::wstring dstPath = dst + L"\\" + fd.cFileName;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            CopyDirectoryContentsIfNeeded(srcPath, dstPath);
-        } else {
-            CopyFileIfNeeded(srcPath, dstPath);
-        }
+        ok = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            ? CopyDirectoryContentsIfNeeded(srcPath, dstPath) : CopyFileIfNeeded(srcPath, dstPath);
     } while (FindNextFileW(h, &fd));
-
+    const DWORD error = GetLastError();
     FindClose(h);
+    return ok && error == ERROR_NO_MORE_FILES;
 }
 
-void CopyDirectoryContentsAlways(const std::wstring& src, const std::wstring& dst) {
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((src + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-
-    EnsureDirectoryTree(dst);
-    do {
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        const std::wstring srcPath = src + L"\\" + fd.cFileName;
-        const std::wstring dstPath = dst + L"\\" + fd.cFileName;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            CopyDirectoryContentsAlways(srcPath, dstPath);
-        } else {
-            CopyFileAlways(srcPath, dstPath);
-        }
-    } while (FindNextFileW(h, &fd));
-
-    FindClose(h);
+bool CopyDirectoryContentsAlways(const std::wstring& src, const std::wstring& dst) {
+    return CopyDirectoryTree(src, dst);
 }
 
 static bool IsBanditControllerJarName(const std::wstring& fileName) {
@@ -260,59 +255,68 @@ bool SeedLocalRuntime(
     const RuntimeSeedProgressCallback& progress) {
     if (packageDir.empty() || localDir.empty()) return false;
 
-    EnsureDirectoryTree(localDir);
+    if (!EnsureDirectoryTree(localDir)) return false;
+    DeleteFileW((localDir + L"\\.runtime_seed").c_str());
+    if (!FileExistsNonEmpty(packageDir + L"\\jre\\bin\\server\\jvm.dll") ||
+        !FileExistsNonEmpty(packageDir + L"\\java-desktop-uwp-awt.jar")) return false;
     WriteLogF(L"Seeding LocalState runtime from %s", packageDir.c_str());
     if (progress) {
         progress(L"Copying launcher files", L"Preparing mods and log configuration", 0.12f);
     }
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\bundled-mods", localDir + L"\\game\\mods");
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\log_configs", localDir + L"\\game\\log_configs");
-    CopyFileIfNeeded(packageDir + L"\\runtime\\version_catalog.tsv", localDir + L"\\runtime\\version_catalog.tsv");
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\bundled-mods", localDir + L"\\game\\mods")) return false;
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\log_configs", localDir + L"\\game\\log_configs")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\runtime\\version_catalog.tsv", localDir + L"\\runtime\\version_catalog.tsv")) return false;
     if (progress) {
         progress(L"Copying Java runtime", L"Preparing JVM files", 0.52f);
     }
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\jre", localDir + L"\\jre");
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\jre21", localDir + L"\\jre21");
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\jre17", localDir + L"\\jre17");
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre", localDir + L"\\jre")) return false;
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre21", localDir + L"\\jre21")) return false;
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre17", localDir + L"\\jre17")) return false;
     std::wstring xboxSecurityProperties;
     if (ReadTextFile(packageDir + L"\\xbox_security.properties", xboxSecurityProperties)) {
         const std::wstring runtimeDirs[] = { L"jre", L"jre21", L"jre17" };
         for (const std::wstring& runtimeDir : runtimeDirs) {
             const std::wstring localSecurityDir = localDir + L"\\" + runtimeDir + L"\\conf\\security";
             if (GetFileAttributesW(localSecurityDir.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
-            if (!WriteTextFile(localSecurityDir + L"\\java.security", xboxSecurityProperties)) {
-                WriteLogF(L"Failed to rewrite LocalState %s java.security err=%u", runtimeDir.c_str(), GetLastError());
-            }
+            if (!CopyFileAlways(packageDir + L"\\" + runtimeDir + L"\\conf\\security\\java.security",
+                    localSecurityDir + L"\\java.security")) return false;
             if (!WriteTextFile(localSecurityDir + L"\\xbox.properties", xboxSecurityProperties)) {
                 WriteLogF(L"Failed to write LocalState %s xbox.properties err=%u", runtimeDir.c_str(), GetLastError());
+                return false;
             }
         }
     } else {
         WriteLogF(L"Failed to read packaged xbox_security.properties err=%u", GetLastError());
+        return false;
     }
     if (progress) {
         progress(L"Copying native libraries", L"Preparing graphics and input runtime", 0.80f);
     }
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\natives", localDir + L"\\natives");
-    CopyDirectoryContentsIfNeeded(packageDir + L"\\graphics", localDir + L"\\graphics");
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\natives", localDir + L"\\natives")) return false;
+    if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\graphics", localDir + L"\\graphics")) return false;
     if (progress) {
         progress(L"Finalizing runtime", L"Writing launch configuration", 0.96f);
     }
-    CopyFileIfNeeded(packageDir + L"\\xbox_security.properties", localDir + L"\\xbox_security.properties");
-    CopyFileIfNeeded(packageDir + L"\\java-base-uwp-filesystem.jar", localDir + L"\\java-base-uwp-filesystem.jar");
-    CopyFileIfNeeded(packageDir + L"\\java-base-uwp-filesystem-21.jar", localDir + L"\\java-base-uwp-filesystem-21.jar");
-    CopyFileIfNeeded(packageDir + L"\\java-zipfs-realpath.jar", localDir + L"\\java-zipfs-realpath.jar");
-    CopyFileIfNeeded(packageDir + L"\\java-zipfs-realpath-21.jar", localDir + L"\\java-zipfs-realpath-21.jar");
-    CopyFileIfNeeded(packageDir + L"\\java-desktop-uwp-awt.jar", localDir + L"\\java-desktop-uwp-awt.jar");
-    CopyFileIfNeeded(packageDir + L"\\java-desktop-uwp-awt-21.jar", localDir + L"\\java-desktop-uwp-awt-21.jar");
-    CopyFileIfNeeded(packageDir + L"\\securejarhandler-uwp-patch.jar", localDir + L"\\securejarhandler-uwp-patch.jar");
+    if (!CopyFileIfNeeded(packageDir + L"\\xbox_security.properties", localDir + L"\\xbox_security.properties")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\java-base-uwp-filesystem.jar", localDir + L"\\java-base-uwp-filesystem.jar")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\java-base-uwp-filesystem-21.jar", localDir + L"\\java-base-uwp-filesystem-21.jar")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\java-zipfs-realpath.jar", localDir + L"\\java-zipfs-realpath.jar")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\java-zipfs-realpath-21.jar", localDir + L"\\java-zipfs-realpath-21.jar")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\java-desktop-uwp-awt.jar", localDir + L"\\java-desktop-uwp-awt.jar")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\java-desktop-uwp-awt-21.jar", localDir + L"\\java-desktop-uwp-awt-21.jar")) return false;
+    if (!CopyFileIfNeeded(packageDir + L"\\securejarhandler-uwp-patch.jar", localDir + L"\\securejarhandler-uwp-patch.jar")) return false;
+    const wchar_t* legacyPatches[] = { L"java-base-uwp-filesystem-17.jar", L"java-zipfs-realpath-17.jar", L"java-desktop-uwp-awt-17.jar" };
+    for (const auto* patch : legacyPatches) {
+        if (!CopyFileIfNeeded(packageDir + L"\\" + patch, localDir + L"\\" + patch)) return false;
+    }
     if (progress) {
         progress(L"Runtime ready", L"Starting Minecraft", 1.0f);
     }
-    MarkLocalRuntimeSeedCurrent(packageDir, localDir);
+    if (!MarkLocalRuntimeSeedCurrent(packageDir, localDir)) return false;
     WriteLog(L"LocalState runtime seed complete");
     return true;
 }
+
 
 static std::wstring TrimTrailingSlash(std::wstring path) {
     while (!path.empty() && (path.back() == L'\\' || path.back() == L'/')) {
@@ -499,21 +503,13 @@ static std::wstring BuildDownloadMarker(const std::wstring& manifestPath) {
         L"manifestSha1=" + a2w(sha1.c_str()) + L"\n";
 }
 
-static void CleanupDownloadedRuntimeFiles(const std::wstring& runtimeRoot, const std::wstring& targetId, const wchar_t* reason) {
-    WriteLogF(L"Cleaning downloaded runtime files target=%s reason=%s", targetId.c_str(), reason ? reason : L"unknown");
-    DeleteDirectoryTree(runtimeRoot + L"\\assets");
-    DeleteDirectoryTree(runtimeRoot + L"\\game\\libraries");
-    DeleteDirectoryTree(runtimeRoot + L"\\game\\versions");
-    DeleteFileW(DownloadMarkerPath(runtimeRoot, targetId).c_str());
-}
-
 static bool EnsureDownloadMarkerMatches(
     const std::wstring& manifestPath,
     const std::wstring& runtimeRoot,
     const std::wstring& targetId,
     bool forceRepair) {
     if (forceRepair) {
-        CleanupDownloadedRuntimeFiles(runtimeRoot, targetId, L"repair requested");
+        DeleteFileW(DownloadMarkerPath(runtimeRoot, targetId).c_str());
         return true;
     }
 
@@ -526,7 +522,7 @@ static bool EnsureDownloadMarkerMatches(
         return true;
     }
 
-    CleanupDownloadedRuntimeFiles(runtimeRoot, targetId, L"manifest marker changed");
+    DeleteFileW(DownloadMarkerPath(runtimeRoot, targetId).c_str());
     return true;
 }
 
@@ -648,6 +644,15 @@ bool DownloadUrlToFileWithHeaders(
             return false;
         }
 
+        DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+        if (!WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy)) ||
+            (!extraHeaders.empty() && uc.nScheme != INTERNET_SCHEME_HTTPS)) {
+            WriteLogF(L"Download redirect policy or HTTPS check failed %s", currentUrl.c_str());
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connect);
+            WinHttpCloseHandle(session);
+            return false;
+        }
         const bool sendHeaders =
             !extraHeaders.empty() && HostMatchesSuffix(host, headerHostSuffix);
         BOOL sent = WinHttpSendRequest(
@@ -749,7 +754,7 @@ bool DownloadUrlToFileWithHeaders(
             }
         }
 
-        fclose(out);
+        if (fclose(out) != 0) ok = false;
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
@@ -819,7 +824,7 @@ bool EnsureRuntimeDownloads(
             return false;
         }
 
-        if (FileMatchesSha1(finalPath, entry.sha1)) {
+        if (!options.forceRepair && FileMatchesSha1(finalPath, entry.sha1)) {
             ++verified;
             completedBytes += entry.size;
             if (progress && (verified < 25 || verified % 100 == 0 || verified == entries.size())) {
@@ -940,7 +945,6 @@ bool EnsureRuntimeDownloads(
             }
 
             EnsureDirectoryTree(GetParentDir(finalPath));
-            DeleteFileW(finalPath.c_str());
             if (!MoveFileExW(tempPath.c_str(), finalPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
                 WriteLogF(L"MoveFileEx failed for %s err=%u", finalPath.c_str(), GetLastError());
                 DeleteFileW(tempPath.c_str());
@@ -1030,18 +1034,6 @@ bool EnsureRuntimeDownloads(
     return true;
 }
 
-static bool ContainsInsensitive(const std::wstring& value, const wchar_t* needle) {
-    if (!needle || !*needle) return false;
-
-    std::wstring haystack = value;
-    std::wstring target = needle;
-    std::transform(haystack.begin(), haystack.end(), haystack.begin(),
-        [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-    std::transform(target.begin(), target.end(), target.begin(),
-        [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-    return haystack.find(target) != std::wstring::npos;
-}
-
 std::wstring DetectGraphicsRuntimeName() {
     const std::wstring overrideValue = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");
     if (!overrideValue.empty()) {
@@ -1056,19 +1048,11 @@ std::wstring DetectGraphicsRuntimeName() {
         const std::wstring productName = info.SystemProductName().c_str();
         const std::wstring sku = info.SystemSku().c_str();
         const std::wstring friendlyName = info.FriendlyName().c_str();
-        const std::wstring probe = manufacturer + L" " + productName + L" " + sku + L" " + friendlyName;
-
         WriteLogF(L"Device manufacturer: %s", manufacturer.c_str());
         WriteLogF(L"Device product: %s", productName.c_str());
         WriteLogF(L"Device SKU: %s", sku.c_str());
         WriteLogF(L"Device friendly name: %s", friendlyName.c_str());
 
-        if (ContainsInsensitive(probe, L"xbox series") ||
-            ContainsInsensitive(probe, L"scarlett") ||
-            ContainsInsensitive(probe, L"anaconda") ||
-            ContainsInsensitive(probe, L"lockhart")) {
-            return L"mesa";
-        }
     } catch (...) {
         WriteLog(L"Device graphics runtime detection failed; defaulting to Mesa");
     }
@@ -1090,21 +1074,25 @@ JavaRuntimeInfo ResolveJavaRuntimeInfo(
         info.packageRelativeDir = L"jre21";
         info.javaBasePatchName = L"java-base-uwp-filesystem-21.jar";
         info.zipfsPatchName = L"java-zipfs-realpath-21.jar";
+        info.javaDesktopPatchName = L"java-desktop-uwp-awt-21.jar";
     } else if (id == L"java17" || id == L"jdk17" || id == L"17") {
         info.runtimeId = L"java17";
         info.packageRelativeDir = L"jre17";
         info.javaBasePatchName = L"java-base-uwp-filesystem-17.jar";
         info.zipfsPatchName = L"java-zipfs-realpath-17.jar";
+        info.javaDesktopPatchName = L"java-desktop-uwp-awt-17.jar";
     } else if (id == L"legacy" || id == L"java8" || id == L"jdk8" || id == L"8") {
         info.runtimeId = L"legacy";
         info.packageRelativeDir = L"jre8";
         info.javaBasePatchName = L"java-base-uwp-filesystem-8.jar";
         info.zipfsPatchName = L"java-zipfs-realpath-8.jar";
+        info.javaDesktopPatchName = L"java-desktop-uwp-awt-8.jar";
     } else {
         info.runtimeId = L"current";
         info.packageRelativeDir = L"jre";
         info.javaBasePatchName = L"java-base-uwp-filesystem.jar";
         info.zipfsPatchName = L"java-zipfs-realpath.jar";
+        info.javaDesktopPatchName = L"java-desktop-uwp-awt.jar";
     }
 
     info.packageDir = packageDir + L"\\" + info.packageRelativeDir;
@@ -1138,9 +1126,7 @@ static void ReadManifestHeader(
     std::vector<std::wstring>& extraGameArgs,
     std::wstring& neoFormVersion,
     std::wstring& neoForgeInstallToolsVersion,
-    std::wstring& neoForgeJarSplitterVersion,
-    std::wstring& neoForgeBinaryPatcherVersion,
-    std::wstring& neoForgeAutoRenamingToolVersion) {
+    std::wstring& neoForgeBinaryPatcherVersion) {
     std::ifstream f(manifestPath, std::ios::binary);
     if (!f) return;
     std::string line;
@@ -1159,9 +1145,7 @@ static void ReadManifestHeader(
         else if (key == "gameArgs") extraGameArgs = SplitManifestValueList(a2w(val.c_str()));
         else if (key == "neoFormVersion" || key == "forgeMcpVersion") neoFormVersion = a2w(val.c_str());
         else if (key == "neoForgeInstallToolsVersion") neoForgeInstallToolsVersion = a2w(val.c_str());
-        else if (key == "neoForgeJarSplitterVersion") neoForgeJarSplitterVersion = a2w(val.c_str());
         else if (key == "neoForgeBinaryPatcherVersion") neoForgeBinaryPatcherVersion = a2w(val.c_str());
-        else if (key == "neoForgeAutoRenamingToolVersion") neoForgeAutoRenamingToolVersion = a2w(val.c_str());
     }
 }
 
@@ -1187,8 +1171,8 @@ MinecraftVersionInfo ResolveVersionInfo(const std::wstring& packageDir, const st
 
     if (!info.manifestPath.empty()) {
         ReadManifestHeader(info.manifestPath, info.assetIndex, info.launchVersion, info.mainClass, info.extraJvmArgs, info.extraGameArgs,
-            info.neoFormVersion, info.neoForgeInstallToolsVersion, info.neoForgeJarSplitterVersion,
-            info.neoForgeBinaryPatcherVersion, info.neoForgeAutoRenamingToolVersion);
+            info.neoFormVersion, info.neoForgeInstallToolsVersion,
+            info.neoForgeBinaryPatcherVersion);
     }
 
     if (info.assetIndex.empty() && isDefault) info.assetIndex = a2w(kMinecraftAssetIndex);
@@ -1199,7 +1183,7 @@ MinecraftVersionInfo ResolveVersionInfo(const std::wstring& packageDir, const st
         info.bundledModsDir = perVersionMods;
     } else if (isDefault) {
         info.bundledModsDir = packageDir + L"\\runtime\\bundled-mods";
-    } else {
+    } else if (IsLoader(target.loader, LoaderId::Fabric) || target.controllerProvider != L"none") {
         info.missingBundledModsDir = perVersionMods;
         WriteLogF(L"No bundled mods for target %s, expected %s", target.targetId.c_str(), perVersionMods.c_str());
     }

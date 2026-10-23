@@ -55,9 +55,6 @@ final class NeoForgeMenuNavigation {
         recipeWidget = null;
     }
 
-    Region region() {
-        return region;
-    }
 
     Slot selectedSlot(Screen currentScreen) {
         return currentScreen == screen && region == Region.SLOT ? slot : null;
@@ -192,7 +189,7 @@ final class NeoForgeMenuNavigation {
             region = Region.NONE;
             return discover(currentScreen, fromX, fromY);
         }
-        if (recipeBook != null && recipeBook.isVisible() && isNarrow(currentScreen)) {
+        if (recipeBook != null && recipeBook.isVisible() && (isNarrow(currentScreen) || region == Region.RECIPE_BOOK)) {
             List<AbstractWidget> targets = recipeTargets(recipeBook);
             if (region != Region.RECIPE_BOOK || !targets.contains(recipeWidget)) {
                 return selectRecipeTarget(currentScreen, targets, fromX, fromY, Region.RECIPE_BOOK);
@@ -411,7 +408,7 @@ final class NeoForgeMenuNavigation {
         return currentScreen.width < 379;
     }
 
-    private static GuiEventListener deepestFocused(ContainerEventHandler container) {
+    static GuiEventListener deepestFocused(ContainerEventHandler container) {
         GuiEventListener focused = container.getFocused();
         while (focused instanceof ContainerEventHandler) {
             GuiEventListener child = ((ContainerEventHandler) focused).getFocused();

@@ -56,7 +56,9 @@ public final class NeoForgeControllerCompat {
     private static boolean mouseOwnsCursor;
     private static boolean snapStickLatched;
     private static KeyMapping radialPressedKey;
+    private static boolean radialPressedAsKeyboard;
     private static final java.util.Map<String, KeyMapping> JAVA_KEYS_DOWN = new java.util.HashMap<String, KeyMapping>();
+    private static final java.util.Set<String> RAW_JAVA_KEYS_DOWN = new java.util.HashSet<String>();
     private static CursorMode cursorMode = CursorMode.SNAP;
 
     private enum CursorMode {
@@ -84,6 +86,7 @@ public final class NeoForgeControllerCompat {
         tickCount++;
         if (client == null) {
             releaseJavaKeyMappings();
+            NeoForgeControllerKeyboard.close();
             return;
         }
         ensureMenuCursorMode(client);
@@ -91,6 +94,7 @@ public final class NeoForgeControllerCompat {
 
         if (!poll()) {
             releaseJavaKeyMappings();
+            NeoForgeControllerKeyboard.close();
             if (NeoForgeClientApi.screen(client) instanceof NeoForgeControllerRadialScreen) {
                 NeoForgeClientApi.setScreen(client, null);
             }
@@ -124,6 +128,7 @@ public final class NeoForgeControllerCompat {
             releaseGameplayKeys(client, false);
             tickScreen(client, NeoForgeClientApi.screen(client));
         } else {
+            NeoForgeControllerKeyboard.close();
             tickGameplay(client);
         }
 
@@ -411,6 +416,8 @@ public final class NeoForgeControllerCompat {
             return;
         }
 
+        if (NeoForgeControllerKeyboard.tick(screen)) return;
+
         ensureScreenCursor(screen);
         float ry = axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_Y);
 
@@ -442,6 +449,7 @@ public final class NeoForgeControllerCompat {
 
         if (pressed(settings, ControllerAction.MENU_ACCEPT)) {
             takeControllerCursor();
+            if (NeoForgeControllerKeyboard.activate(screen, cursorX, cursorY)) return;
             if (cursorMode == CursorMode.SNAP && MENU_NAVIGATION.usesNativeActivation(screen)) {
                 invokeScreenKeyPressed(screen, GLFW.GLFW_KEY_ENTER, 0, 0);
             } else {
@@ -493,6 +501,18 @@ public final class NeoForgeControllerCompat {
                 invokeScreenMouseScrolled(screen, cursorX, cursorY, scroll);
                 scrollCooldown = 5;
             }
+        }
+    }
+
+    static void resumeMenuAfterKeyboard(Screen screen) {
+        Minecraft client = Minecraft.getInstance();
+        if (screen == null || client == null || NeoForgeClientApi.screen(client) != screen) return;
+        takeControllerCursor();
+        snapStickLatched = false;
+        ensureScreenCursor(screen);
+        MENU_NAVIGATION.reset(screen);
+        if (cursorMode == CursorMode.SNAP) {
+            applySnapTarget(screen, MENU_NAVIGATION.discover(screen, cursorX, cursorY));
         }
     }
 
@@ -754,15 +774,33 @@ public final class NeoForgeControllerCompat {
         if (slot < 0 || slot >= 8) return;
         KeyMapping key = findKey(NeoForgeControllerSettings.get().radialSlot(slot));
         if (key == null) return;
-        pressKey(key);
-        key.setDown(true);
         radialPressedKey = key;
+        radialPressedAsKeyboard = sendKeyboardKey(key, GLFW.GLFW_PRESS);
+        if (!radialPressedAsKeyboard) {
+            pressKey(key);
+            key.setDown(true);
+        }
     }
 
     private static void releaseRadialKey() {
         if (radialPressedKey == null) return;
+        if (radialPressedAsKeyboard) sendKeyboardKey(radialPressedKey, GLFW.GLFW_RELEASE);
         radialPressedKey.setDown(isBoundInputHeld(radialPressedKey.getKey()));
         radialPressedKey = null;
+        radialPressedAsKeyboard = false;
+    }
+
+    private static boolean sendKeyboardKey(KeyMapping key, int action) {
+        InputConstants.Key input = key.getKey();
+        if (input == null || input.getValue() < 0) return false;
+        if (input.getType() != InputConstants.Type.KEYSYM && input.getType() != InputConstants.Type.SCANCODE) return false;
+        int code = input.getType() == InputConstants.Type.KEYSYM ? input.getValue() : GLFW.GLFW_KEY_UNKNOWN;
+        int scan = input.getType() == InputConstants.Type.SCANCODE ? input.getValue() : 0;
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || client.getWindow() == null) return false;
+        NeoForgeControllerTextTargets.keyPress(client.keyboardHandler,
+            NeoForgeVersionApi.windowHandle(client), code, scan, action, 0);
+        return true;
     }
 
     private static void tickJavaKeyMappings(Minecraft client, NeoForgeControllerSettings settings, boolean enabled) {
@@ -771,6 +809,7 @@ public final class NeoForgeControllerCompat {
             java.util.Map.Entry<String, KeyMapping> entry = activeKeys.next();
             ControllerInput input = settings.javaBinding(entry.getKey());
             if (enabled && input.held(CONTROLLER_STATE, settings.triggerDeadzone)) continue;
+            if (RAW_JAVA_KEYS_DOWN.remove(entry.getKey())) sendKeyboardKey(entry.getValue(), GLFW.GLFW_RELEASE);
             entry.getValue().setDown(isBoundInputHeld(entry.getValue().getKey()));
             activeKeys.remove();
         }
@@ -780,17 +819,23 @@ public final class NeoForgeControllerCompat {
             String keyId = key.getName();
             ControllerInput input = settings.javaBinding(keyId);
             if (JAVA_KEYS_DOWN.containsKey(keyId) || !input.pressed(CONTROLLER_STATE, settings.triggerDeadzone)) continue;
-            pressKey(key);
-            key.setDown(true);
+            boolean raw = sendKeyboardKey(key, GLFW.GLFW_PRESS);
+            if (!raw) {
+                pressKey(key);
+                key.setDown(true);
+            }
+            if (raw) RAW_JAVA_KEYS_DOWN.add(keyId);
             JAVA_KEYS_DOWN.put(keyId, key);
         }
     }
 
     private static void releaseJavaKeyMappings() {
         for (java.util.Map.Entry<String, KeyMapping> entry : JAVA_KEYS_DOWN.entrySet()) {
+            if (RAW_JAVA_KEYS_DOWN.contains(entry.getKey())) sendKeyboardKey(entry.getValue(), GLFW.GLFW_RELEASE);
             entry.getValue().setDown(isBoundInputHeld(entry.getValue().getKey()));
         }
         JAVA_KEYS_DOWN.clear();
+        RAW_JAVA_KEYS_DOWN.clear();
     }
 
     private static void changeHotbarSlot(LocalPlayer player, int direction) {
@@ -842,13 +887,7 @@ public final class NeoForgeControllerCompat {
         return CONTROLLER_STATE.axis(axisFor(index));
     }
 
-    private static boolean trigger(int index) {
-        return CONTROLLER_STATE.trigger(axisFor(index), NeoForgeControllerSettings.get().triggerDeadzone);
-    }
 
-    private static boolean triggerPressed(int index) {
-        return CONTROLLER_STATE.triggerPressed(axisFor(index), NeoForgeControllerSettings.get().triggerDeadzone);
-    }
 
     private static boolean button(int index) {
         return CONTROLLER_STATE.button(buttonFor(index));

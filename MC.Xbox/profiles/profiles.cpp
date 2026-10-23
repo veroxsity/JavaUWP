@@ -1,4 +1,7 @@
 #include "profiles.h"
+#include <mutex>
+
+static std::recursive_mutex g_profilesMutex;
 
 #include "launcher_common.h"
 #include "runtime_config.h"
@@ -72,6 +75,7 @@ LaunchTarget DefaultLaunchTarget() {
     LaunchTarget t;
     t.minecraftVersion = kDefaultMinecraftVersionW;
     t.loader = L"fabric";
+    t.controllerProvider = L"fabric";
     t.loaderVersion = a2w(kDefaultFabricLoaderVersion);
     t.targetId = MakeTargetId(t.minecraftVersion, t.loader, t.loaderVersion);
     t.displayName = t.minecraftVersion + L" Fabric";
@@ -107,12 +111,14 @@ std::wstring TargetProfileText(const LaunchTarget& target) {
     if (!target.loaderVersion.empty() && target.loaderVersion != L"none") {
         text += L" " + target.loaderVersion;
     }
+    if (target.notes.find(L"Bundled controller unavailable") != std::wstring::npos) text += L" (no bundled controller)";
     return text;
 }
 LaunchTarget TargetFromProfile(const Profile& p) {
     LaunchTarget t = DefaultLaunchTarget();
     if (!p.minecraftVersion.empty()) t.minecraftVersion = p.minecraftVersion;
     if (!p.loader.empty()) t.loader = p.loader;
+    t.controllerProvider = t.loader;
     if (!p.loaderVersion.empty()) t.loaderVersion = p.loaderVersion;
     t.targetId = !p.targetId.empty() ? p.targetId : MakeTargetId(t.minecraftVersion, t.loader, t.loaderVersion);
     t.displayName = t.minecraftVersion + L" " + Capitalize(t.loader);
@@ -153,6 +159,7 @@ std::vector<LaunchTarget> LoadVersionCatalog(const std::wstring& runtimeRoot) {
             t.javaRuntime = parts.size() > 4 ? parts[4] : L"current";
             t.supportLevel = parts.size() > 5 ? parts[5] : L"testing";
             t.notes = parts.size() > 7 ? parts[7] : (parts.size() > 6 ? parts[6] : L"");
+            t.controllerProvider = parts.size() > 7 ? ToLowerW(parts[6]) : t.loader;
             if (t.minecraftVersion.empty() || t.loader.empty()) continue;
             t.targetId = MakeTargetId(t.minecraftVersion, t.loader, t.loaderVersion);
             out.push_back(t);
@@ -226,9 +233,28 @@ std::wstring ReadActiveProfileFromJson(const std::wstring& runtimeRoot) {
     }
 }
 
-static void SaveProfilesJson(const std::wstring& runtimeRoot, const std::vector<Profile>& profiles, const std::wstring& activeProfileId) {
+static bool SaveProfilesJson(const std::wstring& runtimeRoot, const std::vector<Profile>& profiles, const std::wstring& activeProfileId) {
     using namespace winrt::Windows::Data::Json;
-    EnsureDirectoryTree(ProfilesRoot(runtimeRoot));
+    if (!EnsureDirectoryTree(ProfilesRoot(runtimeRoot))) return false;
+    std::wstring existing;
+    if (GetFileAttributesW(ProfilesJsonPath(runtimeRoot).c_str()) != INVALID_FILE_ATTRIBUTES) {
+        if (!ReadTextFile(ProfilesJsonPath(runtimeRoot), existing)) return false;
+        try {
+            JsonObject registry = JsonObject::Parse(winrt::hstring(existing));
+            if (!registry.HasKey(L"profiles") || registry.GetNamedValue(L"profiles").ValueType() != JsonValueType::Array) {
+                WriteLog(L"Profile registry missing its profiles array. Keeping the existing file");
+                return false;
+            }
+            for (const auto& value : registry.GetNamedArray(L"profiles")) {
+                if (value.ValueType() != JsonValueType::Object || JsonStringOrEmpty(value.GetObject(), L"id").empty()) {
+                    WriteLog(L"Profile registry contains an invalid profile. Keeping the existing file");
+                    return false;
+                }
+            }
+        }
+        catch (...) { WriteLog(L"Profile registry damaged. Keeping the existing file"); return false; }
+    }
+
 
     auto jsonString = [](const std::wstring& value) {
         return JsonValue::CreateStringValue(winrt::hstring(value.c_str()));
@@ -257,10 +283,13 @@ static void SaveProfilesJson(const std::wstring& runtimeRoot, const std::vector<
     const std::wstring text = std::wstring(root.Stringify().c_str());
     if (!WriteTextFile(ProfilesJsonPath(runtimeRoot), text)) {
         WriteLogF(L"Failed to write profiles.json err=%u", GetLastError());
+        return false;
     }
+    return true;
 }
 
 std::vector<Profile> LoadProfiles(const std::wstring& runtimeRoot) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
     using namespace winrt::Windows::Data::Json;
     std::vector<Profile> out;
     const LaunchTarget def = DefaultLaunchTarget();
@@ -321,11 +350,11 @@ std::vector<Profile> LoadProfiles(const std::wstring& runtimeRoot) {
     return out;
 }
 
-static void SaveProfiles(const std::wstring& runtimeRoot, const std::vector<Profile>& profiles) {
+static bool SaveProfiles(const std::wstring& runtimeRoot, const std::vector<Profile>& profiles) {
     std::wstring active = ReadActiveProfileFromJson(runtimeRoot);
     if (active.empty()) active = ReadActiveProfileShim(runtimeRoot);
     if (active.empty()) active = kVanillaProfileId;
-    SaveProfilesJson(runtimeRoot, profiles, active);
+    return SaveProfilesJson(runtimeRoot, profiles, active);
 }
 
 std::wstring GetActiveProfileId(const std::wstring& runtimeRoot) {
@@ -342,11 +371,12 @@ std::wstring GetActiveProfileId(const std::wstring& runtimeRoot) {
     return kVanillaProfileId;
 }
 
-void SetActiveProfileId(const std::wstring& runtimeRoot, const std::wstring& id) {
-    EnsureDirectoryTree(ProfilesRoot(runtimeRoot));
-    std::ofstream f(ActiveProfilePath(runtimeRoot), std::ios::binary | std::ios::trunc);
-    if (f) { const std::string s = w2a(id); f.write(s.data(), static_cast<std::streamsize>(s.size())); }
-    SaveProfilesJson(runtimeRoot, LoadProfiles(runtimeRoot), id.empty() ? std::wstring(kVanillaProfileId) : id);
+bool SetActiveProfileId(const std::wstring& runtimeRoot, const std::wstring& id) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
+    const std::wstring active = id.empty() ? std::wstring(kVanillaProfileId) : id;
+    if (!SaveProfilesJson(runtimeRoot, LoadProfiles(runtimeRoot), active)) return false;
+    if (!WriteTextFile(ActiveProfilePath(runtimeRoot), active)) WriteLog(L"Active profile shim write failed");
+    return true;
 }
 
 int ProfileModCount(const std::wstring& runtimeRoot, const std::wstring& id) {
@@ -379,16 +409,21 @@ Profile GetProfileById(const std::wstring& runtimeRoot, const std::wstring& id) 
 }
 
 std::wstring CreateProfile(const std::wstring& runtimeRoot, const std::wstring& name, const LaunchTarget& target) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
     std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
     const std::wstring id = MakeProfileId(runtimeRoot, name);
     EnsureDirectoryTree(ProfileModsDir(runtimeRoot, id));
     EnsureDirectoryTree(ProfileGameDir(runtimeRoot, id));
     profiles.push_back(ProfileWithTarget(id, name.empty() ? id : StripNewlines(name), target, false));
-    SaveProfiles(runtimeRoot, profiles);
+    if (!SaveProfiles(runtimeRoot, profiles)) {
+        DeleteDirectoryTree(ProfileDir(runtimeRoot, id));
+        return {};
+    }
     return id;
 }
 
 std::wstring CreateProfile(const std::wstring& runtimeRoot, const std::wstring& name) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
     return CreateProfile(runtimeRoot, name, DefaultLaunchTarget());
 }
 
@@ -406,7 +441,7 @@ std::wstring ProfileBackupDir(const std::wstring& runtimeRoot, const std::wstrin
     return ProfileBackupsRoot(runtimeRoot) + L"\\" + kind + L"-" + CrashTimestampForFileName() + L"-" + SafeFileName(profileId);
 }
 
-static void WriteProfileBackupMeta(const std::wstring& backupDir, const Profile& profile, const std::wstring& kind) {
+static bool WriteProfileBackupMeta(const std::wstring& backupDir, const Profile& profile, const std::wstring& kind) {
     using namespace winrt::Windows::Data::Json;
     auto jsonString = [](const std::wstring& value) {
         return JsonValue::CreateStringValue(winrt::hstring(value.c_str()));
@@ -423,11 +458,12 @@ static void WriteProfileBackupMeta(const std::wstring& backupDir, const Profile&
     obj.SetNamedValue(L"targetId", jsonString(profile.targetId));
     obj.SetNamedValue(L"controllerModEnabled", JsonValue::CreateBooleanValue(profile.controllerModEnabled));
     obj.SetNamedValue(L"created", jsonString(CrashTimestampForFileName()));
-    WriteTextFile(backupDir + L"\\profile_backup.json", std::wstring(obj.Stringify().c_str()));
+    return WriteTextFile(backupDir + L"\\profile_backup.json", std::wstring(obj.Stringify().c_str()));
 }
 
 static bool ReadProfileBackupMeta(const std::wstring& backupDir, Profile& profile, std::wstring& kind) {
     using namespace winrt::Windows::Data::Json;
+    if (backupDir.size() >= 8 && backupDir.compare(backupDir.size() - 8, 8, L".partial") == 0) return false;
     std::wstring body;
     if (!ReadTextFile(backupDir + L"\\profile_backup.json", body)) return false;
     try {
@@ -464,6 +500,10 @@ std::wstring LatestProfileBackup(const std::wstring& runtimeRoot, const std::wst
             if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) continue;
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
             const std::wstring name = fd.cFileName;
+            Profile profile;
+            std::wstring backupKind;
+            if (!ReadProfileBackupMeta(root + L"\\" + name, profile, backupKind) || backupKind != kind ||
+                !DirectoryExists(root + L"\\" + name + L"\\profile")) continue;
             if (latest.empty() || _wcsicmp(name.c_str(), latest.c_str()) > 0) latest = name;
         } while (FindNextFileW(h, &fd));
         FindClose(h);
@@ -480,13 +520,26 @@ std::wstring ProfileBackupDisplayName(const std::wstring& backupDir) {
 }
 
 bool BackupProfile(const std::wstring& runtimeRoot, const std::wstring& id, std::wstring& backupDir) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
     if (id.empty() || id == kVanillaProfileId) return false;
     const Profile profile = GetProfileById(runtimeRoot, id);
-    backupDir = ProfileBackupDir(runtimeRoot, L"manual", id);
-    DeleteDirectoryTree(backupDir);
-    EnsureDirectoryTree(backupDir);
-    WriteProfileBackupMeta(backupDir, profile, L"manual");
-    return CopyDirectoryTree(ProfileDir(runtimeRoot, id), backupDir + L"\\profile");
+    backupDir.clear();
+    const std::wstring base = ProfileBackupDir(runtimeRoot, L"manual", id);
+    std::wstring complete = base;
+    unsigned suffix = 0;
+    while (DirectoryExists(complete) || DirectoryExists(complete + L".partial")) {
+        const std::wstring number = std::to_wstring(++suffix);
+        complete = base + L"-" + std::wstring(10 - number.size(), L'0') + number;
+    }
+    const std::wstring staging = complete + L".partial";
+    if (!CopyDirectoryTree(ProfileDir(runtimeRoot, id), staging + L"\\profile") ||
+        !WriteProfileBackupMeta(staging, profile, L"manual") ||
+        !MoveFileExW(staging.c_str(), complete.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        DeleteDirectoryTree(staging);
+        return false;
+    }
+    backupDir = complete;
+    return true;
 }
 
 std::wstring UniqueRestoredProfileId(const std::wstring& runtimeRoot, const std::wstring& desiredId, const std::vector<Profile>& profiles) {
@@ -504,6 +557,7 @@ std::wstring UniqueRestoredProfileId(const std::wstring& runtimeRoot, const std:
 }
 
 bool RestoreProfileBackup(const std::wstring& runtimeRoot, const std::wstring& backupDir, bool removeBackup, std::wstring& restoredName) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
     Profile profile;
     std::wstring kind;
     if (!ReadProfileBackupMeta(backupDir, profile, kind)) return false;
@@ -514,69 +568,53 @@ bool RestoreProfileBackup(const std::wstring& runtimeRoot, const std::wstring& b
 
     const std::wstring source = backupDir + L"\\profile";
     const std::wstring dest = ProfileDir(runtimeRoot, profile.id);
-    DeleteDirectoryTree(dest);
-    bool copied = false;
-    if (removeBackup) {
-        EnsureDirectoryTree(GetParentDir(dest));
-        copied = MoveFileExW(source.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
-    }
-    if (!copied) {
-        copied = CopyDirectoryTree(source, dest);
-    }
-    if (!copied) return false;
-
+    if (!CopyDirectoryTree(source, dest)) return false;
     profiles.push_back(profile);
-    SaveProfiles(runtimeRoot, profiles);
-    SetActiveProfileId(runtimeRoot, profile.id);
+    if (!SaveProfilesJson(runtimeRoot, profiles, profile.id)) {
+        DeleteDirectoryTree(dest);
+        return false;
+    }
     restoredName = profile.name;
     if (removeBackup) DeleteDirectoryTree(backupDir);
     return true;
 }
 
-void DeleteProfilePermanent(const std::wstring& runtimeRoot, const std::wstring& id) {
-    if (id.empty() || id == kVanillaProfileId) return;
-    DeleteDirectoryTree(ProfileDir(runtimeRoot, id));
-    std::vector<Profile> kept;
-    for (const Profile& p : LoadProfiles(runtimeRoot)) if (p.id != id) kept.push_back(p);
-    SaveProfiles(runtimeRoot, kept);
-    if (GetActiveProfileId(runtimeRoot) == id) SetActiveProfileId(runtimeRoot, kVanillaProfileId);
+bool DeleteProfilePermanent(const std::wstring& runtimeRoot, const std::wstring& id) {
+    return DeleteProfile(runtimeRoot, id);
 }
 
-void DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id) {
-    if (id.empty() || id == kVanillaProfileId) return;
+bool DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
+    if (id.empty() || id == kVanillaProfileId) return false;
     const Profile profile = GetProfileById(runtimeRoot, id);
     const std::wstring backupDir = ProfileBackupDir(runtimeRoot, L"deleted", id);
-    DeleteDirectoryTree(backupDir);
-    EnsureDirectoryTree(backupDir);
-    WriteProfileBackupMeta(backupDir, profile, L"deleted");
-    const std::wstring backupProfileDir = backupDir + L"\\profile";
-    bool archived = MovePathIfExists(ProfileDir(runtimeRoot, id), backupProfileDir, true);
-    if (!archived) {
-        archived = CopyDirectoryTree(ProfileDir(runtimeRoot, id), backupProfileDir);
-    }
-    if (!archived) {
-        WriteLogF(L"Profile delete aborted because backup failed: %s", id.c_str());
-        DeleteDirectoryTree(backupDir);
-        return;
-    }
-    if (GetFileAttributesW(ProfileDir(runtimeRoot, id).c_str()) != INVALID_FILE_ATTRIBUTES) {
-        DeleteDirectoryTree(ProfileDir(runtimeRoot, id));
-    }
+    if (!WriteProfileBackupMeta(backupDir, profile, L"deleted")) return false;
+    const std::wstring source = ProfileDir(runtimeRoot, id);
+    const std::wstring archived = backupDir + L"\\profile";
+    if (!MoveFileExW(source.c_str(), archived.c_str(), MOVEFILE_WRITE_THROUGH)) return false;
+    const std::wstring active = GetActiveProfileId(runtimeRoot);
     std::vector<Profile> kept;
     for (const Profile& p : LoadProfiles(runtimeRoot)) if (p.id != id) kept.push_back(p);
-    SaveProfiles(runtimeRoot, kept);
-    if (GetActiveProfileId(runtimeRoot) == id) SetActiveProfileId(runtimeRoot, kVanillaProfileId);
+    if (!SaveProfilesJson(runtimeRoot, kept, active == id ? std::wstring(kVanillaProfileId) : active)) {
+        if (!MoveFileExW(archived.c_str(), source.c_str(), MOVEFILE_WRITE_THROUGH)) {
+            WriteLogF(L"Profile registry unchanged. Original retained at %s", archived.c_str());
+        }
+        return false;
+    }
+    return true;
 }
 
-void RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName) {
-    if (id.empty() || id == kVanillaProfileId) return;
+bool RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
+    if (id.empty() || id == kVanillaProfileId) return false;
     std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
     for (auto& p : profiles) if (p.id == id && !p.builtin) p.name = StripNewlines(newName);
-    SaveProfiles(runtimeRoot, profiles);
+    return SaveProfiles(runtimeRoot, profiles);
 }
 
-void SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled) {
-    if (id.empty() || id == kVanillaProfileId) return;
+bool SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
+    if (id.empty() || id == kVanillaProfileId) return false;
     std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
     for (auto& p : profiles) {
         if (p.id == id && !p.builtin) {
@@ -584,10 +622,11 @@ void SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::
             break;
         }
     }
-    SaveProfiles(runtimeRoot, profiles);
+    return SaveProfiles(runtimeRoot, profiles);
 }
 
 void EnsureProfilesInitialized(const std::wstring& runtimeRoot) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
     EnsureDirectoryTree(ProfileModsDir(runtimeRoot, kVanillaProfileId));
     EnsureDirectoryTree(ProfileGameDir(runtimeRoot, kVanillaProfileId));
     if (GetFileAttributesW(ProfilesJsonPath(runtimeRoot).c_str()) != INVALID_FILE_ATTRIBUTES) return;
@@ -623,22 +662,24 @@ void EnsureProfilesInitialized(const std::wstring& runtimeRoot) {
     }
 }
 
-static void MoveLegacyGameDataPathToProfile(const std::wstring& runtimeRoot, const std::wstring& profileId, const std::wstring& relativePath) {
+static bool MoveLegacyGameDataPathToProfile(const std::wstring& runtimeRoot, const std::wstring& profileId, const std::wstring& relativePath) {
     const std::wstring source = runtimeRoot + L"\\game\\" + relativePath;
     const DWORD attrs = GetFileAttributesW(source.c_str());
-    if (attrs == INVALID_FILE_ATTRIBUTES) return;
+    if (attrs == INVALID_FILE_ATTRIBUTES) return GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND;
 
     const std::wstring dest = ProfileGameDir(runtimeRoot, profileId) + L"\\" + relativePath;
     if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) {
         WriteLogF(L"Legacy game data migration skipped existing destination: %s", dest.c_str());
-        return;
+        return false;
     }
 
     EnsureDirectoryTree(GetParentDir(dest));
     if (MoveFileExW(source.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         WriteLogF(L"Legacy game data migrated: %s -> %s", source.c_str(), dest.c_str());
+        return true;
     } else {
         WriteLogF(L"Legacy game data migration failed: %s -> %s err=%u", source.c_str(), dest.c_str(), GetLastError());
+        return false;
     }
 }
 
@@ -679,15 +720,18 @@ void EnsureProfileGameDataInitialized(const std::wstring& runtimeRoot, const std
     const std::wstring marker = LegacyGameDataMigrationMarkerPath(runtimeRoot);
     if (GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES) return;
 
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"saves");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"config");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"resourcepacks");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"screenshots");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"shaderpacks");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"server-resource-packs");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"options.txt");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"optionsof.txt");
-    MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"servers.dat");
+    bool migrated = true;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"saves") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"config") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"resourcepacks") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"screenshots") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"shaderpacks") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"server-resource-packs") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"options.txt") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"optionsof.txt") && migrated;
+    migrated = MoveLegacyGameDataPathToProfile(runtimeRoot, profileId, L"servers.dat") && migrated;
+
+    if (!migrated) return;
 
     EnsureDirectoryTree(GetParentDir(marker));
     WriteTextFile(marker, profileId + L"\n");

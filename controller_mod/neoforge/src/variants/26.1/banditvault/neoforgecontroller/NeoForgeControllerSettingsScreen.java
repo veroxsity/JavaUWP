@@ -154,9 +154,6 @@ public final class NeoForgeControllerSettingsScreen extends Screen {
         NeoForgeClientApi.setScreen(Minecraft.getInstance(), parent);
     }
 
-    public boolean isCapturingBinding() {
-        return captureOption != null;
-    }
 
     public boolean handleControllerInput(ControllerState state, float triggerDeadzone) {
         if (captureOption != null) {

@@ -1030,7 +1030,8 @@ void FlushQueueAsync() {
             const std::wstring endpoint = Endpoint();
             const HttpResult result = HttpPostStringTimed(
                 (endpoint + route).c_str(), w2a(body), L"application/json", kBeaconTimeoutMs);
-            if (result.success() || (result.status >= 400 && result.status < 500)) {
+            if (result.status == 429 || result.status == 408) break;
+            if (result.success() || (result.status >= 400 && result.status < 500 && result.status != 408 && result.status != 429)) {
                 DeleteFileW(path.c_str());
                 ++sent;
             }

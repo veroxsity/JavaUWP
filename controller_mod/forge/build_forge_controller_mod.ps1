@@ -40,7 +40,7 @@ if ($ForgeVersion -ne "1.20.1-47.4.20") {
 $patchedClient = & (Join-Path $root "scripts\prepare-forge-patched-client.ps1") `
     -MinecraftVersion $MinecraftVersion `
     -ForgeVersion $ForgeVersion
-if (-not (Test-Path $patchedClient)) {
+if ($patchedClient -isnot [string] -or -not (Test-Path -LiteralPath $patchedClient -PathType Leaf)) {
     throw "Forge patched client jar missing: $patchedClient"
 }
 

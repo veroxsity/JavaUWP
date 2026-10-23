@@ -1,6 +1,7 @@
 #include "launcher_common.h"
 
 #include <cstdarg>
+#include <atomic>
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
@@ -166,7 +167,8 @@ std::wstring a2w(const char* utf8) {
 
 bool EnsureDirectoryTree(const std::wstring& path) {
     if (path.empty()) return false;
-    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return true;
+    const DWORD existing = GetFileAttributesW(path.c_str());
+    if (existing != INVALID_FILE_ATTRIBUTES) return (existing & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
     std::wstring current;
     size_t start = 0;
@@ -194,7 +196,8 @@ bool EnsureDirectoryTree(const std::wstring& path) {
         start = next + 1;
     }
 
-    return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    const DWORD created = GetFileAttributesW(path.c_str());
+    return created != INVALID_FILE_ATTRIBUTES && (created & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
 bool DirectoryExists(const std::wstring& path) {
@@ -247,15 +250,8 @@ bool ReadTextFile(const std::wstring& path, std::wstring& out) {
 }
 
 bool WriteTextFile(const std::wstring& path, const std::wstring& value) {
-    EnsureDirectoryTree(GetParentDir(path));
-    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"wb") != 0 || !f) return false;
-
     const std::string bytes = w2a(value);
-    const bool ok = bytes.empty() || fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
-    fclose(f);
-    return ok;
+    return WriteAllBytes(path, bytes.data(), bytes.size());
 }
 
 bool ReadBinaryFileLimited(
@@ -325,11 +321,17 @@ bool ReadAppMemoryBudget(unsigned long long& limitMb, unsigned long long& usedMb
 }
 
 bool WriteAllBytes(const std::wstring& path, const void* data, size_t size) {
-    EnsureDirectoryTree(GetParentDir(path));
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    if (size) f.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
-    return f.good();
+    if (!EnsureDirectoryTree(GetParentDir(path))) return false;
+    static std::atomic<unsigned long long> sequence{0};
+    const std::wstring temporary = path + L".writing-" + std::to_wstring(GetCurrentProcessId()) +
+        L"-" + std::to_wstring(++sequence);
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, temporary.c_str(), L"wb") != 0 || !file) return false;
+    bool ok = size == 0 || fwrite(data, 1, size, file) == size;
+    if (fclose(file) != 0) ok = false;
+    if (ok) ok = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+    if (!ok) DeleteFileW(temporary.c_str());
+    return ok;
 }
 
 static std::vector<int> ParseVersionNumbers(const std::string& value) {
@@ -463,10 +465,10 @@ bool CopyDirectoryTree(const std::wstring& source, const std::wstring& dest) {
     const DWORD attrs = GetFileAttributesW(source.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) return false;
 
-    EnsureDirectoryTree(dest);
+    if (!EnsureDirectoryTree(dest)) return false;
     WIN32_FIND_DATAW fd = {};
     HANDLE h = FindFirstFileW((source + L"\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return true;
+    if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;
 
     bool ok = true;
     do {
@@ -481,6 +483,7 @@ bool CopyDirectoryTree(const std::wstring& source, const std::wstring& dest) {
             ok = CopyFileW(childSource.c_str(), childDest.c_str(), FALSE) != FALSE && ok;
         }
     } while (FindNextFileW(h, &fd));
+    if (GetLastError() != ERROR_NO_MORE_FILES) ok = false;
     FindClose(h);
     return ok;
 }

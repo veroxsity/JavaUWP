@@ -1,11 +1,13 @@
 #pragma once
 
 #include <string>
+#include <chrono>
 
 struct LaunchAuthConfig {
     std::string username;
     std::string uuid;
     std::string accessToken;
+    std::chrono::steady_clock::time_point expiresAt{};
 };
 
 struct DeviceCodeResponse {
@@ -46,7 +48,7 @@ void ClearRefreshToken();
 
 bool RequestDeviceCode(DeviceCodeResponse& out, std::string& error);
 DevicePollResult PollDeviceToken(const std::string& deviceCode);
-bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenResponse& out, std::string& error);
+bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenResponse& out, std::string& error, bool* invalidGrant = nullptr);
 bool AuthenticateWithXboxLive(const std::string& microsoftAccessToken, XboxAuthResponse& out, std::string& error);
 bool AuthorizeWithXsts(const std::string& xboxToken, const char* relyingParty, XboxAuthResponse& out, std::string& error);
 bool LoginToMinecraft(const std::string& userHash, const std::string& xstsToken, MicrosoftTokenResponse& out, std::string& error);

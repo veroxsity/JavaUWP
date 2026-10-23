@@ -83,10 +83,15 @@ void RenderAuth(AuthScreenRenderer* renderer, const AuthUiState& state) {
     if (renderer) {
         LauncherMouse& mouse = LauncherMouseInstance();
         mouse.Update(renderer->Width(), renderer->Height());
-        if (mouse.Visible()) {
-            renderer->SetCursor(mouse.X(), mouse.Y(), true);
+        renderer->SetCursor(mouse.X(), mouse.Y(), mouse.Visible());
+        if (renderer->NeedsRecovery()) {
+            AuthUiState recovery = state;
+            recovery.status = L"Display interrupted. Retrying";
+            recovery.isError = true;
+            renderer->Render(recovery);
+        } else {
+            renderer->Render(state);
         }
-        renderer->Render(state);
     }
 }
 
@@ -162,8 +167,13 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
     bool backWasDown = false;
     while (true) {
         if (RemoteFileServerRunning()) {
-            state.status = L"Remote file manager is running";
-            state.detail = L"Open " + RemoteFileServerUrl() + L"\nPIN: " + a2w(RemoteFileServerPin().c_str());
+            const std::wstring url = RemoteFileServerUrl();
+            state.isError = url.empty();
+            state.status = url.empty() ? L"Remote Files has no LAN address" : L"Remote file manager is running";
+            state.detail = url.empty()
+                ? L"Could not find a connected IPv4 LAN address. Connect to the local network and try again."
+                : L"Open " + url + L"\nPIN: " + a2w(RemoteFileServerPin().c_str());
+            if (RemoteFileImportRunning()) state.detail += L"\nImport in progress. Wait for it to finish before leaving.";
         } else {
             state.status = L"Remote file manager is not running";
             state.detail = L"Could not start the LAN server on port 27632. Check that another copy is not already running.";
@@ -181,7 +191,7 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
             ABI::Windows::System::VirtualKey_Escape,
             ABI::Windows::System::VirtualKey_GamepadB
         });
-        if ((backDown && !backWasDown) || clickBack) {
+        if (((backDown && !backWasDown) || clickBack) && !RemoteFileImportRunning()) {
             StopRemoteFileServer();
             state.showRemoteFiles = false;
             state.showMainMenu = true;
@@ -613,9 +623,16 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
 
     ShowCrashScreen(window, renderer, state);
 
+    float previousMouseX = -1;
+    float previousMouseY = -1;
     WriteLog(L"Main menu opened");
     while (true) {
         LauncherMouse& mouse = LauncherMouseInstance();
+        mouse.Update(renderer->Width(), renderer->Height());
+        const bool mouseClicked = mouse.TakeClick();
+        const bool mouseMoved = mouse.X() != previousMouseX || mouse.Y() != previousMouseY;
+        previousMouseX = mouse.X();
+        previousMouseY = mouse.Y();
         int hovered = -1;
         if (mouse.Visible()) {
             for (int i = 0; i < renderer->MainMenuItemCount(); ++i) {
@@ -626,7 +643,7 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
                     hovered = i;
                 }
             }
-            if (hovered >= 0) {
+            if (hovered >= 0 && (mouseMoved || mouseClicked)) {
                 selected = hovered;
             }
         }
@@ -658,7 +675,6 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
             selected = (selected + 1) % kMainMenuItems;
             state.detail = L"";
         }
-        const bool mouseClicked = mouse.TakeClick();
         if ((selectDown && !selectWasDown) || (mouseClicked && hovered >= 0)) {
             if (selected == 0) {
                 WriteLog(L"Main menu: Play selected");
@@ -720,7 +736,8 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
     if (!savedRefreshToken.empty()) {
         MicrosoftTokenResponse refreshed;
         std::string error;
-        if (RefreshMicrosoftToken(savedRefreshToken, refreshed, error)) {
+        bool invalidGrant = false;
+        if (RefreshMicrosoftToken(savedRefreshToken, refreshed, error, &invalidGrant)) {
             if (!refreshed.refreshToken.empty()) {
                 SaveRefreshToken(refreshed.refreshToken);
             }
@@ -739,7 +756,15 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
         }
 
         WriteLogF(L"Saved auth failed: %s", a2w(error.c_str()).c_str());
-        ClearRefreshToken();
+        if (invalidGrant) {
+            ClearRefreshToken();
+        } else {
+            state.status = L"Saved sign-in could not be verified";
+            state.detail = a2w(error.c_str());
+            state.isError = true;
+            RenderAuth(renderer, state);
+            return false;
+        }
     }
 
     DeviceCodeResponse device;

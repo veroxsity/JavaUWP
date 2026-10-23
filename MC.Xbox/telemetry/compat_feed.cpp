@@ -256,7 +256,8 @@ Flag Lookup(
     const std::wstring& slug,
     const std::wstring& projectId,
     const std::wstring& mcVersion,
-    const std::wstring& loader) {
+    const std::wstring& loader,
+    const std::wstring& modVersion) {
     Flag flag;
 
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -266,7 +267,7 @@ Flag Lookup(
     const std::wstring wantSlug = ToLowerW(slug);
 
     for (const Entry& entry : g_entries) {
-        if (entry.modVersion != kAny) continue;
+        if (!Matches(entry.modVersion, modVersion)) continue;
         if (!Matches(entry.mcVersion, mcVersion)) continue;
         if (!Matches(entry.loader, loader)) continue;
 
@@ -276,13 +277,14 @@ Flag Lookup(
                 if (id == projectId) { hit = true; break; }
             }
         }
-        if (!hit) continue;
+        if (!hit || (flag.found && flag.versionSpecific && entry.modVersion == kAny)) continue;
 
         flag.found = true;
+        flag.versionSpecific = entry.modVersion != kAny;
         flag.slug = entry.slug;
         flag.severity = entry.severity;
         flag.note = entry.note;
-        return flag;
+        if (flag.versionSpecific) return flag;
     }
 
     return flag;

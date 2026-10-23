@@ -13,7 +13,13 @@
     "ForgeControllerRecipeBookPageAccessor",
     "ForgeControllerRecipeOverlayAccessor",
     "ForgeControllerScreenMixin",
-    "ForgeControllerTitleScreenMixin"
+    "ForgeControllerTitleScreenMixin",
+    "ForgeControllerTextFieldAccessor",
+    "ForgeControllerTextModelAccessor",
+    "ForgeControllerEditBoxAccessor",
+    "ForgeControllerSignEditScreenAccessor",
+    "ForgeControllerTextHelperAccessor",
+    "ForgeControllerBookAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

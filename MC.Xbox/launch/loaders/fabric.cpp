@@ -28,12 +28,6 @@ void FabricFinalizeVersionInfo(
         !info.mainClass.empty() && !info.loaderJar.empty() && !info.bundledModsDir.empty();
 }
 
-void FabricCollectExtraClasspathJars(const LoaderPreLaunchContext& ctx, std::vector<std::wstring>& jars) {
-    if (ctx.versionInfo.loaderJar.empty()) {
-        CollectJars(ctx.packagedLibrariesDir, jars);
-    }
-}
-
 void FabricAddJvmOptions(const LoaderJvmContext& ctx, std::vector<std::string>& vmOptions) {
     vmOptions.push_back("-Dfabric.log.file=" + w2a(fwd(ctx.fabricLogPath)));
     if (VerboseLoggingEnabled()) {

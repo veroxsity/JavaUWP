@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <sstream>
 
 #include "third_party/miniz/miniz.h"
 
@@ -102,4 +103,27 @@ bool ZipIsValid(const std::wstring& zipPath) {
     const mz_uint count = mz_zip_reader_get_num_files(&zip);
     mz_zip_reader_end(&zip);
     return count > 0;
+}
+
+bool EnsureFmlConfig(const std::wstring& gameDir) {
+    const std::wstring configPath = gameDir + L"\\config\\fml.toml";
+    std::wstring body;
+    if (GetFileAttributesW(configPath.c_str()) != INVALID_FILE_ATTRIBUTES && !ReadTextFile(configPath, body)) return false;
+    std::wstringstream in(body);
+    std::wstring line, out;
+    bool found = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        const auto equals = line.find(L'=');
+        if (equals != std::wstring::npos && TrimWhitespace(line.substr(0, equals)) == L"earlyWindowControl") {
+            out += L"earlyWindowControl = false\n";
+            found = true;
+        } else {
+            out += line + L"\n";
+        }
+    }
+    if (!found) out += L"earlyWindowControl = false\n";
+    if (WriteTextFile(configPath, out)) return true;
+    WriteLogF(L"Failed to write FML config %s err=%u", configPath.c_str(), GetLastError());
+    return false;
 }

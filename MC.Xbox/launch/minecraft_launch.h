@@ -10,21 +10,7 @@
 #include "minecraft_auth.h"
 #include "runtime_manager.h"
 
-struct LaunchUiSnapshot {
-    std::wstring status;
-    std::wstring detail;
-    float progress = 0.1f;
-    std::wstring logTail;
-    bool graphicsReady = false;
-};
-
 std::wstring ReadLaunchLogTailForUi(const std::vector<std::wstring>& paths, size_t maxLines = 9);
-LaunchUiSnapshot BuildLaunchUiSnapshot(
-    const std::vector<std::wstring>& launchLogPaths,
-    const std::wstring& glfwLogPath,
-    const std::wstring& latestLogPath,
-    const std::wstring& loaderLabel);
-void CollectJars(const std::wstring& dir, std::vector<std::wstring>& jars);
 void CollectManifestLibraryJars(
     const std::wstring& manifestPath,
     const std::wstring& runtimeRoot,
@@ -43,6 +29,7 @@ bool RunEmbeddedMinecraft(
     const std::wstring& packagedJreRelativeDir,
     const std::wstring& javaBasePatchName,
     const std::wstring& javaZipfsPatchName,
+    const std::wstring& javaDesktopPatchName,
     const std::wstring& gameDir,
     const std::wstring& assetsDir,
     const std::wstring& nativesDir,
@@ -62,8 +49,6 @@ bool RunEmbeddedMinecraft(
     const std::vector<std::wstring>& extraGameArgs,
     const std::wstring& neoFormVersion,
     const std::wstring& neoForgeInstallToolsVersion,
-    const std::wstring& neoForgeJarSplitterVersion,
     const std::wstring& neoForgeBinaryPatcherVersion,
-    const std::wstring& neoForgeAutoRenamingToolVersion,
     const LaunchAuthConfig& authConfig,
     LaunchProgressCallback progress = {});

@@ -99,14 +99,6 @@ public class ControllerSettingsStore {
         return input == null ? ControllerBindings.defaultInput(action) : input;
     }
 
-    public void setBinding(ControllerAction action, ControllerInput input) {
-        bindings[action.ordinal()] = input == null ? ControllerBindings.defaultInput(action) : input;
-    }
-
-    public ControllerAction rebind(ControllerAction action, ControllerInput input) {
-        return ControllerBindings.rebind(action, input, bindings);
-    }
-
     public boolean rebindController(ControllerAction action, ControllerInput input) {
         boolean conflict = false;
         if (usesGameplayContext(action) && input != null && input != ControllerInput.UNBOUND) {
@@ -236,7 +228,8 @@ public class ControllerSettingsStore {
             return fallback;
         }
         try {
-            return Double.parseDouble(value.trim());
+            double parsed = Double.parseDouble(value.trim());
+            return Double.isFinite(parsed) ? parsed : fallback;
         } catch (NumberFormatException ignored) {
             return fallback;
         }

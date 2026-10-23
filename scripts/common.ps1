@@ -381,26 +381,21 @@ function Get-MinecraftJavaMajorVersion {
         return [int]$cached
     }
 
-    $major = [int]$ProjectConfig.JavaRelease
-    $resolved = $false
     try {
         $manifest = Get-MinecraftVersionManifest
         $entry = $manifest.versions | Where-Object { $_.id -eq $MinecraftVersion } | Select-Object -First 1
-        if ($entry) {
-            $versionJson = Get-CachedRemoteJson -Uri $entry.url
-            if ($versionJson.javaVersion -and $versionJson.javaVersion.majorVersion) {
-                $major = [int]$versionJson.javaVersion.majorVersion
-                $resolved = $true
-            }
+        if (-not $entry) { throw "Minecraft version is missing from official metadata" }
+        $versionJson = Get-CachedRemoteJson -Uri $entry.url
+        if (-not $versionJson.javaVersion -or [int]$versionJson.javaVersion.majorVersion -le 0) {
+            throw "Required Java major is missing from official metadata"
         }
+        $major = [int]$versionJson.javaVersion.majorVersion
     } catch {
-        Write-Warning "Could not read the required Java version for Minecraft ${MinecraftVersion}: $($_.Exception.Message)"
+        throw "Could not read the required Java version for Minecraft ${MinecraftVersion}: $($_.Exception.Message)"
     }
 
     $script:MinecraftJavaMajorCache[$MinecraftVersion] = $major
-    if ($resolved) {
-        Set-SmallCacheValue -FileName "minecraft-java-majors.tsv" -Key $MinecraftVersion -Value $major
-    }
+    Set-SmallCacheValue -FileName "minecraft-java-majors.tsv" -Key $MinecraftVersion -Value $major
     return $major
 }
 
@@ -482,7 +477,7 @@ function Resolve-FabricClientJar {
     # 26.x ships unobfuscated, so Fabric has no intermediary for it and never writes a
     # remapped jar. Mods for those targets compile straight against the client jar.
     $remapped = Join-Path $GameDir ".fabric\remappedJars\minecraft-$MinecraftVersion-$LoaderVersion\client-intermediary.jar"
-    if (Test-Path $remapped) { return $remapped }
+    if (Test-JarComplete -Path $remapped -RequiredEntry "net/minecraft/class_310.class") { return $remapped }
     if (-not (Test-FabricTargetHasIntermediary -GameDir $GameDir -MinecraftVersion $MinecraftVersion -LoaderVersion $LoaderVersion)) {
         return (Join-Path $GameDir "versions\$MinecraftVersion\$MinecraftVersion.jar")
     }
@@ -670,4 +665,59 @@ function Ensure-Dir {
     )
 
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
+}
+
+function Test-JarComplete {
+    param([string]$Path, [string]$RequiredEntry)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    try {
+        $zip = [IO.Compression.ZipFile]::OpenRead($Path)
+        try {
+            if ($RequiredEntry) { return $null -ne $zip.GetEntry($RequiredEntry) }
+            return $zip.Entries.Count -gt 0
+        } finally { $zip.Dispose() }
+    } catch { return $false }
+}
+
+function Get-FabricRemapperSource {
+    param([string]$LoaderJar)
+    $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'RemapFabricClient.java'))
+    if (-not (Test-JarComplete $LoaderJar 'net/fabricmc/loader/impl/lib/tinyremapper/TinyRemapper.class')) {
+        $source = $source.Replace('net.fabricmc.loader.impl.lib.tinyremapper', 'net.fabricmc.tinyremapper')
+        $source = [regex]::Replace($source, '(?m)^import .*mappingio.*\r?\n', '')
+        $source = [regex]::Replace($source, '(?s)        MemoryMappingTree mappings =.*?(?=        TinyRemapper remapper =)', '')
+        $source = $source.Replace('newRemapper((level, message) -> System.out.println(message))', 'newRemapper()')
+        $source = $source.Replace('TinyUtils.createMappingProvider(mappings,', 'TinyUtils.createTinyMappingProvider(Paths.get(args[2]),')
+    } elseif (-not (Test-JarComplete $LoaderJar 'net/fabricmc/loader/impl/lib/tinyremapper/TinyUtils.class')) {
+        $source = $source.Replace('net.fabricmc.loader.impl.lib.tinyremapper.TinyUtils', 'net.fabricmc.loader.impl.util.mappings.TinyRemapperMappingsHelper')
+        $source = $source.Replace('newRemapper((level, message) -> System.out.println(message))', 'newRemapper()')
+        $source = $source.Replace('TinyUtils.createMappingProvider(', 'TinyRemapperMappingsHelper.create(')
+    }
+    return $source
+}
+
+function Save-RemoteFile {
+    param([Parameter(Mandatory=$true)][string]$Uri, [Parameter(Mandatory=$true)][string]$Path,
+        [string]$Sha1, [long]$Size = -1)
+    function Valid-Download([string]$Candidate) {
+        if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { return $false }
+        if ($Size -ge 0 -and (Get-Item -LiteralPath $Candidate).Length -ne $Size) { return $false }
+        if ($Sha1 -and (Get-FileHash -LiteralPath $Candidate -Algorithm SHA1).Hash -ne $Sha1) { return $false }
+        if ($Path -match '\.(jar|zip)$' -and -not (Test-JarComplete $Candidate)) { return $false }
+        return (Get-Item -LiteralPath $Candidate).Length -gt 0
+    }
+    if (Valid-Download $Path) { return }
+    Ensure-Dir (Split-Path $Path -Parent)
+    $temp = "$Path.download"
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $temp -TimeoutSec 180
+        if (-not (Valid-Download $temp)) { throw "Invalid download from $Uri" }
+        if (Test-Path -LiteralPath $Path) {
+            [IO.File]::Replace($temp, $Path, "$Path.previous")
+            Remove-Item -LiteralPath "$Path.previous" -Force
+        } else {
+            [IO.File]::Move($temp, $Path)
+        }
+    } finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
 }

@@ -30,7 +30,7 @@ jobs:
   build:
     name: Build and publish native release
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Check out repository
@@ -75,13 +75,15 @@ jobs:
         run: .\scripts\clean.ps1 -Apply
 
       - name: Restore Fabric remap cache
-        uses: actions/cache@v5
+        id: cache-fabric-remap
+        uses: actions/cache/restore@v5
         with:
           path: staging/cache/gameDir/.fabric/remappedJars
           key: fabric-remap-${{ runner.os }}-${{ hashFiles('scripts/config.ps1') }}
 
       - name: Restore loader installer cache
-        uses: actions/cache@v5
+        id: cache-installers
+        uses: actions/cache/restore@v5
         with:
           path: staging/cache/loader-installers
           key: loader-installers-${{ runner.os }}-${{ hashFiles('config/versions.tsv') }}
@@ -89,7 +91,8 @@ jobs:
             loader-installers-${{ runner.os }}-
 
       - name: Restore download manifest cache
-        uses: actions/cache@v5
+        id: cache-manifests
+        uses: actions/cache/restore@v5
         with:
           path: staging/cache/manifests
           key: manifests-${{ runner.os }}-${{ hashFiles('config/versions.tsv', 'scripts/new-download-manifest.ps1', 'scripts/common.ps1') }}
@@ -97,7 +100,8 @@ jobs:
             manifests-${{ runner.os }}-
 
       - name: Restore patched loader clients
-        uses: actions/cache@v5
+        id: cache-prebuilt
+        uses: actions/cache/restore@v5
         with:
           path: prebuilt
           key: prebuilt-${{ runner.os }}-${{ hashFiles('config/versions.tsv', 'scripts/prepare-forge-patched-client.ps1', 'scripts/gen-neoforge-artifacts.ps1') }}
@@ -164,3 +168,31 @@ jobs:
             -AppxVersion $env:APPX_VERSION `
             -RunUrl "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" `
             -Asset dist\BanditLauncherNative-nightly.appx, dist\BanditLauncherNative-nightly.sha256, dist\BanditLauncherNative-nightly.cer
+
+      - name: Save Fabric remap cache
+        if: ${{ always() && steps.cache-fabric-remap.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: staging/cache/gameDir/.fabric/remappedJars
+          key: ${{ steps.cache-fabric-remap.outputs.cache-primary-key }}
+
+      - name: Save loader installer cache
+        if: ${{ always() && steps.cache-installers.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: staging/cache/loader-installers
+          key: ${{ steps.cache-installers.outputs.cache-primary-key }}
+
+      - name: Save download manifest cache
+        if: ${{ always() && steps.cache-manifests.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: staging/cache/manifests
+          key: ${{ steps.cache-manifests.outputs.cache-primary-key }}
+
+      - name: Save patched loader clients
+        if: ${{ always() && steps.cache-prebuilt.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: prebuilt
+          key: ${{ steps.cache-prebuilt.outputs.cache-primary-key }}

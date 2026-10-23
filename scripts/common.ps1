@@ -711,8 +711,18 @@ function Save-RemoteFile {
     Ensure-Dir (Split-Path $Path -Parent)
     $temp = "$Path.download"
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $temp -TimeoutSec 180
-        if (-not (Valid-Download $temp)) { throw "Invalid download from $Uri" }
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $temp -TimeoutSec 180
+                if (-not (Valid-Download $temp)) { throw "Invalid download from $Uri" }
+                break
+            } catch {
+                Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+                if ($attempt -ge 3) { throw }
+                Write-Host "Retry $attempt for $Uri ($($_.Exception.Message))"
+                Start-Sleep -Seconds (5 * $attempt)
+            }
+        }
         if (Test-Path -LiteralPath $Path) {
             [IO.File]::Replace($temp, $Path, "$Path.previous")
             Remove-Item -LiteralPath "$Path.previous" -Force

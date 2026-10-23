@@ -1,5 +1,6 @@
 package banditvault.fabriccontroller;
 
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.JNI;
@@ -19,12 +20,21 @@ final class BanditNativeKeyboard {
     private static final long SELECTION_END = address("banditKeyboardGetSelectionEnd");
     private static final long CONSUME_FLAGS = address("banditKeyboardConsumeFlags");
     private static final long END = address("banditKeyboardEnd");
+    // this callPI overload is missing from some LWJGL releases such as 3.3.1, so it is looked up rather than linked
+    private static final Method BEGIN_CALL = beginCall();
 
+    private static Method beginCall() {
+        try {
+            return JNI.class.getMethod("callPI", long.class, int.class, int.class, int.class, int.class, int.class, long.class);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
     private BanditNativeKeyboard() {
     }
 
     static boolean available() {
-        return BEGIN != 0L && UPDATE != 0L && REVISION != 0L && TEXT_LENGTH != 0L && COPY_TEXT != 0L &&
+        return BEGIN_CALL != null && BEGIN != 0L && UPDATE != 0L && REVISION != 0L && TEXT_LENGTH != 0L && COPY_TEXT != 0L &&
             SELECTION_START != 0L && SELECTION_END != 0L && CONSUME_FLAGS != 0L && END != 0L;
     }
 
@@ -32,14 +42,18 @@ final class BanditNativeKeyboard {
         if (!available()) return 0;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer encoded = stack.UTF16(text, true);
-            return JNI.callPI(
-                MemoryUtil.memAddress(encoded),
-                text.length(),
-                selectionStart,
-                selectionEnd,
-                maxLength,
-                multiline ? 1 : 0,
-                BEGIN);
+            try {
+                return (Integer) BEGIN_CALL.invoke(null,
+                    MemoryUtil.memAddress(encoded),
+                    text.length(),
+                    selectionStart,
+                    selectionEnd,
+                    maxLength,
+                    multiline ? 1 : 0,
+                    BEGIN);
+            } catch (ReflectiveOperationException e) {
+                return 0;
+            }
         }
     }
 

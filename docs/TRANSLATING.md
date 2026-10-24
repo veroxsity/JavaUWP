@@ -27,7 +27,7 @@ You do not need a new build to test a file.
 
 A file in `lang` replaces the one that came with the launcher if they share a name, so you can keep editing and reloading.
 
-The launcher picks your language on its own the first time if the console is set to a language that has a file. Settings can change it at any time.
+The launcher picks your language on its own the first time if the console is set to a language that has a file. A file named `es-419.json` is used for Spanish consoles set to Mexico, Argentina, Colombia and the other Latin American countries. Settings can change it at any time.
 
 ## Sending it in
 

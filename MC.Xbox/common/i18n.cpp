@@ -112,6 +112,21 @@ void ScanDirectory(const std::wstring& dir) {
     FindClose(handle);
 }
 
+// Windows names a country, but one translation can cover a whole region
+std::wstring RegionCode(const std::wstring& locale) {
+    static const wchar_t* latinAmerica[] = {
+        L"mx", L"ar", L"bo", L"cl", L"co", L"cr", L"cu", L"do", L"ec", L"gt", L"hn",
+        L"ni", L"pa", L"pe", L"pr", L"py", L"sv", L"uy", L"ve", L"us"
+    };
+    const std::wstring lower = ToLowerW(locale);
+    if (lower.compare(0, 3, L"es-") != 0) return {};
+    const std::wstring country = lower.substr(3);
+    for (const wchar_t* code : latinAmerica) {
+        if (country == code) return L"es-419";
+    }
+    return {};
+}
+
 std::wstring ChooseCode() {
     std::wstring saved;
     const std::wstring path = SavedPath();
@@ -125,6 +140,8 @@ std::wstring ChooseCode() {
 
     const std::wstring full = locale;
     if (Find(full)) return full;
+    const std::wstring region = RegionCode(full);
+    if (!region.empty() && Find(region)) return region;
     const size_t dash = full.find(L'-');
     if (dash != std::wstring::npos && Find(full.substr(0, dash))) return full.substr(0, dash);
     return L"en";

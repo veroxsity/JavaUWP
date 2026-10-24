@@ -1,4 +1,5 @@
 #include "auth_screen.h"
+#include "i18n.h"
 
 #include <objbase.h>
 
@@ -108,6 +109,7 @@ AuthUiState Detail(int tab) {
 AuthUiState Settings(bool reporting, ModSource source, const wchar_t* keyHint, const wchar_t* note, bool configured) {
     AuthUiState state = Screen();
     state.showSettings = true;
+    state.settingsLanguageName = L"English";
     state.settingsReportingOn = reporting;
     state.settingsConfigured = configured;
     state.settingsInstallId = L"Reporting id 7f3c9a12-4be0-4c51-9d2e-0a61b5e8c3f4";
@@ -352,6 +354,8 @@ int RenderAll(const std::wstring& outDir) {
 int wmain(int argc, wchar_t** argv) {
     if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return 1;
     const std::wstring outDir = argc > 1 ? argv[1] : L"ui-preview-out";
+    i18n::Init();
+    if (argc > 2 && argv[2][0] != L'\0') i18n::SetLanguage(argv[2]);
     CreateDirectoryW(outDir.c_str(), nullptr);
     const int failures = RenderAll(outDir);
     CoUninitialize();

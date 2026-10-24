@@ -142,6 +142,7 @@ Crash and usage reporting is off until enabled. It can be changed in launcher Se
 - [Patching notes](docs/PATCHING.md)
 - [Privacy](docs/PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)
+- [Translating](docs/TRANSLATING.md)
 - [Third-party components](docs/THIRD-PARTY.md)
 
 ## License and creator content

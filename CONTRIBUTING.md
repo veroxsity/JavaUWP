@@ -8,4 +8,6 @@ Do not commit secrets such as signing keys, private certificates, refresh tokens
 
 For normal development, keep changes scoped, follow the existing code style, and include logs or test notes for fixes that affect launch, downloads, profiles, graphics, controller input, or remote files.
 
+To add a language, see [docs/TRANSLATING.md](docs/TRANSLATING.md).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the UWP host layout, launch flow, and loader module map.

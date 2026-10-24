@@ -1,5 +1,9 @@
 #include "profiles.h"
+#include "i18n.h"
 #include <mutex>
+
+using i18n::Tr;
+using i18n::TrFormat;
 
 static std::recursive_mutex g_profilesMutex;
 
@@ -111,7 +115,7 @@ std::wstring TargetProfileText(const LaunchTarget& target) {
     if (!target.loaderVersion.empty() && target.loaderVersion != L"none") {
         text += L" " + target.loaderVersion;
     }
-    if (target.notes.find(L"Bundled controller unavailable") != std::wstring::npos) text += L" (no bundled controller)";
+    if (target.notes.find(L"Bundled controller unavailable") != std::wstring::npos) text += L" " + std::wstring(Tr(L"(no bundled controller)"));
     return text;
 }
 LaunchTarget TargetFromProfile(const Profile& p) {
@@ -204,7 +208,7 @@ LaunchTarget ResolveProfileTarget(const std::wstring& runtimeRoot, const Profile
 }
 Profile MakeBuiltinVanillaProfile() {
     const LaunchTarget def = DefaultLaunchTarget();
-    return { kVanillaProfileId, L"Vanilla", def.minecraftVersion, def.loader, def.loaderVersion, def.targetId, true };
+    return { kVanillaProfileId, Tr(L"Vanilla"), def.minecraftVersion, def.loader, def.loaderVersion, def.targetId, true };
 }
 
 Profile ProfileWithTarget(const std::wstring& id, const std::wstring& name, const LaunchTarget& target, bool builtin) {

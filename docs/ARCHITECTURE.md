@@ -47,6 +47,7 @@ MC.Xbox/
 | --- | --- |
 | `App.cpp` | `wWinMain`, CoreApplication lifecycle, high level `Run()` sequencing between auth, UI, downloads, and launch. |
 | `common/launcher_common` | Path helpers, environment access, shared string/path utilities used across modules. |
+| `common/i18n` | Language files from `lang` in the package and in `LocalState`, the saved language choice, and `Tr` and `TrFormat`, which look a string up by its English text and fall back to it. |
 | `common/crash_report` | Collect launcher and game diagnostics into crash report archives. |
 | `auth/minecraft_auth` | Device code sign in, token exchange, ownership verification, session state. |
 | `ui/launcher_ui` | Main menu rendering and interaction. |
@@ -58,6 +59,7 @@ MC.Xbox/
 | `net/http_client` | Shared HTTP helpers for downloads and APIs. |
 | `net/update_check` | Looks up the newest release on the build's channel and the changelog on GitHub, keeps the answer in `LocalState\updates`, and turns changelog markdown into plain text for the What's new page and the new version notice. The channel comes from `-ReleaseChannel` on `build.ps1`, so local builds do not check. |
 | `net/remote_file_server` | Local network upload/download UI backend. |
+| `net/html_translate` | Translates a page the Remote Files server sends by looking up its text, titles and placeholders by their English text. |
 | `launch/runtime_manager` | Manifest verification, parallel downloads, version JSON resolution, native library prep. |
 | `launch/minecraft_launch` | Shared JVM embed path: classpath assembly, natives, game args, process local Java startup. |
 | `launch/launch_internal` | Low level Java invocation helpers used by loader specific prep. |

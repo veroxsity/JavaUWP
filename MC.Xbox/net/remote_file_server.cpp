@@ -1,5 +1,7 @@
 #include "remote_file_server.h"
+#include "i18n.h"
 
+#include "html_translate.h"
 #include "http_client.h"
 #include "launcher_common.h"
 #include "manual_downloads.h"
@@ -30,6 +32,10 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 
+using i18n::Tr;
+using i18n::TrFormat;
+using i18n::TrU;
+
 static std::string HtmlEscape(const std::wstring& value) {
     std::string out;
     for (wchar_t ch : value) {
@@ -42,6 +48,19 @@ static std::string HtmlEscape(const std::wstring& value) {
         }
     }
     return out;
+}
+
+// a translated sentence with each value wrapped in a tag. the sentence is escaped first so the tags are the only markup
+static std::string MarkedSentence(const wchar_t* english, const std::vector<std::wstring>& values, const char* tag) {
+    std::string text = HtmlEscape(Tr(english));
+    for (size_t i = 0; i < values.size(); ++i) {
+        const std::string token = "{" + std::to_string(i) + "}";
+        const std::string marked = std::string("<") + tag + ">" + HtmlEscape(values[i]) + "</" + tag + ">";
+        for (size_t at = text.find(token); at != std::string::npos; at = text.find(token, at + marked.size())) {
+            text.replace(at, token.size(), marked);
+        }
+    }
+    return text;
 }
 
 // also escapes < so a value can never close the script tag the json is embedded in
@@ -144,15 +163,18 @@ static bool SendAll(SOCKET s, const char* data, size_t len) {
 }
 
 static void SendHttpResponse(SOCKET s, int status, const char* statusText, const std::string& contentType, const std::string& body) {
+    const bool html = contentType.rfind("text/html", 0) == 0;
+    const std::string translated = html ? TranslateHtml(body) : std::string();
+    const std::string& payload = html ? translated : body;
     std::ostringstream head;
     head << "HTTP/1.1 " << status << " " << statusText << "\r\n"
         << "Content-Type: " << contentType << "\r\n"
-        << "Content-Length: " << body.size() << "\r\n"
+        << "Content-Length: " << payload.size() << "\r\n"
         << "Cache-Control: no-store\r\n"
         << "Connection: close\r\n\r\n";
     const std::string h = head.str();
     SendAll(s, h.data(), h.size());
-    SendAll(s, body.data(), body.size());
+    SendAll(s, payload.data(), payload.size());
 }
 
 // 303 so a refresh of the page it lands on can never resubmit the form behind it
@@ -171,7 +193,7 @@ static void SendHttpFile(SOCKET s, const std::wstring& path, const std::string& 
     WIN32_FILE_ATTRIBUTE_DATA fad = {};
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad) ||
         (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-        SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "File not found.");
+        SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("File not found."));
         return;
     }
     const unsigned long long size =
@@ -179,7 +201,7 @@ static void SendHttpFile(SOCKET s, const std::wstring& path, const std::string& 
 
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f) {
-        SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "File not found.");
+        SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("File not found."));
         return;
     }
 
@@ -200,7 +222,7 @@ static void SendHttpFile(SOCKET s, const std::wstring& path, const std::string& 
     size_t remaining = static_cast<size_t>(size);
     if (remaining == 0 && size > 0) {
         fclose(f);
-        SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "File too large.");
+        SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("File too large."));
         return;
     }
     while (remaining > 0) {
@@ -430,7 +452,7 @@ private:
             setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&sendTimeout), sizeof(sendTimeout));
             clientSocket_.store(client);
             try { HandleClient(client, peerAddr.sin_addr.s_addr); }
-            catch (const std::exception&) { SendHttpResponse(client, 500, "Internal Server Error", "text/plain", "Request exceeded available resources"); }
+            catch (const std::exception&) { SendHttpResponse(client, 500, "Internal Server Error", "text/plain", TrU("Request exceeded available resources")); }
             clientSocket_.compare_exchange_strong(client, INVALID_SOCKET);
             closesocket(client);
         }
@@ -445,7 +467,7 @@ private:
 
     bool ReadRequest(SOCKET s, std::string& request, std::string& body, std::map<std::string, std::string>& headers, unsigned long peer) {
         if (PeerLockedOut(peer)) {
-            SendHttpResponse(s, 429, "Too Many Requests", "text/plain", "Too many PIN attempts");
+            SendHttpResponse(s, 429, "Too Many Requests", "text/plain", TrU("Too many PIN attempts"));
             return false;
         }
         const ULONGLONG headerDeadline = GetTickCount64() + 5000;
@@ -489,8 +511,8 @@ private:
         if (contentLength > kMaxUploadBytes) {
             SendHttpResponse(s, 413, "Payload Too Large", "text/html; charset=utf-8",
                 Layout("Upload too large",
-                    "<h1>Upload too large</h1><p>The console accepts uploads up to "
-                    + FormatBytes(kMaxUploadBytes) + ".</p>"));
+                    "<h1>Upload too large</h1><p>"
+                    + HtmlEscape(TrFormat(L"The console accepts uploads up to {0}.", { a2w(FormatBytes(kMaxUploadBytes).c_str()) })) + "</p>"));
             return false;
         }
 
@@ -504,7 +526,7 @@ private:
         const bool multipart = headers["content-type"].rfind("multipart/form-data", 0) == 0;
         if ((multipart || target.rfind("/api/write", 0) == 0 || contentLength > 64 * 1024) && !Authorized(query, {})) {
             NotePinFailure(peer);
-            SendHttpResponse(s, 401, "Unauthorized", "text/plain", "PIN required in request URL");
+            SendHttpResponse(s, 401, "Unauthorized", "text/plain", TrU("PIN required in request URL"));
             return false;
         }
         const ULONGLONG bodyDeadline = GetTickCount64() + 120000;
@@ -604,7 +626,8 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
     }
 
     static std::string ThemeBootHtml() {
-        return R"RFBOOT(<script>try{var t=localStorage.getItem('rf-theme');if(t&&/^[a-z]+$/.test(t))document.documentElement.dataset.theme=t}catch(e){}</script>)RFBOOT";
+        return R"RFBOOT(<script>try{var t=localStorage.getItem('rf-theme');if(t&&/^[a-z]+$/.test(t))document.documentElement.dataset.theme=t}catch(e){}</script>)RFBOOT"
+            "<script>var I18N=" + i18n::TableJson() + R"RFBOOT(;function tr(s){return Object.prototype.hasOwnProperty.call(I18N,s)?I18N[s]:s}function trf(s,a){s=tr(s);for(var i=0;i<a.length;i++)s=s.split('{'+i+'}').join(a[i]);return s}</script>)RFBOOT";
     }
 
     std::string Layout(const std::string& title, const std::string& body) {
@@ -623,7 +646,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         std::string body;
         std::map<std::string, std::string> headers;
         if (!ReadRequest(s, request, body, headers, peer)) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad request.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad request."));
             return;
         }
 
@@ -657,7 +680,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         NotePinSuccess(peer);
         const bool exportsProfile = method == "GET" && path == "/download" && QueryValue(query, "file").rfind("export:", 0) == 0;
         if ((method == "POST" || exportsProfile) && ImportRunning()) {
-            SendHttpResponse(s, 409, "Conflict", "text/plain; charset=utf-8", "Pack import in progress. Wait before changing files.");
+            SendHttpResponse(s, 409, "Conflict", "text/plain; charset=utf-8", TrU("Pack import in progress. Wait before changing files."));
             return;
         }
 
@@ -710,7 +733,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         } else if (method == "POST" && path == "/upload-world") {
             HandleWorldUpload(s, headers, body);
         } else {
-            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "Not found.");
+            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("Not found."));
         }
     }
 
@@ -737,11 +760,11 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         out << "<details class=\"side\" open><summary>Browse &amp; diagnostics</summary><div class=\"navbody\">"
             << "<div class=\"side-title\">Workspace</div><nav class=\"nav\" aria-label=\"Workspace\">"
             << "<a class=\"active\" aria-current=\"page\" href=\"" << UrlWithPinProfile("/", profileId) << "\">Overview</a>"
-            << nav("profile", L"Game files") << nav("saves", L"Worlds")
-            << nav("mods", L"Mods") << nav("resourcepacks", L"Resource packs")
+            << nav("profile", Tr(L"Game files")) << nav("saves", Tr(L"Worlds"))
+            << nav("mods", Tr(L"Mods")) << nav("resourcepacks", Tr(L"Resource packs")) << nav("languages", Tr(L"Languages"))
             << "</nav><div class=\"side-title\">Diagnostics</div><nav class=\"nav\" aria-label=\"Diagnostics\">"
-            << nav("logs", L"Current logs") << nav("previous", L"Previous logs")
-            << nav("crash", L"Crash reports") << nav("runtime", L"Runtime cache")
+            << nav("logs", Tr(L"Current logs")) << nav("previous", Tr(L"Previous logs"))
+            << nav("crash", Tr(L"Crash reports")) << nav("runtime", Tr(L"Runtime cache"))
             << "</nav></div></details>";
         return out.str();
     }
@@ -783,32 +806,36 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
 
         if (scope == "profile") {
             root = ProfileGameDir(runtimeRoot_, profileId);
-            title = L"Game files";
+            title = Tr(L"Game files");
             writable = profileWritable;
         } else if (scope == "mods") {
             root = ProfileModsDir(runtimeRoot_, profileId);
-            title = L"Mods";
+            title = Tr(L"Mods");
             writable = profileWritable;
         } else if (scope == "resourcepacks") {
             root = ProfileGameDir(runtimeRoot_, profileId) + L"\\resourcepacks";
-            title = L"Resource packs";
+            title = Tr(L"Resource packs");
             writable = profileWritable;
         } else if (scope == "saves") {
             root = ProfileGameDir(runtimeRoot_, profileId) + L"\\saves";
-            title = L"Worlds";
+            title = Tr(L"Worlds");
             writable = profileWritable;
         } else if (scope == "logs") {
             root = LogsCurrentDir(runtimeRoot_);
-            title = L"Current logs";
+            title = Tr(L"Current logs");
         } else if (scope == "previous") {
             root = LogsPreviousDir(runtimeRoot_);
-            title = L"Previous logs";
+            title = Tr(L"Previous logs");
         } else if (scope == "crash") {
             root = CrashReportsDir(runtimeRoot_);
-            title = L"Crash reports";
+            title = Tr(L"Crash reports");
         } else if (scope == "runtime") {
             root = runtimeRoot_ + L"\\game";
-            title = L"Runtime cache";
+            title = Tr(L"Runtime cache");
+        } else if (scope == "languages") {
+            root = runtimeRoot_ + L"\\lang";
+            title = Tr(L"Languages");
+            writable = true;
         } else {
             return false;
         }
@@ -873,8 +900,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         if (pending.empty()) return std::string();
 
         std::ostringstream out;
-        out << "<section class=\"panel\"><h3>Manual downloads ("
-            << pending.size() << ")</h3>"
+        out << "<section class=\"panel\"><h3>" << HtmlEscape(TrFormat(L"Manual downloads ({0})", { std::to_wstring(pending.size()) })) << "</h3>"
             << "<p class=\"muted\">These files block third party launchers, so the Xbox cannot fetch them. "
             << "Each Download link saves the file on this computer in one click. "
             << "Then upload them all at once below and each goes into the right folder. "
@@ -884,7 +910,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
             const bool safeUrl = item.url.rfind(L"https://", 0) == 0;
             const std::wstring href = safeUrl ? item.url : std::wstring(L"https://www.curseforge.com/minecraft");
             out << "<div class=\"world-card\"><div><strong>" << HtmlEscape(item.modName) << "</strong>"
-                << "<div class=\"muted\">" << HtmlEscape(item.fileName) << " goes in " << HtmlEscape(item.folder)
+                << "<div class=\"muted\">" << HtmlEscape(TrFormat(L"{0} goes in {1}", { item.fileName, item.folder }))
                 << "</div></div><div class=\"world-actions\">"
                 << "<a class=\"button secondary\" href=\"" << HtmlEscape(href)
                 << "\" target=\"_blank\" rel=\"noopener noreferrer\">Download</a></div></div>";
@@ -904,12 +930,12 @@ async function uploadManual(input){
  const files=Array.from(input.files);
  let placed=0,skipped=[];
  for(let i=0;i<files.length;i++){
-  status.textContent='Uploading '+(i+1)+' of '+files.length;
+  status.textContent=trf('Uploading {0} of {1}',[i+1,files.length]);
   const form=new FormData();form.append('file',files[i]);
   const res=await fetch(input.dataset.url,{method:'POST',body:form}).catch(()=>null);
   if(res&&res.ok)placed++;else skipped.push(files[i].name);
  }
- status.textContent=placed+' placed'+(skipped.length?', not on the list: '+skipped.join(', '):'');
+ status.textContent=skipped.length?trf('{0} placed, not on the list: {1}',[placed,skipped.join(', ')]):trf('{0} placed',[placed]);
  if(!skipped.length)location.reload();
 }
 </script>)RFMD";
@@ -959,13 +985,15 @@ async function uploadManual(input){
         std::ostringstream out;
         const std::wstring hint = modsource::CurseForgeKeyHint();
         out << "<section class=\"panel\"><h3>CurseForge API key</h3>"
-            << "<p class=\"muted\">CurseForge will not let a launcher ship its own key, so browsing and "
-            << "downloading from CurseForge needs one of yours. Make a free Core API key at "
-            << "<code>console.curseforge.com</code> and paste it here.</p>";
+            << "<p class=\"muted\">"
+            << MarkedSentence(L"CurseForge will not let a launcher ship its own key, so browsing and "
+                              L"downloading from CurseForge needs one of yours. Make a free Core API key at {0} and paste it here.",
+                              { L"console.curseforge.com" }, "code")
+            << "</p>";
         if (hint.empty()) {
             out << "<p class=\"muted\">No key is set. CurseForge is unavailable until one is.</p>";
         } else {
-            out << "<p class=\"muted\">A key is saved (" << HtmlEscape(hint) << ").</p>";
+            out << "<p class=\"muted\">" << HtmlEscape(TrFormat(L"A key is saved ({0}).", { hint })) << "</p>";
         }
         out << "<form id=\"cf-form\" method=\"post\" action=\"/set-curseforge-key\">"
             << "<input type=\"hidden\" name=\"pin\" value=\"" << pin_ << "\">"
@@ -998,7 +1026,7 @@ async function uploadManual(input){
                 Layout("Key not saved", "<h1>Key not saved</h1><p>The key could not be written to storage.</p>"));
             return;
         }
-        const std::string title = key.empty() ? "Key cleared" : "Key saved";
+        const std::string title = key.empty() ? TrU("Key cleared") : TrU("Key saved");
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
             Layout(title, "<h1>" + title + "</h1><p><a href=\"" + UrlWithPin("/") + "\">Back to the dashboard</a></p>"));
     }
@@ -1026,7 +1054,7 @@ async function uploadManual(input){
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
             Layout("World export complete",
                 "<div class=\"top\"><h1>World export complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div>"
-                "<p>Built a zip for <strong>" + HtmlEscape(worldName) + "</strong>.</p>"
+                "<p>" + MarkedSentence(L"Built a zip for {0}.", { worldName }, "strong") + "</p>"
                 "<p><a class=\"button\" href=\"/download?pin=" + pin_ + "&amp;profile=" + FormUrlEncode(w2a(active)) + "&amp;file=export:world:" + FormUrlEncode(w2a(worldName)) + "\">Download world zip</a></p>"));
     }
 
@@ -1089,7 +1117,7 @@ async function uploadManual(input){
         DeleteFileW(path.c_str());
         if (!ok) {
             SendHttpResponse(s, 500, "Internal Server Error", "text/html; charset=utf-8",
-                Layout("Import failed", "<h1>Import failed</h1><p>" + HtmlEscape(importError.empty() ? L"World import failed" : importError) + "</p>"));
+                Layout("Import failed", "<h1>Import failed</h1><p>" + HtmlEscape(importError.empty() ? Tr(L"World import failed") : importError) + "</p>"));
             return;
         }
 
@@ -1097,7 +1125,7 @@ async function uploadManual(input){
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
             Layout("World import complete",
                 "<div class=\"top\"><h1>World import complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div>"
-                "<p>Imported <strong>" + HtmlEscape(saveName) + "</strong> into profile <strong>" + HtmlEscape(profile.name) + "</strong>.</p>"
+                "<p>" + MarkedSentence(L"Imported {0} into profile {1}.", { saveName, profile.name }, "strong") + "</p>"
                 "<p><a class=\"button secondary\" href=\"" + UrlWithPinProfile("/browse?scope=saves&path=" + FormUrlEncode(w2a(saveName)), active) + "\">Open world folder</a></p>"));
     }
 
@@ -1124,7 +1152,7 @@ async function uploadManual(input){
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
             Layout("Export complete",
                 "<div class=\"top\"><h1>Export complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div>"
-                "<p>Built a Modrinth pack for <strong>" + HtmlEscape(profile.name) + "</strong>.</p>"
+                "<p>" + MarkedSentence(L"Built a Modrinth pack for {0}.", { profile.name }, "strong") + "</p>"
                 "<p><a class=\"button\" href=\"/download?pin=" + pin_ + "&amp;profile=" + FormUrlEncode(w2a(active)) + "&amp;file=export:profile\">Download .mrpack</a></p>"));
     }
 
@@ -1181,7 +1209,7 @@ async function uploadManual(input){
             packImport_->ok = false;
             packImport_->packName = name;
             packImport_->profileName = GetProfileById(runtimeRoot_, active).name;
-            packImport_->step = L"Reading the pack";
+            packImport_->step = Tr(L"Reading the pack");
             packImport_->stepDone = 0;
             packImport_->stepTotal = 0;
             packImport_->message.clear();
@@ -1205,14 +1233,14 @@ async function uploadManual(input){
             std::wstring note;
             bool ok = false;
             try { ok = InstallModpackFromFile(path, root, active, error, &note, progressFor); }
-            catch (const std::exception&) { error = L"Pack import ran out of resources"; }
+            catch (const std::exception&) { error = Tr(L"Pack import ran out of resources"); }
             DeleteFileW(path.c_str());
 
             std::lock_guard<std::mutex> guard(status->lock);
             status->running = false;
             status->finished = true;
             status->ok = ok;
-            status->message = ok ? note : (error.empty() ? std::wstring(L"Pack install failed") : error);
+            status->message = ok ? note : (error.empty() ? std::wstring(Tr(L"Pack install failed")) : error);
         });
 
         SendHttpRedirect(s, UrlWithPin("/pack-import"));
@@ -1247,8 +1275,8 @@ async function pollPackImport() {
  let s;
  try { s = await (await fetch(PACK_STATUS_URL, { cache: 'no-store' })).json(); }
  catch (e) { setTimeout(pollPackImport, 2000); return; }
- if (!s.running && !s.finished) { el('pi-title').textContent = 'No pack is installing'; el('pi-step').textContent = ''; el('pi-bar').hidden = true; return; }
- el('pi-what').textContent = s.pack + ' into ' + s.profile;
+ if (!s.running && !s.finished) { el('pi-title').textContent = tr('No pack is installing'); el('pi-step').textContent = ''; el('pi-bar').hidden = true; return; }
+ el('pi-what').textContent = trf('{0} into {1}', [s.pack, s.profile]);
  if (s.running) {
   el('pi-step').textContent = s.step;
   const bar = el('pi-bar');
@@ -1256,8 +1284,8 @@ async function pollPackImport() {
   setTimeout(pollPackImport, 1000);
   return;
  }
- el('pi-title').textContent = s.ok ? 'Import complete' : 'Import failed';
- el('pi-step').textContent = s.ok ? 'Installed. Pick the profile on the console to play it.' : '';
+ el('pi-title').textContent = s.ok ? tr('Import complete') : tr('Import failed');
+ el('pi-step').textContent = s.ok ? tr('Installed. Pick the profile on the console to play it.') : '';
  el('pi-bar').hidden = true;
  el('pi-msg').textContent = s.message;
 }
@@ -1271,7 +1299,7 @@ pollPackImport();
         std::wstring name;
         std::vector<unsigned char> data;
         if (!ExtractMultipartFile(headers, body, name, data)) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "No file was received.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("No file was received."));
             return;
         }
 
@@ -1280,7 +1308,7 @@ pollPackImport();
             return _wcsicmp(SafeFileName(item.fileName).c_str(), name.c_str()) == 0;
         });
         if (match == pending.end()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Not on this profile's list.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Not on this profile's list."));
             return;
         }
 
@@ -1289,7 +1317,7 @@ pollPackImport();
         const std::wstring path = folder + L"\\" + SafeFileName(match->fileName);
         const bool wrote = WriteAllBytes(path, data.data(), data.size());
         if (!wrote) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Could not finish writing the file.");
+            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("Could not finish writing the file."));
             return;
         }
         WriteLogF(L"Manual download uploaded: %s bytes=%zu", path.c_str(), data.size());
@@ -1381,8 +1409,8 @@ pollPackImport();
             << "<a class=\"btn ghost sm\" href=\"" << UrlWithPinProfile("/?section=" + section, profileId) << "\">Refresh</a></div></header>"
             << "<div class=\"shell\">" << SidebarHtml(profileId) << "<main class=\"content\">"
             << "<header class=\"page-head\"><div><div class=\"eyebrow\">Profile workspace</div><h1>" << HtmlEscape(prof.name) << "</h1>"
-            << "<div class=\"profile-meta\"><span>" << HtmlEscape(TargetProfileText(target)) << "</span><span>" << saves.size()
-            << " worlds</span><span>" << profEsc << "</span></div></div></header><nav class=\"tabs\" aria-label=\"Profile tools\">";
+            << "<div class=\"profile-meta\"><span>" << HtmlEscape(TargetProfileText(target)) << "</span><span>" << HtmlEscape(saves.size() == 1 ? Tr(L"1 world") : TrFormat(L"{0} worlds", { std::to_wstring(saves.size()) }))
+            << "</span><span>" << profEsc << "</span></div></div></header><nav class=\"tabs\" aria-label=\"Profile tools\">";
         auto tab = [&](const char* key, const char* label) {
             out << "<a" << (section == key ? " class=\"active\" aria-current=\"page\"" : "") << " href=\""
                 << UrlWithPinProfile(std::string("/?section=") + key, profileId) << "\">" << label << "</a>";
@@ -1479,22 +1507,22 @@ pollPackImport();
         std::wstring full, root, relNorm;
         bool writable = false;
         if (!ResolveScopePath(scope, profileId, QueryValue(query, "path"), full, root, relNorm, writable) || relNorm.empty()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad path.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad path."));
             return;
         }
         WIN32_FILE_ATTRIBUTE_DATA fa = {};
         if (!GetFileAttributesExW(full.c_str(), GetFileExInfoStandard, &fa) || (fa.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "Not found.");
+            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("Not found."));
             return;
         }
         const unsigned long long size = (static_cast<unsigned long long>(fa.nFileSizeHigh) << 32) | fa.nFileSizeLow;
         if (size > 8ull * 1024ull * 1024ull) {
-            SendHttpResponse(s, 413, "Payload Too Large", "text/plain; charset=utf-8", "File too large to edit.");
+            SendHttpResponse(s, 413, "Payload Too Large", "text/plain; charset=utf-8", TrU("File too large to edit."));
             return;
         }
         FILE* f = nullptr;
         if (_wfopen_s(&f, full.c_str(), L"rb") != 0 || !f) {
-            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "Not found.");
+            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("Not found."));
             return;
         }
         std::string data(static_cast<size_t>(size), '\0');
@@ -1510,15 +1538,15 @@ pollPackImport();
         std::wstring full, root, relNorm;
         bool writable = false;
         if (!ResolveScopePath(scope, profileId, QueryValue(query, "path"), full, root, relNorm, writable) || relNorm.empty()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad path.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad path."));
             return;
         }
         if (!writable) {
-            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", "This area is read only.");
+            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", TrU("This area is read only."));
             return;
         }
         if (!WriteAllBytes(full, body.data(), body.size())) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Write failed.");
+            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("Write failed."));
             return;
         }
         SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
@@ -1532,21 +1560,21 @@ pollPackImport();
         std::wstring full, root, relNorm;
         bool writable = false;
         if (!ResolveScopePath(scope, profileId, FormFieldValue(body, "path"), full, root, relNorm, writable) || relNorm.empty() || newName.empty()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad request.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad request."));
             return;
         }
         if (!writable) {
-            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", "This area is read only.");
+            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", TrU("This area is read only."));
             return;
         }
         const size_t slash = full.find_last_of(L'\\');
         const std::wstring dest = full.substr(0, slash) + L"\\" + newName;
         if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            SendHttpResponse(s, 409, "Conflict", "text/plain; charset=utf-8", "Name already exists.");
+            SendHttpResponse(s, 409, "Conflict", "text/plain; charset=utf-8", TrU("Name already exists."));
             return;
         }
         if (MoveFileExW(full.c_str(), dest.c_str(), 0)) SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
-        else SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Rename failed.");
+        else SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("Rename failed."));
     }
 
     void HandleApiDelete(SOCKET s, const std::string& body) {
@@ -1556,21 +1584,21 @@ pollPackImport();
         std::wstring full, root, relNorm;
         bool writable = false;
         if (!ResolveScopePath(scope, profileId, FormFieldValue(body, "path"), full, root, relNorm, writable) || relNorm.empty()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad path.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad path."));
             return;
         }
         if (!writable) {
-            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", "This area is read only.");
+            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", TrU("This area is read only."));
             return;
         }
         const DWORD attrs = GetFileAttributesW(full.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES) {
-            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "Not found.");
+            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("Not found."));
             return;
         }
         const bool ok = (attrs & FILE_ATTRIBUTE_DIRECTORY) ? DeleteDirectoryTree(full) : (DeleteFileW(full.c_str()) != 0);
         if (ok) SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
-        else SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Delete failed.");
+        else SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("Delete failed."));
     }
 
     void HandleApiMkdir(SOCKET s, const std::string& body) {
@@ -1581,15 +1609,15 @@ pollPackImport();
         std::wstring full, root, relNorm;
         bool writable = false;
         if (!ResolveScopePath(scope, profileId, FormFieldValue(body, "path"), full, root, relNorm, writable) || name.empty()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad request.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad request."));
             return;
         }
         if (!writable) {
-            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", "This area is read only.");
+            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", TrU("This area is read only."));
             return;
         }
         if (CreateDirectoryW((full + L"\\" + name).c_str(), nullptr)) SendHttpResponse(s, 200, "OK", "text/plain; charset=utf-8", "ok");
-        else SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Could not create folder.");
+        else SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("Could not create folder."));
     }
 
     void HandleApiUpload(SOCKET s, const std::string& query, const std::map<std::string, std::string>& headers, const std::string& body) {
@@ -1599,23 +1627,23 @@ pollPackImport();
         std::wstring full, root, relNorm;
         bool writable = false;
         if (!ResolveScopePath(scope, profileId, QueryValue(query, "path"), full, root, relNorm, writable)) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad path.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad path."));
             return;
         }
         if (!writable) {
-            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", "This area is read only.");
+            SendHttpResponse(s, 403, "Forbidden", "text/plain; charset=utf-8", TrU("This area is read only."));
             return;
         }
         std::wstring name;
         std::vector<unsigned char> data;
         if (!ExtractMultipartFile(headers, body, name, data)) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Upload failed.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Upload failed."));
             return;
         }
         EnsureDirectoryTree(full);
         const std::wstring path = full + L"\\" + name;
         if (!WriteAllBytes(path, data.data(), data.size())) {
-            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", "Write failed.");
+            SendHttpResponse(s, 500, "Internal Server Error", "text/plain; charset=utf-8", TrU("Write failed."));
             return;
         }
         WriteLogF(L"Remote explorer upload: %s bytes=%zu", path.c_str(), data.size());
@@ -1645,8 +1673,8 @@ pollPackImport();
         return R"RFSPA(
 var cur='',edPath='',edOriginal='',canWrite=false,busy=false,saving=false,loadId=0,listing=null,editorFocus=null;
 var SCOPES=[
- {g:'Workspace',items:[{s:'profile',l:'Game files'},{s:'saves',l:'Worlds'},{s:'mods',l:'Mods'},{s:'resourcepacks',l:'Resource packs'}]},
- {g:'Diagnostics',items:[{s:'logs',l:'Current logs'},{s:'previous',l:'Previous logs'},{s:'crash',l:'Crash reports'},{s:'runtime',l:'Runtime cache'}]}
+ {g:tr('Workspace'),items:[{s:'profile',l:tr('Game files')},{s:'saves',l:tr('Worlds')},{s:'mods',l:tr('Mods')},{s:'resourcepacks',l:tr('Resource packs')},{s:'languages',l:tr('Languages')}]},
+ {g:tr('Diagnostics'),items:[{s:'logs',l:tr('Current logs')},{s:'previous',l:tr('Previous logs')},{s:'crash',l:tr('Crash reports')},{s:'runtime',l:tr('Runtime cache')}]}
 ];
 var ICON_DIR='<svg class="ic dir" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7V5h7l2 3h9v12H3V7Z"/></svg>';
 var ICON_FILE='<svg class="ic" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 3H5v18h14V8Z"/><path d="M14 3v5h5"/></svg>';
@@ -1656,7 +1684,7 @@ function q(extra){return '?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&sco
 function el(id){return document.getElementById(id)}
 function button(label,run,cls){var b=document.createElement('button');b.type='button';b.className=cls||'';b.textContent=label;b.onclick=run;return b}
 function toast(message,persistent){var t=el('toast');t.textContent=message;t.classList.add('show');clearTimeout(t._t);if(!persistent)t._t=setTimeout(function(){t.classList.remove('show')},4000)}
-function scopeLabel(sc){for(var g of SCOPES)for(var it of g.items)if(it.s===sc)return it.l;return 'Game files'}
+function scopeLabel(sc){for(var g of SCOPES)for(var it of g.items)if(it.s===sc)return it.l;return tr('Game files')}
 function homeHref(){return '/?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)}
 function initChrome(){
  var wide=matchMedia('(min-width:761px)');function fitNav(){el('navigation').open=wide.matches}fitNav();wide.addEventListener('change',fitNav);
@@ -1665,33 +1693,33 @@ function initChrome(){
  var rail=el('rail');
  SCOPES.forEach(function(group,index){
   var title=document.createElement('div');title.className='grp';title.textContent=group.g;rail.appendChild(title);
-  if(!index){var home=document.createElement('a');home.href=homeHref();home.textContent='Overview';home.id='overview';rail.appendChild(home)}
+  if(!index){var home=document.createElement('a');home.href=homeHref();home.textContent=tr('Overview');home.id='overview';rail.appendChild(home)}
   group.items.forEach(function(item){var a=document.createElement('a');a.textContent=item.l;a.dataset.scope=item.s;a.href='/browse?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+item.s;a.onclick=function(e){e.preventDefault();go(item.s)};rail.appendChild(a)});
  });
 }
-function navigationReady(){if(busy||saving){toast('Wait for the transfer to finish');return false}return true}
+function navigationReady(){if(busy||saving){toast(tr('Wait for the transfer to finish'));return false}return true}
 function switchProfile(id){if(!navigationReady()){el('prof').value=CFG.profile;return}CFG.profile=id;el('homebtn').href=homeHref();el('overview').href=homeHref();load('')}
 function go(scope){if(!navigationReady())return;CFG.scope=scope;if(matchMedia('(max-width:760px)').matches)el('navigation').open=false;load('')}
 function reload(){if(navigationReady())load(cur)}
 function showError(message){
- var box=document.createElement('div');box.className='err';var title=document.createElement('strong');title.textContent='Could not open folder';box.appendChild(title);
- var text=document.createElement('p');text.textContent=message;box.appendChild(text);box.appendChild(button('Try again',reload,'btn secondary'));
- var home=document.createElement('a');home.href=homeHref();home.className='btn ghost';home.textContent='Reconnect';box.appendChild(home);el('list').replaceChildren(box);el('count').textContent='Folder unavailable';
+ var box=document.createElement('div');box.className='err';var title=document.createElement('strong');title.textContent=tr('Could not open folder');box.appendChild(title);
+ var text=document.createElement('p');text.textContent=message;box.appendChild(text);box.appendChild(button(tr('Try again'),reload,'btn secondary'));
+ var home=document.createElement('a');home.href=homeHref();home.className='btn ghost';home.textContent=tr('Reconnect');box.appendChild(home);el('list').replaceChildren(box);el('count').textContent=tr('Folder unavailable');
 }
 async function load(path){
  if(!navigationReady())return;
  var id=++loadId;cur=path||'';listing=null;canWrite=false;
- el('mkbtn').hidden=true;el('upbtn').hidden=true;el('filter').value='';el('filter').disabled=true;el('access').textContent='Loading';el('count').textContent='Loading folder';el('drop-hint').textContent='';el('extra').replaceChildren();
+ el('mkbtn').hidden=true;el('upbtn').hidden=true;el('filter').value='';el('filter').disabled=true;el('access').textContent=tr('Loading');el('count').textContent=tr('Loading folder');el('drop-hint').textContent='';el('extra').replaceChildren();
  el('folder-title').textContent=scopeLabel(CFG.scope);el('list').setAttribute('aria-busy','true');el('list').replaceChildren();
  document.querySelectorAll('.rail a[data-scope]').forEach(function(a){var active=a.dataset.scope===CFG.scope;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');a.href='/browse?pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+a.dataset.scope});
  renderCrumbs();el('bar2').hidden=!cur;history.replaceState(null,'','/browse'+q('&path='+enc(cur)));
  try{
   var r=await fetch('/api/list'+q('&path='+enc(cur)));
-  if(!r.ok)throw Error(r.status===401?'The PIN has expired. Reconnect using the PIN on your Xbox.':'Check the Xbox connection and try again.');
-  var d=await r.json();if(!d.ok)throw Error('This folder is unavailable. Choose another location.');if(id!==loadId)return;
-  canWrite=!!d.writable;listing=d;el('filter').disabled=false;el('mkbtn').hidden=!canWrite;el('upbtn').hidden=!canWrite;el('access').textContent=canWrite?'Read & write':'Read only';
-  el('drop-hint').textContent=canWrite?'Drop files or folders to upload':'Downloads available';renderExtra(d);filterList();
- }catch(e){if(id!==loadId)return;el('access').textContent='Unavailable';showError(e.message||'Connection lost')}
+  if(!r.ok)throw Error(r.status===401?tr('The PIN has expired. Reconnect using the PIN on your Xbox.'):tr('Check the Xbox connection and try again.'));
+  var d=await r.json();if(!d.ok)throw Error(tr('This folder is unavailable. Choose another location.'));if(id!==loadId)return;
+  canWrite=!!d.writable;listing=d;el('filter').disabled=false;el('mkbtn').hidden=!canWrite;el('upbtn').hidden=!canWrite;el('access').textContent=canWrite?tr('Read & write'):tr('Read only');
+  el('drop-hint').textContent=canWrite?tr('Drop files or folders to upload'):tr('Downloads available');renderExtra(d);filterList();
+ }catch(e){if(id!==loadId)return;el('access').textContent=tr('Unavailable');showError(e.message||tr('Connection lost'))}
  finally{if(id===loadId)el('list').setAttribute('aria-busy','false')}
 }
 function renderCrumbs(){
@@ -1700,20 +1728,20 @@ function renderCrumbs(){
 }
 function renderExtra(d){
  el('extra').replaceChildren();if(!d.world)return;
- var a=document.createElement('a');a.className='btn sm';a.textContent='Export world zip';a.href='/download?file=export:world:'+enc(cur.split('/')[0])+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin);el('extra').appendChild(a);
+ var a=document.createElement('a');a.className='btn sm';a.textContent=tr('Export world zip');a.href='/download?file=export:world:'+enc(cur.split('/')[0])+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin);el('extra').appendChild(a);
 }
 function rowActs(entry,path){
  var details=document.createElement('details');details.className='acts';
- var summary=document.createElement('summary');summary.textContent='\u00b7\u00b7\u00b7';summary.setAttribute('aria-label','Actions for '+entry.name);details.appendChild(summary);
+ var summary=document.createElement('summary');summary.textContent='\u00b7\u00b7\u00b7';summary.setAttribute('aria-label',trf('Actions for {0}',[entry.name]));details.appendChild(summary);
  var menu=document.createElement('div');menu.className='action-menu';
  if(entry.dir){
-  menu.appendChild(button('Open folder',function(){load(path)}));
-  if(entry.world){var a=document.createElement('a');a.textContent='Export world zip';a.href='/download?file=export:world:'+enc(entry.name)+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin);menu.appendChild(a)}
+  menu.appendChild(button(tr('Open folder'),function(){load(path)}));
+  if(entry.world){var a=document.createElement('a');a.textContent=tr('Export world zip');a.href='/download?file=export:world:'+enc(entry.name)+'&profile='+enc(CFG.profile)+'&pin='+enc(CFG.pin);menu.appendChild(a)}
  }else{
-  if(entry.text)menu.appendChild(button(canWrite?'Edit file':'View file',function(){openEd(path)}));
-  menu.appendChild(button('Download',function(){dl(path)}));
+  if(entry.text)menu.appendChild(button(canWrite?tr('Edit file'):tr('View file'),function(){openEd(path)}));
+  menu.appendChild(button(tr('Download'),function(){dl(path)}));
  }
- if(canWrite){menu.appendChild(button('Rename',function(){rename(path,entry.name)}));menu.appendChild(button('Delete',function(){del(path,entry.dir)},'danger'))}
+ if(canWrite){menu.appendChild(button(tr('Rename'),function(){rename(path,entry.name)}));menu.appendChild(button(tr('Delete'),function(){del(path,entry.dir)},'danger'))}
  menu.addEventListener('click',function(){details.open=false});details.appendChild(menu);
  details.addEventListener('toggle',function(){
   if(!details.open)return;
@@ -1726,8 +1754,8 @@ function rowActs(entry,path){
 function filterList(){
  if(!listing)return;
  var needle=el('filter').value.toLocaleLowerCase(),entries=listing.entries.filter(function(entry){return entry.name.toLocaleLowerCase().includes(needle)}),list=el('list');list.replaceChildren();
- el('count').textContent=needle?entries.length+' of '+listing.entries.length+' items':entries.length+' '+(entries.length===1?'item':'items');
- if(!entries.length){var empty=document.createElement('div');empty.className='empty';var heading=document.createElement('strong');heading.textContent=needle?'No matching files':'This folder is empty';empty.appendChild(heading);empty.appendChild(document.createTextNode(needle?'Try a different filename.':canWrite?'Upload files or drop them into this window.':'Files will appear here when the launcher creates them.'));list.appendChild(empty);return}
+ el('count').textContent=needle?trf('{0} of {1} items',[entries.length,listing.entries.length]):entries.length===1?tr('1 item'):trf('{0} items',[entries.length]);
+ if(!entries.length){var empty=document.createElement('div');empty.className='empty';var heading=document.createElement('strong');heading.textContent=needle?tr('No matching files'):tr('This folder is empty');empty.appendChild(heading);empty.appendChild(document.createTextNode(needle?tr('Try a different filename.'):canWrite?tr('Upload files or drop them into this window.'):tr('Files will appear here when the launcher creates them.')));list.appendChild(empty);return}
  entries.forEach(function(entry){
   var path=join(cur,entry.name),row=document.createElement('div');row.className='row';
   var name=document.createElement('div');name.className='nm';name.innerHTML=entry.dir?ICON_DIR:ICON_FILE;
@@ -1737,16 +1765,17 @@ function filterList(){
  });
 }
 function dl(path){window.location='/download-path'+q('&path='+enc(path))}
+var FAILED={delete:tr('Could not delete. Check the connection and try again.'),rename:tr('Could not rename. Check the connection and try again.'),mkdir:tr('Could not create the folder. Check the connection and try again.')};
 async function change(action,path,extra,success){
  if(!canWrite||!navigationReady())return;
  busy=true;
  try{var r=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'pin='+enc(CFG.pin)+'&profile='+enc(CFG.profile)+'&scope='+enc(CFG.scope)+'&path='+enc(path)+(extra||'')});if(!r.ok)throw Error();toast(success)}
- catch(e){toast('Could not '+action+'. Check the connection and try again.')}
+ catch(e){toast(FAILED[action])}
  finally{busy=false;load(cur)}
 }
-function del(path,isDir){if(!canWrite||!navigationReady())return;if(confirm('Delete '+(isDir?'folder':'file')+' "'+path.split('/').pop()+'"?'+(isDir?' Removes everything inside.':'')))change('delete',path,'','Deleted')}
-function rename(path,old){if(!canWrite||!navigationReady())return;var name=prompt('Rename to',old);if(name&&name!==old)change('rename',path,'&name='+enc(name),'Renamed')}
-function mkdir(){if(!canWrite||!navigationReady())return;var name=prompt('New folder name');if(name)change('mkdir',cur,'&name='+enc(name),'Folder created')}
+function del(path,isDir){if(!canWrite||!navigationReady())return;var name=path.split('/').pop();if(confirm(isDir?trf('Delete folder "{0}"? Removes everything inside.',[name]):trf('Delete file "{0}"?',[name])))change('delete',path,'',tr('Deleted'))}
+function rename(path,old){if(!canWrite||!navigationReady())return;var name=prompt(tr('Rename to'),old);if(name&&name!==old)change('rename',path,'&name='+enc(name),tr('Renamed'))}
+function mkdir(){if(!canWrite||!navigationReady())return;var name=prompt(tr('New folder name'));if(name)change('mkdir',cur,'&name='+enc(name),tr('Folder created'))}
 )RFSPA"
         R"RFSPA(async function uploadOne(file,sub){
  var data=new FormData();data.append('file',file);
@@ -1755,8 +1784,8 @@ function mkdir(){if(!canWrite||!navigationReady())return;var name=prompt('New fo
 async function upload(files){
  if(!canWrite||!files||!files.length||!navigationReady())return;
  busy=true;var ok=0,total=files.length;
- try{for(var i=0;i<total;i++){toast('Uploading '+(i+1)+' of '+total,true);try{if(await uploadOne(files[i],''))ok++}catch(e){}}}
- finally{busy=false;toast(ok+' of '+total+' files uploaded'+(ok<total?'. Some uploads failed.':''));el('up').value='';load(cur)}
+ try{for(var i=0;i<total;i++){toast(trf('Uploading {0} of {1}',[i+1,total]),true);try{if(await uploadOne(files[i],''))ok++}catch(e){}}}
+ finally{busy=false;toast(ok<total?trf('{0} of {1} files uploaded. Some uploads failed.',[ok,total]):trf('{0} of {1} files uploaded',[ok,total]));el('up').value='';load(cur)}
 }
 function entryFile(entry){return new Promise(function(resolve,reject){entry.file(resolve,reject)})}
 function entryBatch(reader){return new Promise(function(resolve,reject){reader.readEntries(resolve,reject)})}
@@ -1770,13 +1799,13 @@ async function uploadDropped(roots){
  if(!canWrite||!navigationReady())return;
  busy=true;var flat=[],ok=0,scanFailed=false;
  try{
-  toast('Reading dropped folders',true);
+  toast(tr('Reading dropped folders'),true);
   for(var root of roots){try{await walkEntry(root,'',flat)}catch(e){scanFailed=true}}
-  for(var i=0;i<flat.length;i++){toast('Uploading '+(i+1)+' of '+flat.length,true);try{if(await uploadOne(await entryFile(flat[i].entry),flat[i].sub))ok++}catch(e){}}
- }finally{busy=false;toast(ok+' of '+flat.length+' files uploaded'+(scanFailed||ok<flat.length?'. Some files could not be uploaded.':''));load(cur)}
+  for(var i=0;i<flat.length;i++){toast(trf('Uploading {0} of {1}',[i+1,flat.length]),true);try{if(await uploadOne(await entryFile(flat[i].entry),flat[i].sub))ok++}catch(e){}}
+ }finally{busy=false;toast(scanFailed||ok<flat.length?trf('{0} of {1} files uploaded. Some files could not be uploaded.',[ok,flat.length]):trf('{0} of {1} files uploaded',[ok,flat.length]));load(cur)}
 }
 function dirty(){return el('editor').classList.contains('show')&&el('ta').value!==edOriginal}
-function updateEditState(){var state=el('edit-state');state.classList.remove('danger');state.textContent=!canWrite?'Read only':dirty()?'Unsaved changes':'Saved'}
+function updateEditState(){var state=el('edit-state');state.classList.remove('danger');state.textContent=!canWrite?tr('Read only'):dirty()?tr('Unsaved changes'):tr('Saved')}
 async function openEd(path){
  if(!navigationReady())return;
  var requestId=loadId;
@@ -1784,18 +1813,18 @@ async function openEd(path){
   var r=await fetch('/api/raw'+q('&path='+enc(path)));if(!r.ok)throw Error();var text=await r.text();if(requestId!==loadId)return;
   if(!el('editor').classList.contains('show'))editorFocus=document.activeElement.closest('.acts')?.querySelector('summary')||document.activeElement;edPath=path;edOriginal=text;el('epath').textContent=scopeLabel(CFG.scope)+' / '+path;el('ta').value=text;el('ta').readOnly=!canWrite;
   el('savebtn').hidden=!canWrite;el('editor').classList.add('show');document.querySelector('.app>.shell').inert=true;document.querySelector('.app>.top').inert=true;updateEditState();el('ta').focus();
- }catch(e){toast('Could not open file')}
+ }catch(e){toast(tr('Could not open file'))}
 }
-function reloadEd(){if(navigationReady()&&(!dirty()||confirm('Discard unsaved changes and reload this file?')))openEd(edPath)}
+function reloadEd(){if(navigationReady()&&(!dirty()||confirm(tr('Discard unsaved changes and reload this file?'))))openEd(edPath)}
 function closeEd(){
- if(!navigationReady()||(dirty()&&!confirm('Discard unsaved changes?')))return;
+ if(!navigationReady()||(dirty()&&!confirm(tr('Discard unsaved changes?'))))return;
  el('editor').classList.remove('show');document.querySelector('.app>.shell').inert=false;document.querySelector('.app>.top').inert=false;if(editorFocus&&editorFocus.isConnected)editorFocus.focus();
 }
 async function saveEd(){
  if(!canWrite||saving||!el('editor').classList.contains('show'))return;
- saving=true;el('savebtn').disabled=true;el('edit-state').textContent='Saving';var text=el('ta').value;
- try{var r=await fetch('/api/write'+q('&path='+enc(edPath)),{method:'POST',body:text});if(!r.ok)throw Error();edOriginal=text;updateEditState();toast('Saved')}
- catch(e){el('edit-state').classList.add('danger');el('edit-state').textContent='Save failed. Changes are still here.';toast('Could not save. Check the connection and try again.')}
+ saving=true;el('savebtn').disabled=true;el('edit-state').textContent=tr('Saving');var text=el('ta').value;
+ try{var r=await fetch('/api/write'+q('&path='+enc(edPath)),{method:'POST',body:text});if(!r.ok)throw Error();edOriginal=text;updateEditState();toast(tr('Saved'))}
+ catch(e){el('edit-state').classList.add('danger');el('edit-state').textContent=tr('Save failed. Changes are still here.');toast(tr('Could not save. Check the connection and try again.'))}
  finally{saving=false;el('savebtn').disabled=false}
 }
 el('ta').addEventListener('input',updateEditState);
@@ -1851,7 +1880,7 @@ initChrome();load(CFG.path||'');
         std::wstring rel = a2w(QueryValue(query, "path").c_str());
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
         if (!IsSafeRelativePath(rel) || rel.empty()) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad path.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad path."));
             return;
         }
 
@@ -1859,13 +1888,13 @@ initChrome();load(CFG.path||'');
         std::wstring root, title;
         bool writable = false;
         if (!ResolveBrowseScope(scope, profileId, root, title, writable)) {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad scope.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad scope."));
             return;
         }
         const std::wstring path = root + L"\\" + rel;
         const DWORD attrs = GetFileAttributesW(path.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", "File not found.");
+            SendHttpResponse(s, 404, "Not Found", "text/plain; charset=utf-8", TrU("File not found."));
             return;
         }
         const size_t slash = rel.find_last_of(L'\\');
@@ -1881,28 +1910,28 @@ initChrome();load(CFG.path||'');
         if (file.rfind("log:", 0) == 0) {
             name = a2w(file.substr(4).c_str());
             if (name.find(L'\\') != std::wstring::npos || name.find(L'/') != std::wstring::npos) {
-                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad file.");
+                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad file."));
                 return;
             }
             path = LogsCurrentDir(runtimeRoot_) + L"\\" + name;
         } else if (file.rfind("game-log:", 0) == 0) {
             name = a2w(file.substr(9).c_str());
             if (name.find(L'\\') != std::wstring::npos || name.find(L'/') != std::wstring::npos) {
-                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad file.");
+                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad file."));
                 return;
             }
             path = ProfileGameDir(runtimeRoot_, profileId) + L"\\logs\\" + name;
         } else if (file.rfind("game:", 0) == 0) {
             name = a2w(file.substr(5).c_str());
             if (name.find(L'\\') != std::wstring::npos || name.find(L'/') != std::wstring::npos) {
-                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad file.");
+                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad file."));
                 return;
             }
             path = ProfileGameDir(runtimeRoot_, profileId) + L"\\" + name;
         } else if (file.rfind("crash:", 0) == 0) {
             name = a2w(file.substr(6).c_str());
             if (name.find(L'\\') != std::wstring::npos || name.find(L'/') != std::wstring::npos) {
-                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad file.");
+                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad file."));
                 return;
             }
             path = CrashReportsDir(runtimeRoot_) + L"\\" + name;
@@ -1910,7 +1939,7 @@ initChrome();load(CFG.path||'');
             EnsureProfilesInitialized(runtimeRoot_);
             const std::wstring active = profileId;
             if (active == kVanillaProfileId) {
-                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Vanilla cannot be exported.");
+                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Vanilla cannot be exported."));
                 return;
             }
             path = DefaultProfileExportPath(runtimeRoot_, active);
@@ -1924,7 +1953,7 @@ initChrome();load(CFG.path||'');
         } else if (file.rfind("export:world:", 0) == 0) {
             const std::wstring worldName = a2w(file.substr(13).c_str());
             if (!IsSafeWorldName(worldName)) {
-                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad world.");
+                SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad world."));
                 return;
             }
             EnsureProfilesInitialized(runtimeRoot_);
@@ -1937,7 +1966,7 @@ initChrome();load(CFG.path||'');
             }
             name = SafeFileName(worldName) + L".zip";
         } else {
-            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", "Bad file.");
+            SendHttpResponse(s, 400, "Bad Request", "text/plain; charset=utf-8", TrU("Bad file."));
             return;
         }
         SendHttpFile(s, path, w2a(name), GuessDownloadContentType(name));
@@ -2065,7 +2094,7 @@ initChrome();load(CFG.path||'');
 
         WriteLogF(L"Remote file upload saved: %s bytes=%zu", path.c_str(), data.size());
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
-            Layout("Upload complete", "<div class=\"top\"><h1>Upload complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div><p>Saved " + HtmlEscape(name) + ".</p>"));
+            Layout("Upload complete", "<div class=\"top\"><h1>Upload complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div><p>" + HtmlEscape(TrFormat(L"Saved {0}.", { name })) + "</p>"));
     }
 
     void HandleDatapackUpload(SOCKET s, const std::map<std::string, std::string>& headers, const std::string& body) {
@@ -2116,7 +2145,7 @@ initChrome();load(CFG.path||'');
 
         WriteLogF(L"Remote datapack upload saved: %s bytes=%zu", path.c_str(), data.size());
         SendHttpResponse(s, 200, "OK", "text/html; charset=utf-8",
-            Layout("Upload complete", "<div class=\"top\"><h1>Upload complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div><p>Saved " + HtmlEscape(name) + " to " + HtmlEscape(saveName) + ".</p>"));
+            Layout("Upload complete", "<div class=\"top\"><h1>Upload complete</h1><a class=\"pill\" href=\"/?pin=" + pin_ + "\">Files home</a></div><p>" + HtmlEscape(TrFormat(L"Saved {0} to {1}.", { name, saveName })) + "</p>"));
     }
 };
 

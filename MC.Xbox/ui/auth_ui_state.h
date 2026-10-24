@@ -103,6 +103,7 @@ struct AuthUiState {
 
     bool showSettings = false;
     bool settingsUpdateCheckOn = true;
+    std::wstring settingsLanguageName;
     int settingsSelected = 0;
     int settingsMenuMouseSpeed = 100;
     int settingsGameMouseSpeed = 100;

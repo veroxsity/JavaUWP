@@ -26,6 +26,7 @@
 
 #include "runtime_config.h"
 #include "launcher_common.h"
+#include "i18n.h"
 #include "crash_report.h"
 #include "mod_defaults.h"
 #include "minecraft_auth.h"
@@ -40,6 +41,9 @@
 #include "minecraft_launch.h"
 #include "telemetry.h"
 #include "update_check.h"
+
+using i18n::Tr;
+using i18n::TrFormat;
 
 // ICoreWindowInterop is forward-declared without a GUID, so IID_PPV_ARGS
 // cannot use it directly. Redeclare it with the correct uuid here.
@@ -557,6 +561,7 @@ public:
         SetCurrentDirectoryW(exeDir.c_str());
         SetEnvironmentVariableW(L"MC_RUNTIME_DIR", exeDir.c_str());
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
+        i18n::Init();
         ApplyMouseSensitivity(LoadMouseSensitivity());
         telemetry::ReportHardCrash(exeDir);
         telemetry::FlushQueueAsync();
@@ -640,17 +645,17 @@ public:
                 selectedInfo.mainClass.empty() ? L"(none)" : selectedInfo.mainClass.c_str(),
                 selectedInfo.loaderJar.empty() ? L"(none)" : selectedInfo.loaderJar.c_str(),
                 selectedInfo.bundledModsDir.empty() ? L"(none)" : selectedInfo.bundledModsDir.c_str());
-            std::wstring unsupportedDetail = TargetProfileText(selectedTarget) + L" is in the catalog, but ";
+            const std::wstring targetName = TargetProfileText(selectedTarget);
+            std::wstring unsupportedDetail;
             if (selectedInfo.manifestPath.empty()) {
-                unsupportedDetail += L"its download manifest is missing from the installed package. Rebuild/reinstall the launcher with per-version manifests enabled.";
+                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its download manifest is missing from the installed package. Rebuild/reinstall the launcher with per-version manifests enabled.", { targetName });
             } else if (selectedInfo.assetIndex.empty() || selectedInfo.launchVersion.empty() || selectedInfo.mainClass.empty()) {
-                unsupportedDetail += L"its download manifest is incomplete. Reinstall the latest launcher build.";
+                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its download manifest is incomplete. Reinstall the latest launcher build.", { targetName });
             } else if (!selectedInfo.missingBundledModsDir.empty()) {
-                unsupportedDetail += L"its bundled mods are missing from the installed package. Expected " +
-                    selectedInfo.missingBundledModsDir +
-                    L". Rebuild without -SkipVersionCompat and reinstall.";
+                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its bundled mods are missing from the installed package. Expected {1}. Rebuild without -SkipVersionCompat and reinstall.",
+                    { targetName, selectedInfo.missingBundledModsDir });
             } else {
-                unsupportedDetail += L"its launch provider is not available in this build yet.";
+                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its launch provider is not available in this build yet.", { targetName });
             }
             AuthScreenRenderer unsupportedRendererInstance;
             AuthScreenRenderer* unsupportedRenderer = nullptr;
@@ -661,7 +666,7 @@ public:
             RenderPreparationProgress(
                 unsupportedRenderer,
                 unsupportedState,
-                L"Unsupported launch target",
+                Tr(L"Unsupported launch target"),
                 unsupportedDetail.c_str(),
                 1.0f);
             SleepWithAuthUi(unsupportedRenderer, unsupportedState, 8000);
@@ -679,8 +684,8 @@ public:
             RenderPreparationProgress(
                 prepRenderer,
                 prepState,
-                L"Preparing local runtime",
-                L"Copying packaged files into writable app storage",
+                Tr(L"Preparing local runtime"),
+                Tr(L"Copying packaged files into writable app storage"),
                 0.04f);
 
             const bool seeded = SeedLocalRuntime(packageDir, exeDir,
@@ -689,7 +694,7 @@ public:
                 });
 
             if (!seeded) {
-                RenderPreparationProgress(prepRenderer, prepState, L"Runtime copy failed", L"Check available storage and retry from the menu", 1.0f);
+                RenderPreparationProgress(prepRenderer, prepState, Tr(L"Runtime copy failed"), Tr(L"Check available storage and retry from the menu"), 1.0f);
                 SleepWithAuthUi(prepRenderer, prepState, 5000);
                 continue;
             }
@@ -725,8 +730,8 @@ public:
             RenderPreparationProgress(
                 downloadRenderer,
                 downloadState,
-                L"Checking installed files",
-                L"Validating Minecraft downloads",
+                Tr(L"Checking installed files"),
+                Tr(L"Validating Minecraft downloads"),
                 0.0f);
 
             int downloadAttempt = 0;
@@ -755,8 +760,8 @@ public:
                 RenderPreparationProgress(
                     downloadRenderer,
                     downloadState,
-                    lastDownloadStatus.empty() ? L"Download failed" : lastDownloadStatus.c_str(),
-                    (lastDownloadDetail + L"\nRetrying in 10 seconds. B or Escape returns to the menu").c_str(),
+                    lastDownloadStatus.empty() ? Tr(L"Download failed") : lastDownloadStatus.c_str(),
+                    (TrFormat(L"{0}\nRetrying in 10 seconds. B or Escape returns to the menu", { lastDownloadDetail })).c_str(),
                     1.0f);
                 for (int wait = 0; wait < 100 && !downloadCancelled; ++wait) {
                     SleepWithAuthUi(downloadRenderer, downloadState, 100);
@@ -768,8 +773,8 @@ public:
                 RenderPreparationProgress(
                     downloadRenderer,
                     downloadState,
-                    L"Retrying download",
-                    L"Checking Minecraft files again",
+                    Tr(L"Retrying download"),
+                    Tr(L"Checking Minecraft files again"),
                     0.0f);
             }
 
@@ -958,13 +963,13 @@ public:
                 failedRenderer = &failedRendererInstance;
             }
             AuthUiState failedState;
-            const wchar_t* failedTitle = L"Launch failed";
-            const wchar_t* failedDetail = L"Minecraft could not start. Check logs for details.";
+            const wchar_t* failedTitle = Tr(L"Launch failed");
+            const wchar_t* failedDetail = Tr(L"Minecraft could not start. Check logs for details.");
             if (jvmSpentBeforeLaunch) {
-                failedTitle = L"Restart the launcher";
-                failedDetail = L"An earlier launch used this session's Java runtime. Close the launcher and open it again to play.";
+                failedTitle = Tr(L"Restart the launcher");
+                failedDetail = Tr(L"An earlier launch used this session's Java runtime. Close the launcher and open it again to play.");
             } else if (EmbeddedJvmAlreadyUsed()) {
-                failedDetail = L"Minecraft could not start. Check logs for details. Close the launcher and open it again before trying another version.";
+                failedDetail = Tr(L"Minecraft could not start. Check logs for details. Close the launcher and open it again before trying another version.");
             }
             RenderPreparationProgress(
                 failedRenderer,

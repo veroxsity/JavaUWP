@@ -1,4 +1,5 @@
 #include "curseforge.h"
+#include "i18n.h"
 
 #include "http_client.h"
 #include "launcher_common.h"
@@ -11,6 +12,9 @@
 #include <winrt/Windows.Foundation.Collections.h>
 
 #include <algorithm>
+
+using i18n::Tr;
+using i18n::TrFormat;
 
 namespace curseforge {
 
@@ -92,20 +96,20 @@ HttpHeaders KeyHeader() {
 
 std::wstring StatusMessage(int status) {
     if (status == 401 || status == 403) {
-        return L"CurseForge rejected the API key. Check it in Remote Files.";
+        return Tr(L"CurseForge rejected the API key. Check it in Remote Files.");
     }
     if (status == 429) {
-        return L"CurseForge is rate limiting this key. Try again shortly.";
+        return Tr(L"CurseForge is rate limiting this key. Try again shortly.");
     }
     if (status == 0) {
-        return L"Could not reach CurseForge.";
+        return Tr(L"Could not reach CurseForge.");
     }
-    return L"CurseForge request failed HTTP " + std::to_wstring(status);
+    return TrFormat(L"CurseForge request failed HTTP {0}", { std::to_wstring(status) });
 }
 
 bool GetJson(const std::wstring& url, JsonObject& root, std::wstring& error) {
     if (!KeyConfigured()) {
-        error = L"No CurseForge API key is set. Add one in Remote Files.";
+        error = Tr(L"No CurseForge API key is set. Add one in Remote Files.");
         return false;
     }
     const HttpResult response = HttpGetWithHeaders(url.c_str(), KeyHeader());
@@ -118,7 +122,7 @@ bool GetJson(const std::wstring& url, JsonObject& root, std::wstring& error) {
         root = JsonObject::Parse(winrt::to_hstring(response.body));
         return true;
     } catch (const winrt::hresult_error&) {
-        error = L"Could not parse the CurseForge response";
+        error = Tr(L"Could not parse the CurseForge response");
         return false;
     }
 }
@@ -408,7 +412,7 @@ bool Search(
     try {
         const JsonArray data = JsonArrayOrNull(root, L"data");
         if (!data) {
-            error = L"CurseForge search returned no results";
+            error = Tr(L"CurseForge search returned no results");
             return false;
         }
 
@@ -432,10 +436,10 @@ bool Search(
             card.description = JsonStringOrEmpty(mod, L"summary");
             if (card.title.empty()) card.title = card.slug.empty() ? card.projectId : card.slug;
             if (card.description.empty()) {
-                card.description = std::wstring(L"CurseForge ") + ContentNoun(kind, false) +
-                    L" for Minecraft " + a2w(gameVersion.c_str());
+                card.description = TrFormat(L"CurseForge {0} for Minecraft {1}",
+                    { Tr(ContentNoun(kind, false)), a2w(gameVersion.c_str()) });
             }
-            card.status = std::to_wstring(static_cast<long long>(JsonNumberOrZero(mod, L"downloadCount"))) + L" downloads";
+            card.status = TrFormat(L"{0} downloads", { std::to_wstring(static_cast<long long>(JsonNumberOrZero(mod, L"downloadCount"))) });
 
             const JsonObject logo = JsonObjectOrNull(mod, L"logo");
             if (logo) {
@@ -446,7 +450,7 @@ bool Search(
             out.push_back(card);
         }
     } catch (const winrt::hresult_error&) {
-        error = L"Could not parse the CurseForge search response";
+        error = Tr(L"Could not parse the CurseForge search response");
         return false;
     }
 
@@ -491,7 +495,7 @@ bool FetchDetail(
     JsonObject descRoot{ nullptr };
     const std::wstring descUrl = modUrl + L"/description";
     if (!GetJson(descUrl, descRoot, error)) {
-        body = error.empty() ? L"Could not load description." : error;
+        body = error.empty() ? Tr(L"Could not load description.") : error;
         return false;
     }
 
@@ -500,9 +504,9 @@ bool FetchDetail(
         if (raw.size() > 20000) raw.resize(20000);
         body = CleanHtml(raw, bold, head);
         if (body.size() > 6000) body.resize(6000);
-        if (body.empty()) body = L"No description provided.";
+        if (body.empty()) body = Tr(L"No description provided.");
     } catch (const winrt::hresult_error&) {
-        body = L"Could not parse description.";
+        body = Tr(L"Could not parse description.");
         return false;
     }
     return true;
@@ -524,8 +528,8 @@ bool ResolveLatestFile(
     try {
         const JsonArray data = JsonArrayOrNull(root, L"data");
         if (!data || data.Size() == 0) {
-            error = L"No " + (loader.empty() ? std::wstring(L"compatible") : loader) + L" " +
-                a2w(gameVersion.c_str()) + L" file was found on CurseForge";
+            error = TrFormat(L"No {0} {1} file was found on CurseForge",
+                { loader.empty() ? std::wstring(Tr(L"compatible")) : loader, a2w(gameVersion.c_str()) });
             return false;
         }
 
@@ -551,10 +555,10 @@ bool ResolveLatestFile(
             return true;
         }
 
-        error = L"No installable CurseForge file was found";
+        error = Tr(L"No installable CurseForge file was found");
         return false;
     } catch (const winrt::hresult_error&) {
-        error = L"Could not parse the CurseForge file list";
+        error = Tr(L"Could not parse the CurseForge file list");
         return false;
     }
 }
@@ -567,7 +571,7 @@ bool ResolveFilesById(
     out.clear();
     if (fileIds.empty()) return true;
     if (!KeyConfigured()) {
-        error = L"No CurseForge API key is set. Add one in Remote Files.";
+        error = Tr(L"No CurseForge API key is set. Add one in Remote Files.");
         return false;
     }
 
@@ -594,7 +598,7 @@ bool ResolveFilesById(
             const JsonObject root = JsonObject::Parse(winrt::to_hstring(response.body));
             const JsonArray data = JsonArrayOrNull(root, L"data");
             if (!data) {
-                error = L"CurseForge returned no files for this pack";
+                error = Tr(L"CurseForge returned no files for this pack");
                 return false;
             }
             for (uint32_t i = 0; i < data.Size(); ++i) {
@@ -603,7 +607,7 @@ bool ResolveFilesById(
                 if (ParseFile(data.GetAt(i).GetObject(), file)) out.push_back(file);
             }
         } catch (const winrt::hresult_error&) {
-            error = L"Could not parse the CurseForge file batch";
+            error = Tr(L"Could not parse the CurseForge file batch");
             return false;
         }
     }
@@ -618,7 +622,7 @@ bool ResolveModInfo(
     out.clear();
     if (modIds.empty()) return true;
     if (!KeyConfigured()) {
-        error = L"No CurseForge API key is set. Add one in Remote Files.";
+        error = Tr(L"No CurseForge API key is set. Add one in Remote Files.");
         return false;
     }
 
@@ -644,7 +648,7 @@ bool ResolveModInfo(
             const JsonObject root = JsonObject::Parse(winrt::to_hstring(response.body));
             const JsonArray data = JsonArrayOrNull(root, L"data");
             if (!data) {
-                error = L"CurseForge returned no mods";
+                error = Tr(L"CurseForge returned no mods");
                 return false;
             }
             for (uint32_t i = 0; i < data.Size(); ++i) {
@@ -661,7 +665,7 @@ bool ResolveModInfo(
                 out.push_back(std::move(info));
             }
         } catch (const winrt::hresult_error&) {
-            error = L"Could not parse the CurseForge mod batch";
+            error = Tr(L"Could not parse the CurseForge mod batch");
             return false;
         }
     }

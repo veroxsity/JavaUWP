@@ -1,4 +1,5 @@
 #include "runtime_manager.h"
+#include "i18n.h"
 
 #include "loader.h"
 #include "launcher_common.h"
@@ -19,6 +20,9 @@
 #include <winrt/Windows.Security.ExchangeActiveSyncProvisioning.h>
 
 #include "third_party/miniz/miniz.h"
+
+using i18n::Tr;
+using i18n::TrFormat;
 
 static std::wstring RuntimeSeedStamp(const std::wstring& packageDir) {
     return std::wstring(L"seedVersion=6\n") +
@@ -261,13 +265,13 @@ bool SeedLocalRuntime(
         !FileExistsNonEmpty(packageDir + L"\\java-desktop-uwp-awt.jar")) return false;
     WriteLogF(L"Seeding LocalState runtime from %s", packageDir.c_str());
     if (progress) {
-        progress(L"Copying launcher files", L"Preparing mods and log configuration", 0.12f);
+        progress(Tr(L"Copying launcher files"), Tr(L"Preparing mods and log configuration"), 0.12f);
     }
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\bundled-mods", localDir + L"\\game\\mods")) return false;
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\log_configs", localDir + L"\\game\\log_configs")) return false;
     if (!CopyFileIfNeeded(packageDir + L"\\runtime\\version_catalog.tsv", localDir + L"\\runtime\\version_catalog.tsv")) return false;
     if (progress) {
-        progress(L"Copying Java runtime", L"Preparing JVM files", 0.52f);
+        progress(Tr(L"Copying Java runtime"), Tr(L"Preparing JVM files"), 0.52f);
     }
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre", localDir + L"\\jre")) return false;
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre21", localDir + L"\\jre21")) return false;
@@ -290,12 +294,12 @@ bool SeedLocalRuntime(
         return false;
     }
     if (progress) {
-        progress(L"Copying native libraries", L"Preparing graphics and input runtime", 0.80f);
+        progress(Tr(L"Copying native libraries"), Tr(L"Preparing graphics and input runtime"), 0.80f);
     }
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\natives", localDir + L"\\natives")) return false;
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\graphics", localDir + L"\\graphics")) return false;
     if (progress) {
-        progress(L"Finalizing runtime", L"Writing launch configuration", 0.96f);
+        progress(Tr(L"Finalizing runtime"), Tr(L"Writing launch configuration"), 0.96f);
     }
     if (!CopyFileIfNeeded(packageDir + L"\\xbox_security.properties", localDir + L"\\xbox_security.properties")) return false;
     if (!CopyFileIfNeeded(packageDir + L"\\java-base-uwp-filesystem.jar", localDir + L"\\java-base-uwp-filesystem.jar")) return false;
@@ -310,7 +314,7 @@ bool SeedLocalRuntime(
         if (!CopyFileIfNeeded(packageDir + L"\\" + patch, localDir + L"\\" + patch)) return false;
     }
     if (progress) {
-        progress(L"Runtime ready", L"Starting Minecraft", 1.0f);
+        progress(Tr(L"Runtime ready"), Tr(L"Starting Minecraft"), 1.0f);
     }
     if (!MarkLocalRuntimeSeedCurrent(packageDir, localDir)) return false;
     WriteLog(L"LocalState runtime seed complete");
@@ -793,7 +797,7 @@ bool EnsureRuntimeDownloads(
     }
     if (entries.empty()) {
         WriteLog(L"Download manifest is empty");
-        if (progress) progress(L"No downloads needed", L"Launching Minecraft", 1.0f);
+        if (progress) progress(Tr(L"No downloads needed"), Tr(L"Launching Minecraft"), 1.0f);
         return true;
     }
 
@@ -806,15 +810,12 @@ bool EnsureRuntimeDownloads(
     size_t downloaded = 0;
     unsigned long long completedBytes = 0;
     std::vector<size_t> missing;
-    const std::wstring totalText = std::to_wstring(entries.size()) + L" files, " +
-        std::to_wstring(totalBytes / (1024ULL * 1024ULL)) + L" MB";
+    const std::wstring totalText = TrFormat(L"{0} files, {1} MB", { std::to_wstring(entries.size()), std::to_wstring(totalBytes / (1024ULL * 1024ULL)) });
     auto formatDownloadDetail = [&](size_t fileIndex, unsigned long long bytesDone) {
-        return std::to_wstring(fileIndex) + L"/" + std::to_wstring(entries.size()) +
-            L" files  " + std::to_wstring(bytesDone / (1024ULL * 1024ULL)) +
-            L"/" + std::to_wstring(totalBytes / (1024ULL * 1024ULL)) + L" MB";
+        return TrFormat(L"{0}/{1} files  {2}/{3} MB", { std::to_wstring(fileIndex), std::to_wstring(entries.size()), std::to_wstring(bytesDone / (1024ULL * 1024ULL)), std::to_wstring(totalBytes / (1024ULL * 1024ULL)) });
     };
     WriteLogF(L"Download manifest entries=%zu totalBytes=%llu", entries.size(), totalBytes);
-    if (progress) progress(L"Preparing download", totalText.c_str(), 0.0f);
+    if (progress) progress(Tr(L"Preparing download"), totalText.c_str(), 0.0f);
 
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto& entry = entries[i];
@@ -832,7 +833,7 @@ bool EnsureRuntimeDownloads(
                     ? static_cast<float>(static_cast<double>(completedBytes) / static_cast<double>(totalBytes))
                     : static_cast<float>(static_cast<double>(verified) / static_cast<double>(entries.size()));
                 const std::wstring detail = formatDownloadDetail(verified, completedBytes);
-                progress(L"Checking installed files", detail.c_str(), ratio);
+                progress(Tr(L"Checking installed files"), detail.c_str(), ratio);
             }
             continue;
         }
@@ -843,7 +844,7 @@ bool EnsureRuntimeDownloads(
     if (missing.empty()) {
         WriteLogF(L"Download pass complete verified=%zu downloaded=0", verified);
         MarkDownloadManifestCurrent(manifestPath, runtimeRoot, targetId);
-        if (progress) progress(L"Download complete", L"Launching Minecraft", 1.0f);
+        if (progress) progress(Tr(L"Download complete"), Tr(L"Launching Minecraft"), 1.0f);
         return true;
     }
 
@@ -924,7 +925,7 @@ bool EnsureRuntimeDownloads(
                 DeleteFileW(tempPath.c_str());
                 std::lock_guard<std::mutex> lock(stateMutex);
                 failed = true;
-                failureStatus = L"Download failed after retries";
+                failureStatus = Tr(L"Download failed after retries");
                 failureDetail = entry.relativePath;
                 break;
             }
@@ -939,7 +940,7 @@ bool EnsureRuntimeDownloads(
                 DeleteFileW(tempPath.c_str());
                 std::lock_guard<std::mutex> lock(stateMutex);
                 failed = true;
-                failureStatus = L"File verification failed";
+                failureStatus = Tr(L"File verification failed");
                 failureDetail = entry.relativePath;
                 break;
             }
@@ -950,7 +951,7 @@ bool EnsureRuntimeDownloads(
                 DeleteFileW(tempPath.c_str());
                 std::lock_guard<std::mutex> lock(stateMutex);
                 failed = true;
-                failureStatus = L"Download install failed";
+                failureStatus = Tr(L"Download install failed");
                 failureDetail = entry.relativePath;
                 break;
             }
@@ -1002,12 +1003,12 @@ bool EnsureRuntimeDownloads(
                 : static_cast<float>(static_cast<double>(verifiedSnapshot) / static_cast<double>(entries.size()));
             if (failedSnapshot) {
                 progress(
-                    failureStatusSnapshot.empty() ? L"Download failed" : failureStatusSnapshot.c_str(),
+                    failureStatusSnapshot.empty() ? Tr(L"Download failed") : failureStatusSnapshot.c_str(),
                     failureDetailSnapshot.c_str(),
                     ratio);
             } else {
                 const std::wstring detail = formatDownloadDetail(verifiedSnapshot, bytesSnapshot);
-                progress(L"Downloading Minecraft files", detail.c_str(), ratio);
+                progress(Tr(L"Downloading Minecraft files"), detail.c_str(), ratio);
             }
         }
 
@@ -1030,7 +1031,7 @@ bool EnsureRuntimeDownloads(
 
     WriteLogF(L"Download pass complete verified=%zu downloaded=%zu", verified, downloaded);
     MarkDownloadManifestCurrent(manifestPath, runtimeRoot, targetId);
-    if (progress) progress(L"Download complete", L"Launching Minecraft", 1.0f);
+    if (progress) progress(Tr(L"Download complete"), Tr(L"Launching Minecraft"), 1.0f);
     return true;
 }
 

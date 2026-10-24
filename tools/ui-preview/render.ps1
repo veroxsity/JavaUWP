@@ -1,6 +1,7 @@
 # renders launcher screens to png on a pc, no appx build, deploy or console install
 param(
-    [string]$OutDir
+    [string]$OutDir,
+    [string]$Language
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +36,7 @@ $env:LIB = "$($tools.MsvcRoot)\lib\x64;${sdkRoot}Lib\$sdkVer\ucrt\x64;${sdkRoot}
 Push-Location (Join-Path $root "MC.Xbox")
 try {
     & $tools.ClExe /nologo `
-        ..\tools\ui-preview\ui_preview.cpp common\launcher_common.cpp profiles\profiles.cpp ui\mods_ui_globals.cpp third_party\miniz\miniz.c `
+        ..\tools\ui-preview\ui_preview.cpp common\launcher_common.cpp common\i18n.cpp profiles\profiles.cpp ui\mods_ui_globals.cpp third_party\miniz\miniz.c `
         /std:c++17 /EHsc /W3 /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME `
         /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry `
         /Fo"$work\\" /Fe"$work\ui_preview.exe" `
@@ -51,6 +52,10 @@ $screenshotTarget = Join-Path $work "Assets\screenshots"
 Ensure-Dir $screenshotTarget
 Copy-Item -Force (Join-Path $root "MC.Xbox\Assets\screenshots\*.png") $screenshotTarget
 
-& (Join-Path $work "ui_preview.exe") $OutDir
+# the preview reads languages from a lang folder next to the exe, the same as the package
+Ensure-Dir (Join-Path $work "lang")
+Copy-Item -Force (Join-Path $root "MC.Xbox\lang\*.json") (Join-Path $work "lang")
+
+& (Join-Path $work "ui_preview.exe") $OutDir $Language
 if ($LASTEXITCODE -ne 0) { throw "ui preview render failed" }
 Write-Host "UI_PREVIEW_OK $OutDir"

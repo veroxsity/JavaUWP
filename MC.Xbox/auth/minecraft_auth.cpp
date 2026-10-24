@@ -1,6 +1,7 @@
 #include "minecraft_auth.h"
 
 #include "http_client.h"
+#include "i18n.h"
 #include "launcher_common.h"
 
 #include <winrt/base.h>
@@ -65,6 +66,8 @@ namespace {
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonValueType;
+using i18n::TrFormatU;
+using i18n::TrU;
 
 bool ParseAuthJson(const std::string& body, JsonObject& out) {
     return JsonObject::TryParse(winrt::to_hstring(body), out);
@@ -137,13 +140,13 @@ bool RequestDeviceCode(DeviceCodeResponse& out, std::string& error) {
         body,
         L"application/x-www-form-urlencoded");
     if (!response.success()) {
-        error = "Device code request failed: " + HttpFailureSummary(response);
+        error = TrFormatU("Device code request failed: {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "Device code response was not valid JSON.";
+        error = TrU("Device code response was not valid JSON.");
         return false;
     }
 
@@ -154,7 +157,7 @@ bool RequestDeviceCode(DeviceCodeResponse& out, std::string& error) {
     out.interval = (std::max)(1, JsonInt(json, L"interval", 5));
 
     if (out.userCode.empty() || out.deviceCode.empty() || out.verificationUri.empty()) {
-        error = "Device code response was missing required fields.";
+        error = TrU("Device code response was missing required fields.");
         return false;
     }
 
@@ -179,7 +182,7 @@ DevicePollResult PollDeviceToken(const std::string& deviceCode) {
         JsonObject json = nullptr;
         if (!ParseAuthJson(response.body, json)) {
             result.status = DevicePollStatus::Failed;
-            result.error = "Microsoft token response was not valid JSON.";
+            result.error = TrU("Microsoft token response was not valid JSON.");
             return result;
         }
         result.status = DevicePollStatus::Success;
@@ -188,7 +191,7 @@ DevicePollResult PollDeviceToken(const std::string& deviceCode) {
         result.token.expiresIn = JsonInt(json, L"expires_in", 0);
         if (result.token.accessToken.empty()) {
             result.status = DevicePollStatus::Failed;
-            result.error = "Microsoft token response did not include access_token.";
+            result.error = TrU("Microsoft token response did not include access_token.");
         }
         return result;
     }
@@ -204,7 +207,7 @@ DevicePollResult PollDeviceToken(const std::string& deviceCode) {
     } else {
         result.status = DevicePollStatus::Failed;
         result.error = code.empty()
-            ? "Microsoft token polling failed: HTTP " + std::to_string(response.status)
+            ? TrFormatU("Microsoft token polling failed: HTTP {0}", { std::to_string(response.status) })
             : code + ": " + JsonText(errorJson, L"error_description");
     }
     return result;
@@ -227,13 +230,13 @@ bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenRespon
         if (invalidGrant && ParseAuthJson(response.body, failure)) {
             *invalidGrant = JsonText(failure, L"error") == "invalid_grant";
         }
-        error = "Microsoft session refresh failed. " + HttpFailureSummary(response);
+        error = TrFormatU("Microsoft session refresh failed. {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "Microsoft refresh response was not valid JSON.";
+        error = TrU("Microsoft refresh response was not valid JSON.");
         return false;
     }
 
@@ -241,7 +244,7 @@ bool RefreshMicrosoftToken(const std::string& refreshToken, MicrosoftTokenRespon
     out.refreshToken = JsonText(json, L"refresh_token");
     out.expiresIn = JsonInt(json, L"expires_in", 0);
     if (out.accessToken.empty()) {
-        error = "Microsoft refresh response did not include access_token.";
+        error = TrU("Microsoft refresh response did not include access_token.");
         return false;
     }
     return true;
@@ -257,20 +260,20 @@ bool AuthenticateWithXboxLive(const std::string& microsoftAccessToken, XboxAuthR
         payload,
         L"application/json");
     if (!response.success()) {
-        error = "Xbox Live auth failed: " + HttpFailureSummary(response);
+        error = TrFormatU("Xbox Live auth failed: {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "Xbox Live auth response was not valid JSON.";
+        error = TrU("Xbox Live auth response was not valid JSON.");
         return false;
     }
 
     out.token = JsonText(json, L"Token");
     out.userHash = XboxUserHash(json);
     if (out.token.empty() || out.userHash.empty()) {
-        error = "Xbox Live auth response was missing token fields.";
+        error = TrU("Xbox Live auth response was missing token fields.");
         return false;
     }
     return true;
@@ -288,20 +291,20 @@ bool AuthorizeWithXsts(const std::string& xboxToken, const char* relyingParty, X
         payload,
         L"application/json");
     if (!response.success()) {
-        error = "XSTS auth failed: " + HttpFailureSummary(response);
+        error = TrFormatU("XSTS auth failed: {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "XSTS response was not valid JSON.";
+        error = TrU("XSTS response was not valid JSON.");
         return false;
     }
 
     out.token = JsonText(json, L"Token");
     out.userHash = XboxUserHash(json);
     if (out.token.empty() || out.userHash.empty()) {
-        error = "XSTS response was missing token fields.";
+        error = TrU("XSTS response was missing token fields.");
         return false;
     }
     return true;
@@ -315,20 +318,20 @@ bool LoginToMinecraft(const std::string& userHash, const std::string& xstsToken,
         payload,
         L"application/json");
     if (!response.success()) {
-        error = "Minecraft login failed: " + HttpFailureSummary(response);
+        error = TrFormatU("Minecraft login failed: {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "Minecraft login response was not valid JSON.";
+        error = TrU("Minecraft login response was not valid JSON.");
         return false;
     }
 
     out.accessToken = JsonText(json, L"access_token");
     out.expiresIn = JsonInt(json, L"expires_in", 0);
     if (out.accessToken.empty()) {
-        error = "Minecraft login response did not include access_token.";
+        error = TrU("Minecraft login response did not include access_token.");
         return false;
     }
     return true;
@@ -339,18 +342,18 @@ bool EnsureMinecraftEntitlement(const std::string& minecraftAccessToken, std::st
         L"https://api.minecraftservices.com/entitlements/mcstore",
         minecraftAccessToken);
     if (!response.success()) {
-        error = "Minecraft entitlement check failed: " + HttpFailureSummary(response);
+        error = TrFormatU("Minecraft entitlement check failed: {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "Minecraft entitlement response was not valid JSON.";
+        error = TrU("Minecraft entitlement response was not valid JSON.");
         return false;
     }
 
     if (!json.HasKey(L"items") || json.GetNamedValue(L"items").ValueType() != JsonValueType::Array) {
-        error = "Minecraft entitlement response did not contain an items list.";
+        error = TrU("Minecraft entitlement response did not contain an items list.");
         return false;
     }
 
@@ -364,7 +367,7 @@ bool EnsureMinecraftEntitlement(const std::string& minecraftAccessToken, std::st
         }
     }
 
-    error = "This Microsoft account does not appear to own Minecraft Java Edition.";
+    error = TrU("This Microsoft account does not appear to own Minecraft Java Edition.");
     return false;
 }
 
@@ -373,13 +376,13 @@ bool FetchMinecraftProfile(const std::string& minecraftAccessToken, LaunchAuthCo
         L"https://api.minecraftservices.com/minecraft/profile",
         minecraftAccessToken);
     if (!response.success()) {
-        error = "Minecraft profile request failed: " + HttpFailureSummary(response);
+        error = TrFormatU("Minecraft profile request failed: {0}", { HttpFailureSummary(response) });
         return false;
     }
 
     JsonObject json = nullptr;
     if (!ParseAuthJson(response.body, json)) {
-        error = "Minecraft profile response was not valid JSON.";
+        error = TrU("Minecraft profile response was not valid JSON.");
         return false;
     }
 
@@ -387,7 +390,7 @@ bool FetchMinecraftProfile(const std::string& minecraftAccessToken, LaunchAuthCo
     out.username = JsonText(json, L"name");
     out.accessToken = minecraftAccessToken;
     if (out.uuid.empty() || out.username.empty()) {
-        error = "Minecraft profile response was missing id or name.";
+        error = TrU("Minecraft profile response was missing id or name.");
         return false;
     }
     return true;
@@ -410,7 +413,7 @@ bool BuildMinecraftAuth(const std::string& microsoftAccessToken, LaunchAuthConfi
     }
 
     if (minecraftToken.expiresIn <= 0) {
-        error = "Minecraft token response did not include a valid lifetime.";
+        error = TrU("Minecraft token response did not include a valid lifetime.");
         return false;
     }
     const auto expiresAt = std::chrono::steady_clock::now() + std::chrono::seconds(minecraftToken.expiresIn);

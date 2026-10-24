@@ -1,4 +1,5 @@
 #include "minecraft_launch.h"
+#include "i18n.h"
 
 #include "app_globals.h"
 #include "crash_report.h"
@@ -41,6 +42,9 @@
 #include <windows.ui.core.h>
 
 #include "third_party/miniz/miniz.h"
+
+using i18n::Tr;
+using i18n::TrFormat;
 
 using namespace Microsoft::WRL;
 using Microsoft::WRL::Wrappers::HStringReference;
@@ -100,7 +104,7 @@ struct LogTailerConfig {
     std::wstring label;
 };
 static std::wstring TailTextForUi(const std::wstring& text, size_t maxLines = 14, size_t maxChars = 4200) {
-    if (text.empty()) return L"Waiting for pre-launch log output...";
+    if (text.empty()) return Tr(L"Waiting for pre-launch log output...");
 
     size_t end = text.size();
     while (end > 0 && (text[end - 1] == L'\r' || text[end - 1] == L'\n')) {
@@ -132,7 +136,7 @@ static std::wstring TailTextForUi(const std::wstring& text, size_t maxLines = 14
     for (wchar_t& ch : tail) {
         if (ch == L'\t') ch = L' ';
     }
-    if (tail.empty()) return L"Waiting for pre-launch log output...";
+    if (tail.empty()) return Tr(L"Waiting for pre-launch log output...");
 
     // The launch panel is not interactive, so keep each logical log line to one
     // visual row. Very long paths otherwise wrap and hide the newest entries.
@@ -153,7 +157,7 @@ static std::wstring TailTextForUi(const std::wstring& text, size_t maxLines = 14
         if (lineEnd >= tail.size()) break;
         lineStart = lineEnd + 1;
     }
-    return compact.empty() ? L"Waiting for pre-launch log output..." : compact;
+    return compact.empty() ? Tr(L"Waiting for pre-launch log output...") : compact;
 }
 
 std::wstring ReadLaunchLogTailForUi(const std::vector<std::wstring>& paths, size_t maxLines) {
@@ -163,7 +167,7 @@ std::wstring ReadLaunchLogTailForUi(const std::vector<std::wstring>& paths, size
             return TailTextForUi(text, maxLines);
         }
     }
-    return L"Waiting for pre-launch log output...";
+    return Tr(L"Waiting for pre-launch log output...");
 }
 
 static void LogTextFileTail(const std::wstring& path, const wchar_t* label, DWORD maxBytes = 16384) {
@@ -822,8 +826,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     if (g_embeddedJvmUsed) {
         WriteLog(L"Refusing launch: this process has already run a JVM, it cannot start another");
         reportProgress(
-            L"Restart the launcher",
-            L"A previous launch already used this session's Java runtime. Close the launcher and open it again.",
+            Tr(L"Restart the launcher"),
+            Tr(L"A previous launch already used this session's Java runtime. Close the launcher and open it again."),
             1.0f);
         return false;
     }
@@ -838,8 +842,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         loaderLabel = L"Forge";
     }
     reportProgress(
-        L"Starting Minecraft",
-        (L"Preparing " + loaderLabel + L" and launch files.").c_str(),
+        Tr(L"Starting Minecraft"),
+        (TrFormat(L"Preparing {0} and launch files.", { loaderLabel })).c_str(),
         0.12f);
     const std::wstring effectiveMainClass = LoaderDefaultMainClass(loaderId, mainClassName);
     std::wstring mainClassPath = effectiveMainClass;
@@ -1232,8 +1236,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     fclose(af);
     WriteLog(L"Embedded JVM options written");
     reportProgress(
-        L"Starting Java runtime",
-        L"Loading the embedded JVM.",
+        Tr(L"Starting Java runtime"),
+        Tr(L"Loading the embedded JVM."),
         0.24f);
 
     HMODULE jvmModule = nullptr;
@@ -1276,8 +1280,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         }
     }
     reportProgress(
-        L"Starting Java runtime",
-        L"Java is online. Preparing loader startup next.",
+        Tr(L"Starting Java runtime"),
+        Tr(L"Java is online. Preparing loader startup next."),
         0.38f);
 
     if (!LoaderPrepareArtifactsAfterJvm(env, loaderCtx, effectiveClassPath, neoForgeStartedWithGameClassPath)) {
@@ -1285,8 +1289,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         return false;
     }
     reportProgress(
-        (L"Loading " + loaderLabel).c_str(),
-        L"Loader artifacts are ready. Minecraft main is starting next.",
+        (TrFormat(L"Loading {0}", { loaderLabel })).c_str(),
+        Tr(L"Loader artifacts are ready. Minecraft main is starting next."),
         0.52f);
 
     jclass mainClass = env->FindClass(w2a(mainClassPath).c_str());
@@ -1329,8 +1333,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
 
     WriteLogF(L"Invoking %s.main via embedded JVM", effectiveMainClass.c_str());
     reportProgress(
-        (L"Loading " + loaderLabel).c_str(),
-        L"Mods and libraries are starting. The Mojang loading screen appears once graphics initialize.",
+        (TrFormat(L"Loading {0}", { loaderLabel })).c_str(),
+        Tr(L"Mods and libraries are starting. The Mojang loading screen appears once graphics initialize."),
         0.64f);
     const std::wstring modsetHash = telemetry::ComputeModsetHash(userModsDir);
     WriteTextFile(CrashLaunchMarkerPath(exeDir),

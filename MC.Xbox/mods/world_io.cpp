@@ -1,4 +1,5 @@
 #include "world_io.h"
+#include "i18n.h"
 
 #include "launcher_common.h"
 #include "profiles.h"
@@ -8,6 +9,9 @@
 #include <algorithm>
 #include <vector>
 #include <memory>
+
+using i18n::Tr;
+using i18n::TrFormat;
 
 bool IsSafeWorldName(const std::wstring& name) {
     if (name.empty()) return false;
@@ -113,26 +117,26 @@ bool ExportWorldZip(
     std::wstring& error) {
     error.clear();
     if (!IsSafeWorldName(worldName)) {
-        error = L"Invalid world name";
+        error = Tr(L"Invalid world name");
         return false;
     }
 
     EnsureProfileGameDataInitialized(runtimeRoot, profileId);
     const std::wstring worldDir = ProfileGameDir(runtimeRoot, profileId) + L"\\saves\\" + worldName;
     if (!DirectoryExists(worldDir)) {
-        error = L"World not found";
+        error = Tr(L"World not found");
         return false;
     }
     if (GetFileAttributesW((worldDir + L"\\level.dat").c_str()) == INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((worldDir + L"\\level.dat_old").c_str()) == INVALID_FILE_ATTRIBUTES) {
-        error = L"This folder does not look like a Minecraft world";
+        error = Tr(L"This folder does not look like a Minecraft world");
         return false;
     }
 
     std::vector<std::pair<std::wstring, std::wstring>> files;
-    if (!CollectDirectoryFiles(worldDir, L"", files)) { error = L"Could not read every world folder"; return false; }
+    if (!CollectDirectoryFiles(worldDir, L"", files)) { error = Tr(L"Could not read every world folder"); return false; }
     if (files.empty()) {
-        error = L"World folder is empty";
+        error = Tr(L"World folder is empty");
         return false;
     }
 
@@ -142,7 +146,7 @@ bool ExportWorldZip(
 
     FILE* outFile = nullptr;
     if (_wfopen_s(&outFile, temporary.c_str(), L"wb") != 0 || !outFile) {
-        error = L"Could not create world archive";
+        error = Tr(L"Could not create world archive");
         return false;
     }
 
@@ -153,7 +157,7 @@ bool ExportWorldZip(
     if (!mz_zip_writer_init(&zip, 0)) {
         fclose(outFile);
         DeleteFileW(temporary.c_str());
-        error = L"Could not start world archive";
+        error = Tr(L"Could not start world archive");
         return false;
     }
 
@@ -177,7 +181,7 @@ bool ExportWorldZip(
     if (!finalized || !ended || !closed ||
         !MoveFileExW(temporary.c_str(), outputPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(temporary.c_str());
-        error = L"Could not finish world archive. Previous export kept";
+        error = Tr(L"Could not finish world archive. Previous export kept");
         return false;
     }
 
@@ -257,42 +261,42 @@ bool ImportWorldFromZip(
     std::wstring& error) {
     error.clear();
     if (profileId == kVanillaProfileId) {
-        error = L"Vanilla is read-only. Pick or create a profile first.";
+        error = Tr(L"Vanilla is read-only. Pick or create a profile first.");
         return false;
     }
     if (!IsSafeWorldName(worldName)) {
-        error = L"Invalid world name";
+        error = Tr(L"Invalid world name");
         return false;
     }
     if (GetFileAttributesW(zipPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        error = L"World archive not found";
+        error = Tr(L"World archive not found");
         return false;
     }
 
     FILE* inputFile = nullptr;
     if (_wfopen_s(&inputFile, zipPath.c_str(), L"rb") != 0 || !inputFile) {
-        error = L"Could not open world archive";
+        error = Tr(L"Could not open world archive");
         return false;
     }
     std::unique_ptr<FILE, decltype(&fclose)> input(inputFile, fclose);
-    if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = L"Could not read archive size"; return false; }
+    if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = Tr(L"Could not read archive size"); return false; }
     const __int64 archiveSize = _ftelli64(input.get());
     if (archiveSize <= 0 || archiveSize > 128ll * 1024ll * 1024ll) {
-        error = L"World archive is empty or exceeds the 128 MB input limit";
+        error = Tr(L"World archive is empty or exceeds the 128 MB input limit");
         return false;
     }
     mz_zip_archive zip{};
     zip.m_pRead = ZipReadFileCallback;
     zip.m_pIO_opaque = input.get();
     if (!mz_zip_reader_init(&zip, static_cast<mz_uint64>(archiveSize), 0)) {
-        error = L"World archive is not a valid ZIP archive";
+        error = Tr(L"World archive is not a valid ZIP archive");
         return false;
     }
 
     std::string stripPrefix;
     if (!DetectWorldZipPrefix(zip, stripPrefix)) {
         mz_zip_reader_end(&zip);
-        error = L"Zip does not contain a single Minecraft world";
+        error = Tr(L"Zip does not contain a single Minecraft world");
         return false;
     }
 
@@ -300,11 +304,11 @@ bool ImportWorldFromZip(
     const std::wstring destDir = ProfileGameDir(runtimeRoot, profileId) + L"\\saves\\" + worldName;
     if (DirectoryExists(destDir) && !replaceExisting) {
         mz_zip_reader_end(&zip);
-        error = L"A world with that name already exists. Enable replace to overwrite it.";
+        error = Tr(L"A world with that name already exists. Enable replace to overwrite it.");
         return false;
     }
     const std::wstring temporary = destDir + L".importing-" + std::to_wstring(GetTickCount64());
-    if (!EnsureDirectoryTree(temporary)) { mz_zip_reader_end(&zip); error = L"Could not stage world"; return false; }
+    if (!EnsureDirectoryTree(temporary)) { mz_zip_reader_end(&zip); error = Tr(L"Could not stage world"); return false; }
     int extracted = 0;
     bool ok = true;
     unsigned long long total = 0;
@@ -337,18 +341,18 @@ bool ImportWorldFromZip(
          GetFileAttributesW((temporary + L"\\level.dat_old").c_str()) != INVALID_FILE_ATTRIBUTES);
     if (!ok) {
         DeleteDirectoryTree(temporary);
-        error = L"World import failed or exceeded archive limits. Existing world kept";
+        error = Tr(L"World import failed or exceeded archive limits. Existing world kept");
         return false;
     }
     const std::wstring previous = destDir + L".previous-" + std::to_wstring(GetTickCount64());
     const bool hadWorld = DirectoryExists(destDir);
     if (hadWorld && !MoveFileExW(destDir.c_str(), previous.c_str(), MOVEFILE_WRITE_THROUGH)) {
-        DeleteDirectoryTree(temporary); error = L"Could not preserve existing world"; return false;
+        DeleteDirectoryTree(temporary); error = Tr(L"Could not preserve existing world"); return false;
     }
     if (!MoveFileExW(temporary.c_str(), destDir.c_str(), MOVEFILE_WRITE_THROUGH)) {
         if (hadWorld && !MoveFileExW(previous.c_str(), destDir.c_str(), MOVEFILE_WRITE_THROUGH)) {
-            error = L"Could not restore world. Original retained at " + previous;
-        } else { error = L"Could not install replacement. Existing world kept"; }
+            error = TrFormat(L"Could not restore world. Original retained at {0}", { previous });
+        } else { error = Tr(L"Could not install replacement. Existing world kept"); }
         DeleteDirectoryTree(temporary);
         return false;
     }

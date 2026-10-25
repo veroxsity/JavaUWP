@@ -31,7 +31,7 @@ The launcher picks your language on its own the first time if the console is set
 
 ## Sending it in
 
-Open a pull request with your file in `MC.Xbox/lang`, or send it in the project's Discord. When the English text changes in a later version, the changed line needs translating again. Running `scripts/update-translations.ps1 -Fill` adds the new lines to your file in English, so what is left is easy to spot.
+Open a pull request with your file in `MC.Xbox/lang`, or send it in the project's Discord. A check runs on every pull request and tells you if the file is not valid JSON, has no `_name`, or has a `{0}` that was changed or removed. You can run the same check yourself with `scripts/update-translations.ps1 -Check`. When the English text changes in a later version, the changed line needs translating again. Running `scripts/update-translations.ps1 -Fill` adds the new lines to your file in English, so what is left is easy to spot.
 
 ## What is translated so far
 

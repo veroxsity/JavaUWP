@@ -1,0 +1,33 @@
+name: Translations
+
+on:
+  pull_request:
+    paths:
+      - "MC.Xbox/**"
+      - "scripts/update-translations.ps1"
+      - ".github/workflows/translations.yml"
+  push:
+    branches:
+      - main
+      - main-native
+    paths:
+      - "MC.Xbox/**"
+      - "scripts/update-translations.ps1"
+      - ".github/workflows/translations.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check translation files
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Check en.json and the language files
+        shell: pwsh
+        run: .\scripts\update-translations.ps1 -Check

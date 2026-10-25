@@ -1,7 +1,9 @@
 # rewrites MC.Xbox\lang\en.json from the strings marked in the source, then reports what each language file is missing
 # -Fill adds the missing entries to each language file with the English text, so untranslated ones are easy to spot
+# -Check changes nothing and fails when en.json is out of date or a language file is broken
 param(
-    [switch]$Fill
+    [switch]$Fill,
+    [switch]$Check
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,10 +35,18 @@ function Quote([string]$text) {
     '"' + $escaped + '"'
 }
 
-function Write-Json([string]$path, [string]$name, $entries) {
+function Format-Json([string]$name, $entries) {
     $lines = @('  "_name": ' + (Quote $name))
     foreach ($key in $entries.Keys) { $lines += '  ' + (Quote $key) + ': ' + (Quote $entries[$key]) }
-    [IO.File]::WriteAllText($path, "{`n" + ($lines -join ",`n") + "`n}`n", $utf8)
+    "{`n" + ($lines -join ",`n") + "`n}`n"
+}
+
+function Write-Json([string]$path, [string]$name, $entries) {
+    [IO.File]::WriteAllText($path, (Format-Json $name $entries), $utf8)
+}
+
+function Get-Placeholders([string]$text) {
+    (@([regex]::Matches($text, '\{\d+\}') | ForEach-Object { $_.Value }) | Sort-Object -Unique) -join ' '
 }
 
 # keys that differ only by case are different strings, so the dictionaries have to compare exactly
@@ -80,7 +90,7 @@ $sources = Get-ChildItem (Join-Path $root "MC.Xbox") -Recurse -Include *.cpp, *.
     Where-Object { $_.FullName -notmatch '\\third_party\\' } | Sort-Object FullName
 $dynamic = @()
 foreach ($file in $sources) {
-    $source = [IO.File]::ReadAllText($file.FullName)
+    $source = [IO.File]::ReadAllText($file.FullName).Replace("`r`n", "`n")
     foreach ($m in [regex]::Matches($source, '\b(?:Tr|TrFormat|TR_NOOP)\(\s*((?:L"(?:[^"\\]|\\.)*"\s*)+)')) {
         Add-Key (Read-Literal $m.Groups[1].Value 'L')
     }
@@ -108,8 +118,17 @@ foreach ($file in $sources) {
     }
 }
 
-New-Item -ItemType Directory -Force $langDir | Out-Null
-Write-Json (Join-Path $langDir "en.json") "English" $english
+$problems = @()
+$enPath = Join-Path $langDir "en.json"
+if ($Check) {
+    $written = if (Test-Path $enPath) { [IO.File]::ReadAllText($enPath).Replace("`r`n", "`n") } else { "" }
+    if ($written -ne (Format-Json "English" $english)) {
+        $problems += "en.json is out of date, run scripts/update-translations.ps1 and commit the result"
+    }
+} else {
+    New-Item -ItemType Directory -Force $langDir | Out-Null
+    Write-Json $enPath "English" $english
+}
 Write-Host "en.json: $($english.Count) strings"
 if ($dynamic.Count -gt 0) {
     Write-Host "text on the web page that is built from pieces and cannot be translated yet:"
@@ -119,16 +138,41 @@ if ($dynamic.Count -gt 0) {
 foreach ($file in Get-ChildItem $langDir -Filter *.json | Where-Object { $_.Name -ne "en.json" }) {
     $current = New-Map
     $name = $file.BaseName
-    $parsed = Read-Map $file.FullName
-    foreach ($key in $parsed.Keys) {
-        if ($key -ceq "_name") { $name = $parsed[$key] } else { $current[$key] = $parsed[$key] }
+    try {
+        $parsed = Read-Map $file.FullName
+    } catch {
+        if (-not $Check) { throw }
+        $problems += "$($file.Name) is not valid JSON"
+        continue
     }
+    $hasName = $false
+    foreach ($key in $parsed.Keys) {
+        if ($key -ceq "_name") {
+            $name = $parsed[$key]
+            $hasName = [bool]$name
+        } else {
+            $current[$key] = $parsed[$key]
+        }
+    }
+    if ($Check -and -not $hasName) { $problems += "$($file.Name) has no _name, Settings would show the file name" }
 
     $missing = @($english.Keys | Where-Object { -not $current.Contains($_) })
     $unused = @($current.Keys | Where-Object { -not $english.Contains($_) })
     Write-Host "$($file.Name): $($missing.Count) missing, $($unused.Count) no longer in the source"
-    if ($Fill -and $missing.Count -gt 0) {
+    if ($Check) {
+        foreach ($key in $current.Keys) {
+            if (-not $english.Contains($key) -or $current[$key] -isnot [string] -or -not $current[$key]) { continue }
+            if ((Get-Placeholders $key) -ne (Get-Placeholders $current[$key])) {
+                $problems += "$($file.Name) changes the placeholders in `"$key`""
+            }
+        }
+    } elseif ($Fill -and $missing.Count -gt 0) {
         foreach ($key in $missing) { $current[$key] = $key }
         Write-Json $file.FullName $name $current
     }
+}
+
+if ($problems.Count -gt 0) {
+    $problems | ForEach-Object { Write-Host "problem: $_" }
+    exit 1
 }

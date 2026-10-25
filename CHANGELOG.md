@@ -2,6 +2,14 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-10-25
+
+### Added
+
+**Latin American Spanish is picked automatically.** A Spanish console set to Mexico, Argentina, Colombia or another Latin American country uses a language file named `es-419` if there is one, and plain `es` otherwise.
+
+**Translation files are checked when they are sent in.** A file that is not valid, has no name, or changes a `{0}` is flagged on the pull request. The same check runs locally with `scripts/update-translations.ps1 -Check`.
+
 ## 2026-10-24
 
 ### Added

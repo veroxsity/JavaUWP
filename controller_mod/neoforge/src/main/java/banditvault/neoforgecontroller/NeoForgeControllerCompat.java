@@ -180,6 +180,7 @@ public final class NeoForgeControllerCompat {
     }
 
     private static void renderControllerGuide(Screen screen, Object graphics, Minecraft client) {
+        if (!NeoForgeControllerSettings.get().showGuides) return;
         NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
         boolean container = screen instanceof AbstractContainerScreen;
         NeoForgeControllerGuide.drawVerticalLeft(graphics, client.font, 8, 8,
@@ -202,6 +203,7 @@ public final class NeoForgeControllerCompat {
     }
 
     public static void renderGameplayGuide(Object graphics) {
+        if (!NeoForgeControllerSettings.get().showGuides) return;
         Minecraft client = Minecraft.getInstance();
         if (!active || graphics == null || client == null || NeoForgeClientApi.screen(client) != null || client.player == null || NeoForgeClientApi.isHudHidden(client)) return;
         NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
@@ -295,6 +297,23 @@ public final class NeoForgeControllerCompat {
         }
     }
 
+    private static boolean analogMovementEnabled(NeoForgeControllerSettings settings) {
+        return NeoForgeMovementApi.analogSupported() && !settings.keyboardMovement;
+    }
+
+    // read by the keyboard input mixin, null leaves the vanilla movement alone
+    public static float[] analogMovement() {
+        NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
+        Minecraft client = Minecraft.getInstance();
+        if (!active || !analogMovementEnabled(settings) || client == null || NeoForgeClientApi.screen(client) != null) {
+            return null;
+        }
+        return ControllerRuntime.shapedMovement(
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
+            settings.moveDeadzone);
+    }
+
     private static void tickGameplay(Minecraft client) {
         NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
         Options options = client.options;
@@ -316,10 +335,11 @@ public final class NeoForgeControllerCompat {
 
         float lx = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
         float ly = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        setHeld(keys.forward, ly < -settings.moveDeadzone);
-        setHeld(keys.back, ly > settings.moveDeadzone);
-        setHeld(keys.left, lx < -settings.moveDeadzone);
-        setHeld(keys.right, lx > settings.moveDeadzone);
+        boolean analog = analogMovementEnabled(settings);
+        setHeld(keys.forward, !analog && ly < -settings.moveDeadzone);
+        setHeld(keys.back, !analog && ly > settings.moveDeadzone);
+        setHeld(keys.left, !analog && lx < -settings.moveDeadzone);
+        setHeld(keys.right, !analog && lx > settings.moveDeadzone);
         setHeld(keys.jump, button(settings, ControllerAction.JUMP));
 
         boolean sneakHeld;

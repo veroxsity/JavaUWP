@@ -33,6 +33,15 @@ public final class ControllerRuntime {
         return new float[] { x * scale, y * scale };
     }
 
+    public static float[] keyboardMovement(float x, float y, float deadzone) {
+        x = ControllerState.clampAxis(x);
+        y = ControllerState.clampAxis(y);
+        return new float[] {
+            x > deadzone ? 1.0f : x < -deadzone ? -1.0f : 0.0f,
+            y > deadzone ? 1.0f : y < -deadzone ? -1.0f : 0.0f
+        };
+    }
+
     public static int radialSlot(float x, float y, float deadzone) {
         if (x * x + y * y <= deadzone * deadzone) {
             return -1;

@@ -6,6 +6,12 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 ### Added
 
+**Walking is analogue on Forge and NeoForge.** Push the left stick a little to walk slowly and all the way to run, the same as on Fabric. This is in for Minecraft 1.21.11 so far.
+
+**Keyboard Like Movement.** A new option in the controller settings makes the stick walk at full speed in set directions, like the keyboard. It is meant for servers that reject analogue movement, and it is available on Fabric, Forge and NeoForge.
+
+**Show Button Guides.** A new option in the controller settings hides the button hints in menus and on the HUD.
+
 **Latin American Spanish is included.** Choose Español (Latinoamérica) under Language in Settings. Thanks to Sumer Double P for the translation.
 
 ## 2026-10-25

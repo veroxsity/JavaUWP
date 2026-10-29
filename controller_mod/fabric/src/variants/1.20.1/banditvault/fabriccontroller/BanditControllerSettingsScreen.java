@@ -642,6 +642,8 @@ public final class BanditControllerSettingsScreen extends class_437 {
         settings.toggleCrouch = false;
         settings.toggleSprint = false;
         settings.invertY = false;
+        settings.showGuides = true;
+        settings.keyboardMovement = false;
         settings.lookSpeed = 135.0f;
         settings.cursorSpeed = 14.0;
         settings.scrollAmount = 1.0;
@@ -719,6 +721,12 @@ public final class BanditControllerSettingsScreen extends class_437 {
         }
         if ("Scroll Amount".equals(option.label)) {
             return "Adjusts how far each controller scroll step moves lists.";
+        }
+        if ("Show Button Guides".equals(option.label)) {
+            return "Shows the on-screen controller button hints in menus and on the HUD.";
+        }
+        if ("Keyboard Like Movement".equals(option.label)) {
+            return "Moves at full speed in set directions like the keyboard, for servers that reject analogue movement.";
         }
         if ("Invert Look Y".equals(option.label)) {
             return "Flips vertical look so pushing up looks down.";
@@ -1141,7 +1149,9 @@ public final class BanditControllerSettingsScreen extends class_437 {
         new Option("Scroll Amount", s -> s.scrollAmount, (s, v) -> s.scrollAmount = v, 0.25, 4.0, 0.25, false),
         SNEAK_MODE,
         SPRINT_MODE,
-        new Option("Invert Look Y", s -> s.invertY ? 1.0 : 0.0, (s, v) -> s.invertY = v != 0.0)
+        new Option("Invert Look Y", s -> s.invertY ? 1.0 : 0.0, (s, v) -> s.invertY = v != 0.0),
+        new Option("Show Button Guides", s -> s.showGuides ? 1.0 : 0.0, (s, v) -> s.showGuides = v != 0.0),
+        new Option("Keyboard Like Movement", s -> s.keyboardMovement ? 1.0 : 0.0, (s, v) -> s.keyboardMovement = v != 0.0)
     };
 
     private static final Option[] ADVANCED = new Option[] {

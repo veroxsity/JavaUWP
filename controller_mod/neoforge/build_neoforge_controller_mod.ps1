@@ -139,7 +139,9 @@ foreach ($layer in @($variantLayers[$MinecraftVersion])) {
 $mainSources = @($mainSourcesByName.Values)
 
 $sourcePaths = @(@($compileOnlySources) + @($mainSources) | ForEach-Object { $_.FullName } | Sort-Object)
-$resourceFiles = @(Get-ChildItem $srcResources -Recurse -File | Select-Object -ExpandProperty FullName)
+$layerResourceDirs = @(@($variantLayers[$MinecraftVersion]) | ForEach-Object { Join-Path $PSScriptRoot "src\variants\$_\resources" } | Where-Object { Test-Path $_ })
+$resourceFiles = @(Get-ChildItem $srcResources -Recurse -File | Select-Object -ExpandProperty FullName) +
+    @($layerResourceDirs | ForEach-Object { Get-ChildItem $_ -Recurse -File | Select-Object -ExpandProperty FullName })
 $stampPath = Join-Path $buildRoot "build.stamp"
 $stamp = New-BuildStamp `
     -Values @(
@@ -209,12 +211,21 @@ if (Test-Path (Join-Path $classesDir "net\neoforged")) {
     throw "NeoForge controller jar must not ship compile-only NeoForge API classes."
 }
 Copy-Item -Recurse "$srcResources\*" $classesDir -Force
+# a version layer can ship a mixin config of its own, so a mixin that only fits some versions is never listed for the rest
+$extraMixinConfigs = @()
+foreach ($layerResources in $layerResourceDirs) {
+    Copy-Item -Recurse "$layerResources\*" $classesDir -Force
+    $extraMixinConfigs += @(Get-ChildItem $layerResources -Filter "*.mixins.json" | Select-Object -ExpandProperty Name)
+}
 
 $modsToml = Join-Path $classesDir "META-INF\neoforge.mods.toml"
 (Get-Content $modsToml -Raw).
     Replace("__NEOFORGE_VERSION__", $NeoForgeVersion).
     Replace("__MINECRAFT_VERSION__", $MinecraftVersion) |
     Set-Content $modsToml -NoNewline
+foreach ($config in $extraMixinConfigs) {
+    Add-Content $modsToml "`n[[mixins]]`nconfig=`"$config`""
+}
 
 $manifest = Join-Path $classesDir "META-INF\MANIFEST.MF"
 Push-Location $classesDir

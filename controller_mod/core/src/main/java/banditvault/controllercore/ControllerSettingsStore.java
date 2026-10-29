@@ -21,6 +21,8 @@ public class ControllerSettingsStore {
     public boolean toggleCrouch = false;
     public boolean toggleSprint = false;
     public boolean invertY = false;
+    public boolean showGuides = true;
+    public boolean keyboardMovement = false;
     public float lookSpeed = 135.0f;
     public double cursorSpeed = 14.0;
     public double scrollAmount = 1.0;
@@ -43,6 +45,8 @@ public class ControllerSettingsStore {
         toggleCrouch = bool(props, "toggleCrouch", toggleCrouch);
         toggleSprint = bool(props, "toggleSprint", toggleSprint);
         invertY = bool(props, "invertY", invertY);
+        showGuides = bool(props, "showGuides", showGuides);
+        keyboardMovement = bool(props, "keyboardMovement", keyboardMovement);
         lookSpeed = (float) range(number(props, "lookSpeed", lookSpeed), 30.0, 300.0);
         cursorSpeed = range(number(props, "cursorSpeed", cursorSpeed), 4.0, 40.0);
         scrollAmount = range(number(props, "scrollAmount", scrollAmount), 0.25, 4.0);
@@ -76,6 +80,8 @@ public class ControllerSettingsStore {
         props.setProperty("toggleCrouch", Boolean.toString(toggleCrouch));
         props.setProperty("toggleSprint", Boolean.toString(toggleSprint));
         props.setProperty("invertY", Boolean.toString(invertY));
+        props.setProperty("showGuides", Boolean.toString(showGuides));
+        props.setProperty("keyboardMovement", Boolean.toString(keyboardMovement));
         props.setProperty("lookSpeed", Float.toString(lookSpeed));
         props.setProperty("cursorSpeed", Double.toString(cursorSpeed));
         props.setProperty("scrollAmount", Double.toString(scrollAmount));

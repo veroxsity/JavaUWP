@@ -163,6 +163,7 @@ public final class BanditControllerCompat {
     }
 
     private static void renderControllerGuide(class_437 screen, class_332 context, class_310 client) {
+        if (!BanditControllerSettings.get().showGuides) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
         boolean container = screen instanceof class_465;
         BanditControllerGuide.drawVerticalLeft(context, client.field_1772, 8, 8,
@@ -210,6 +211,7 @@ public final class BanditControllerCompat {
     }
 
     public static void renderGameplayGuide(class_332 context) {
+        if (!BanditControllerSettings.get().showGuides) return;
         class_310 client = class_310.method_1551();
         if (!active || context == null || client == null || client.field_1755 != null || client.field_1724 == null || client.field_1690.field_1842) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
@@ -540,10 +542,12 @@ public final class BanditControllerCompat {
         if (client == null || client.field_1755 != null || !poll()) {
             return null;
         }
-        return ControllerRuntime.shapedMovement(
-            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
-            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
-            BanditControllerSettings.get().moveDeadzone);
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        float x = -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
+        float y = -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
+        return settings.keyboardMovement
+            ? ControllerRuntime.keyboardMovement(x, y, settings.moveDeadzone)
+            : ControllerRuntime.shapedMovement(x, y, settings.moveDeadzone);
     }
 
     static void resumeMenuAfterKeyboard(class_437 screen) {

@@ -1,5 +1,7 @@
 package banditvault.controllercore;
 
+import java.util.Properties;
+
 public final class ControllerRuntimeTest {
     public static void main(String[] args) {
         check(ControllerRuntime.shouldHoldKey(true, false, false));
@@ -16,6 +18,28 @@ public final class ControllerRuntimeTest {
 
         float[] diagonal = ControllerRuntime.shapedMovement(1.0f, 1.0f, 0.35f);
         close((float)Math.sqrt(diagonal[0] * diagonal[0] + diagonal[1] * diagonal[1]), 1.0f);
+
+        float[] keyboardIdle = ControllerRuntime.keyboardMovement(0.2f, -0.2f, 0.35f);
+        close(keyboardIdle[0], 0.0f);
+        close(keyboardIdle[1], 0.0f);
+        float[] keyboardDiagonal = ControllerRuntime.keyboardMovement(0.7f, -0.8f, 0.35f);
+        close(keyboardDiagonal[0], 1.0f);
+        close(keyboardDiagonal[1], -1.0f);
+        float[] keyboardAxis = ControllerRuntime.keyboardMovement(-0.5f, 0.3f, 0.35f);
+        close(keyboardAxis[0], -1.0f);
+        close(keyboardAxis[1], 0.0f);
+
+        ControllerSettingsStore saved = new ControllerSettingsStore() { };
+        saved.keyboardMovement = true;
+        saved.showGuides = false;
+        Properties properties = new Properties();
+        saved.writeTo(properties);
+        ControllerSettingsStore loaded = new ControllerSettingsStore() { };
+        loaded.readFrom(properties);
+        check(loaded.keyboardMovement);
+        check(!loaded.showGuides);
+        check(!new ControllerSettingsStore() { }.keyboardMovement);
+        check(new ControllerSettingsStore() { }.showGuides);
 
         check(ControllerRuntime.radialSlot(0.0f, 0.1f, 0.2f) == -1);
         check(ControllerRuntime.radialSlot(0.0f, -1.0f, 0.2f) == 0);

@@ -164,6 +164,7 @@ public final class BanditControllerCompat {
     }
 
     private static void renderControllerGuide(Screen screen, GuiGraphicsExtractor context, Minecraft client) {
+        if (!BanditControllerSettings.get().showGuides) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
         boolean container = screen instanceof AbstractContainerScreen;
         BanditControllerGuide.drawVerticalLeft(context, client.font, 8, 8,
@@ -211,6 +212,7 @@ public final class BanditControllerCompat {
     }
 
     public static void renderGameplayGuide(GuiGraphicsExtractor context) {
+        if (!BanditControllerSettings.get().showGuides) return;
         Minecraft client = Minecraft.getInstance();
         if (!active || context == null || client == null || FabricClientApi.screen(client) != null || client.player == null || FabricClientApi.isHudHidden(client)) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
@@ -261,10 +263,12 @@ public final class BanditControllerCompat {
         if (client == null || FabricClientApi.screen(client) != null || !poll()) {
             return null;
         }
-        return ControllerRuntime.shapedMovement(
-            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
-            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
-            BanditControllerSettings.get().moveDeadzone);
+        BanditControllerSettings settings = BanditControllerSettings.get();
+        float x = -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
+        float y = -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
+        return settings.keyboardMovement
+            ? ControllerRuntime.keyboardMovement(x, y, settings.moveDeadzone)
+            : ControllerRuntime.shapedMovement(x, y, settings.moveDeadzone);
     }
 
     private static boolean poll() {

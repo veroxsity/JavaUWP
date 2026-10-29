@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-10-29
+
+### Added
+
+**Latin American Spanish is included.** Choose Español (Latinoamérica) under Language in Settings. Thanks to Sumer Double P for the translation.
+
 ## 2026-10-25
 
 ### Added

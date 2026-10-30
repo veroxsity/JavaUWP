@@ -19,6 +19,13 @@ final class FabricScreenApi {
         context.fill(x, y - 5, x + 1, y + 6, 0xFFFFFFFF);
     }
 
+    static void beginCursorLayer(GuiGraphicsExtractor context) {
+        context.nextStratum();
+    }
+
+    static void endCursorLayer(GuiGraphicsExtractor context) {
+    }
+
     static boolean mousePressed(Screen screen, double mouseX, double mouseY, int button) {
         return screen.mouseClicked(mouseEvent(mouseX, mouseY, button), false);
     }

@@ -63,6 +63,8 @@ public final class ForgeControllerSettingsScreen extends Screen {
             addToggle(x, leftY, leftWidth, sprintLabel(settings), () -> settings.toggleSprint = !settings.toggleSprint);
             leftY += row;
             addToggle(x, leftY, leftWidth, invertLabel(settings), () -> settings.invertY = !settings.invertY);
+            leftY += row;
+            addToggle(x, leftY, leftWidth, movementLabel(settings), () -> settings.keyboardMovement = !settings.keyboardMovement);
             leftY += row + 4;
             addButton(ForgeControllerCompat.createButton(x, leftY, leftWidth, 20, "Reset defaults", button -> {
                 resetDefaults(settings);
@@ -89,6 +91,8 @@ public final class ForgeControllerSettingsScreen extends Screen {
             addToggle(x, y, panelWidth, sprintLabel(settings), () -> settings.toggleSprint = !settings.toggleSprint);
             y += row;
             addToggle(x, y, panelWidth, invertLabel(settings), () -> settings.invertY = !settings.invertY);
+            y += row;
+            addToggle(x, y, panelWidth, movementLabel(settings), () -> settings.keyboardMovement = !settings.keyboardMovement);
             y += row + 4;
             addStepper(x, y, panelWidth, "Look", Math.round(settings.lookSpeed), -15.0, 15.0, 30.0, 300.0, value -> settings.lookSpeed = (float) value);
             y += row;
@@ -147,6 +151,7 @@ public final class ForgeControllerSettingsScreen extends Screen {
         settings.toggleCrouch = false;
         settings.toggleSprint = false;
         settings.invertY = false;
+        settings.keyboardMovement = false;
         settings.lookSpeed = 135.0f;
         settings.cursorSpeed = 14.0;
         settings.scrollAmount = 1.0;
@@ -170,6 +175,10 @@ public final class ForgeControllerSettingsScreen extends Screen {
 
     private String invertLabel(ForgeControllerSettings settings) {
         return "Invert Y: " + (settings.invertY ? "On" : "Off");
+    }
+
+    private String movementLabel(ForgeControllerSettings settings) {
+        return "Keyboard Like Move: " + (settings.keyboardMovement ? "On" : "Off");
     }
 
     private String format(double value) {

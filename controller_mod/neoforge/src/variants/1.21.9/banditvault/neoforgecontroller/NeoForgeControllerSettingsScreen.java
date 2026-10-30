@@ -1139,25 +1139,16 @@ public final class NeoForgeControllerSettingsScreen extends Screen {
     private static final Option SNEAK_MODE = new Option("Sneak", s -> s.toggleCrouch ? 1.0 : 0.0, (s, v) -> s.toggleCrouch = v != 0.0);
     private static final Option SPRINT_MODE = new Option("Sprint", s -> s.toggleSprint ? 1.0 : 0.0, (s, v) -> s.toggleSprint = v != 0.0);
 
-    private static final Option[] BASIC = withMovementOption(new Option[] {
+    private static final Option[] BASIC = new Option[] {
         LOOK_SPEED,
         new Option("Cursor Speed", s -> s.cursorSpeed, (s, v) -> s.cursorSpeed = v, 4.0, 40.0, 1.0, false),
         new Option("Scroll Amount", s -> s.scrollAmount, (s, v) -> s.scrollAmount = v, 0.25, 4.0, 0.25, false),
         SNEAK_MODE,
         SPRINT_MODE,
         new Option("Invert Look Y", s -> s.invertY ? 1.0 : 0.0, (s, v) -> s.invertY = v != 0.0),
-        new Option("Show Button Guides", s -> s.showGuides ? 1.0 : 0.0, (s, v) -> s.showGuides = v != 0.0)
-    });
-
-    // the option only does something on versions that ship the keyboard input mixin
-    private static Option[] withMovementOption(Option[] options) {
-        if (!NeoForgeMovementApi.analogSupported()) {
-            return options;
-        }
-        Option[] all = java.util.Arrays.copyOf(options, options.length + 1);
-        all[options.length] = new Option("Keyboard Like Movement", s -> s.keyboardMovement ? 1.0 : 0.0, (s, v) -> s.keyboardMovement = v != 0.0);
-        return all;
-    }
+        new Option("Show Button Guides", s -> s.showGuides ? 1.0 : 0.0, (s, v) -> s.showGuides = v != 0.0),
+        new Option("Keyboard Like Movement", s -> s.keyboardMovement ? 1.0 : 0.0, (s, v) -> s.keyboardMovement = v != 0.0)
+    };
 
     private static final Option[] ADVANCED = new Option[] {
         new Option("Move Deadzone", s -> s.moveDeadzone, (s, v) -> s.moveDeadzone = (float)v, 0.0, 0.75, 0.05, true),

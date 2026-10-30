@@ -57,6 +57,8 @@ public final class BanditControllerCompat {
     private static double lastMouseCursorX = Double.NaN;
     private static double lastMouseCursorY = Double.NaN;
     private static boolean mouseOwnsCursor;
+    private static class_437 queuedCursorScreen;
+    private static class_332 queuedCursorContext;
     private static boolean snapStickLatched;
     private static CursorMode cursorMode = CursorMode.SNAP;
 
@@ -145,7 +147,18 @@ public final class BanditControllerCompat {
         applyLook(client.field_1724, axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X), y, seconds, settings);
     }
 
+    // Screens only queue the cursor. It is drawn from GameRenderer once the screen,
+    // anything mods draw over it and the toasts are done, so it always ends up on top.
     public static void renderCursor(class_437 screen, class_332 context) {
+        queuedCursorScreen = screen;
+        queuedCursorContext = context;
+    }
+
+    public static void renderQueuedCursor() {
+        class_437 screen = queuedCursorScreen;
+        class_332 context = queuedCursorContext;
+        queuedCursorScreen = null;
+        queuedCursorContext = null;
         class_310 client = class_310.method_1551();
         if (screen instanceof BanditControllerSettingsScreen || screen instanceof BanditControllerRadialScreen) {
             return;
@@ -153,12 +166,12 @@ public final class BanditControllerCompat {
         if (!active || screen == null || context == null || client == null || client.field_1755 != screen) {
             return;
         }
+        FabricScreenApi.beginCursorLayer(context);
         if (!mouseOwnsCursor) renderControllerGuide(screen, context, client);
-        if (mouseOwnsCursor || cursorX < 0.0 || cursorY < 0.0) return;
-
-        int x = (int)Math.round(cursorX);
-        int y = (int)Math.round(cursorY);
-        FabricScreenApi.drawCursor(context, x, y);
+        if (!mouseOwnsCursor && cursorX >= 0.0 && cursorY >= 0.0) {
+            FabricScreenApi.drawCursor(context, (int)Math.round(cursorX), (int)Math.round(cursorY));
+        }
+        FabricScreenApi.endCursorLayer(context);
     }
 
     private static void renderControllerGuide(class_437 screen, class_332 context, class_310 client) {

@@ -54,6 +54,8 @@ public final class NeoForgeControllerCompat {
     private static double lastMouseCursorX = Double.NaN;
     private static double lastMouseCursorY = Double.NaN;
     private static boolean mouseOwnsCursor;
+    private static Screen queuedCursorScreen;
+    private static Object queuedCursorGraphics;
     private static boolean snapStickLatched;
     private static KeyMapping radialPressedKey;
     private static boolean radialPressedAsKeyboard;
@@ -162,7 +164,18 @@ public final class NeoForgeControllerCompat {
         applyLook(client.player, axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X), y, seconds, settings);
     }
 
+    // Screens only queue the cursor. It is drawn from GameRenderer once the screen,
+    // anything mods draw over it and the toasts are done, so it always ends up on top.
     public static void renderCursor(Screen screen, Object graphics) {
+        queuedCursorScreen = screen;
+        queuedCursorGraphics = graphics;
+    }
+
+    public static void renderQueuedCursor() {
+        Screen screen = queuedCursorScreen;
+        Object graphics = queuedCursorGraphics;
+        queuedCursorScreen = null;
+        queuedCursorGraphics = null;
         Minecraft client = Minecraft.getInstance();
         if (screen instanceof NeoForgeControllerSettingsScreen || screen instanceof NeoForgeControllerRadialScreen) {
             return;
@@ -170,13 +183,11 @@ public final class NeoForgeControllerCompat {
         if (!active || screen == null || graphics == null || client == null || NeoForgeClientApi.screen(client) != screen) {
             return;
         }
+        NeoForgeVersionApi.beginCursorLayer(graphics);
         if (!mouseOwnsCursor) renderControllerGuide(screen, graphics, client);
-        if (mouseOwnsCursor || cursorX < 0.0 || cursorY < 0.0) {
-            return;
+        if (!mouseOwnsCursor && cursorX >= 0.0 && cursorY >= 0.0) {
+            NeoForgeVersionApi.renderCursor(graphics, (int) Math.round(cursorX), (int) Math.round(cursorY));
         }
-        int x = (int) Math.round(cursorX);
-        int y = (int) Math.round(cursorY);
-        NeoForgeVersionApi.renderCursor(graphics, x, y);
     }
 
     private static void renderControllerGuide(Screen screen, Object graphics, Minecraft client) {
@@ -298,7 +309,7 @@ public final class NeoForgeControllerCompat {
     }
 
     private static boolean analogMovementEnabled(NeoForgeControllerSettings settings) {
-        return NeoForgeMovementApi.analogSupported() && !settings.keyboardMovement;
+        return !settings.keyboardMovement;
     }
 
     // read by the keyboard input mixin, null leaves the vanilla movement alone

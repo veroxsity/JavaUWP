@@ -59,6 +59,8 @@ public final class ForgeControllerCompat {
     private static double lastMouseCursorX = Double.NaN;
     private static double lastMouseCursorY = Double.NaN;
     private static boolean mouseOwnsCursor;
+    private static Screen queuedCursorScreen;
+    private static GuiGraphics queuedCursorGraphics;
     private static double renderedCursorX = -1.0;
     private static double renderedCursorY = -1.0;
     private static long lastRenderedCursorNanos;
@@ -165,8 +167,19 @@ public final class ForgeControllerCompat {
         applyLook(client.f_91074_, axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X), y, seconds, settings);
     }
 
+    // Screens only queue the cursor. It is drawn from GameRenderer once the screen,
+    // anything mods draw over it and the toasts are done, so it always ends up on top.
     public static void renderCursor(Screen screen, GuiGraphics graphics) {
-        if (!active || screen == null || graphics == null) {
+        queuedCursorScreen = screen;
+        queuedCursorGraphics = graphics;
+    }
+
+    public static void renderQueuedCursor() {
+        Screen screen = queuedCursorScreen;
+        GuiGraphics graphics = queuedCursorGraphics;
+        queuedCursorScreen = null;
+        queuedCursorGraphics = null;
+        if (!active || screen == null || graphics == null || Minecraft.m_91087_().f_91080_ != screen) {
             return;
         }
         if (mouseOwnsCursor || renderedCursorX < 0.0 || renderedCursorY < 0.0) {
@@ -251,6 +264,19 @@ public final class ForgeControllerCompat {
         }
     }
 
+    // read by the keyboard input mixin, null leaves the vanilla movement alone
+    public static float[] analogMovement() {
+        ForgeControllerSettings settings = ForgeControllerSettings.get();
+        Minecraft client = Minecraft.m_91087_();
+        if (!active || settings.keyboardMovement || client == null || client.f_91080_ != null) {
+            return null;
+        }
+        return ControllerRuntime.shapedMovement(
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
+            settings.moveDeadzone);
+    }
+
     private static void tickGameplay(Minecraft client) {
         ForgeControllerSettings settings = ForgeControllerSettings.get();
         Options options = client.f_91066_;
@@ -272,10 +298,11 @@ public final class ForgeControllerCompat {
 
         float lx = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
         float ly = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        setHeld(keys.forward, ly < -settings.moveDeadzone);
-        setHeld(keys.back, ly > settings.moveDeadzone);
-        setHeld(keys.left, lx < -settings.moveDeadzone);
-        setHeld(keys.right, lx > settings.moveDeadzone);
+        boolean analog = !settings.keyboardMovement;
+        setHeld(keys.forward, !analog && ly < -settings.moveDeadzone);
+        setHeld(keys.back, !analog && ly > settings.moveDeadzone);
+        setHeld(keys.left, !analog && lx < -settings.moveDeadzone);
+        setHeld(keys.right, !analog && lx > settings.moveDeadzone);
         setHeld(keys.jump, held(settings, ControllerAction.JUMP));
 
         boolean sneakHeld;

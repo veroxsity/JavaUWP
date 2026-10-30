@@ -88,9 +88,7 @@ Get-ChildItem $forgeSource -Recurse -Filter "*.java" | ForEach-Object { $mainSou
 $mainSources = @($mainSourcesByName.Values)
 
 $sourcePaths = @(@($compileOnlySources) + @($mainSources) | ForEach-Object { $_.FullName } | Sort-Object)
-$layerResourceDirs = @(@($variantLayers[$MinecraftVersion]) | ForEach-Object { Join-Path $neoVariants "$_\resources" } | Where-Object { Test-Path $_ })
-$resourceFiles = @(Get-ChildItem $resources -Recurse -File | Select-Object -ExpandProperty FullName) +
-    @($layerResourceDirs | ForEach-Object { Get-ChildItem $_ -Recurse -File | Select-Object -ExpandProperty FullName })
+$resourceFiles = @(Get-ChildItem $resources -Recurse -File | Select-Object -ExpandProperty FullName)
 $stampPath = Join-Path $buildRoot "build.stamp"
 $stamp = New-BuildStamp `
     -Values @(
@@ -149,17 +147,6 @@ if (Test-Path (Join-Path $classesDir "net\minecraftforge")) {
 }
 
 Copy-Item -Recurse "$resources\*" $classesDir -Force
-# a version layer can ship a mixin config of its own, so a mixin that only fits some versions is never listed for the rest
-$extraMixinConfigs = @()
-foreach ($layerResources in $layerResourceDirs) {
-    Copy-Item -Recurse "$layerResources\*" $classesDir -Force
-    $extraMixinConfigs += @(Get-ChildItem $layerResources -Filter "*.mixins.json" | Select-Object -ExpandProperty Name)
-}
-if ($extraMixinConfigs.Count -gt 0) {
-    $manifestPath = Join-Path $classesDir "META-INF\MANIFEST.MF"
-    $manifestText = (Get-Content $manifestPath -Raw).TrimEnd()
-    Set-Content $manifestPath ($manifestText + "," + ($extraMixinConfigs -join ",") + "`n") -NoNewline
-}
 $modsToml = Join-Path $classesDir "META-INF\mods.toml"
 $forgeLoaderVersion = $ForgeVersion
 if ($ForgeVersion.StartsWith("$MinecraftVersion-")) {

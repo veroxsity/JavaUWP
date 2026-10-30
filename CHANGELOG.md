@@ -2,13 +2,19 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-10-30
+
+### Fixed
+
+**The controller cursor no longer hides behind modded menus.** Mods such as Essential draw their windows and popups after the game draws the menu, and the cursor used to be drawn before them, so it disappeared underneath. It is now drawn last, above the menu, any mod overlays and toasts. This applies to Fabric, Forge and NeoForge on every supported version.
+
 ## 2026-10-29
 
 ### Added
 
-**Walking is analogue on Forge and NeoForge.** Push the left stick a little to walk slowly and all the way to run, the same as on Fabric. This is in for Minecraft 1.21.11 so far.
+**Walking is analogue on Forge and NeoForge.** Push the left stick a little to walk slowly and all the way to run, the same as on Fabric.
 
-**Keyboard Like Movement.** A new option in the controller settings makes the stick walk at full speed in set directions, like the keyboard. It is meant for servers that reject analogue movement, and it is available on Fabric, Forge and NeoForge.
+**Keyboard Like Movement.** A new option in the controller settings makes the stick walk at full speed in set directions, like the keyboard. It is meant for servers that reject analogue movement, and it is available on Fabric, Forge and NeoForge for every Minecraft version.
 
 **Show Button Guides.** A new option in the controller settings hides the button hints in menus and on the HUD.
 

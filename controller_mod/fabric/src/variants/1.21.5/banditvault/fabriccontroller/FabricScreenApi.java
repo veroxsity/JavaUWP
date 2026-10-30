@@ -23,6 +23,15 @@ final class FabricScreenApi {
     static void endOverlay(class_332 context) {
     }
 
+    static void beginCursorLayer(class_332 context) {
+        context.method_51448().method_22903();
+        context.method_51448().method_22904(0.0, 0.0, 950.0);
+    }
+
+    static void endCursorLayer(class_332 context) {
+        context.method_51448().method_22909();
+    }
+
     static boolean mousePressed(class_437 screen, double mouseX, double mouseY, int button) {
         return screen.method_25402(mouseX, mouseY, button);
     }

@@ -15,4 +15,9 @@ public abstract class ForgeControllerGameRendererMixin {
         ForgeControllerCompat.markRenderFrameActive();
         ForgeControllerCompat.renderFrame(Minecraft.m_91087_());
     }
+
+    @Inject(method = "m_109093_", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/toasts/ToastComponent;m_94920_(Lnet/minecraft/client/gui/GuiGraphics;)V", shift = At.Shift.AFTER), remap = false)
+    private void banditvault$renderControllerCursor(float tickDelta, long startTime, boolean tick, CallbackInfo ci) {
+        ForgeControllerCompat.renderQueuedCursor();
+    }
 }

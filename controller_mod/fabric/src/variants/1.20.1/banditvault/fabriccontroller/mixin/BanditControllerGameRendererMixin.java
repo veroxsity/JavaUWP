@@ -20,4 +20,9 @@ public abstract class BanditControllerGameRendererMixin {
     private void banditvault$renderControllerLook(float tickDelta, long startTime, boolean tick, CallbackInfo ci) {
         BanditControllerCompat.renderFrame(this.field_4015);
     }
+
+    @Inject(method = "method_3192", at = @At(value = "INVOKE", target = "Lnet/minecraft/class_374;method_1996(Lnet/minecraft/class_332;)V", shift = At.Shift.AFTER))
+    private void banditvault$renderControllerCursor(float tickDelta, long startTime, boolean tick, CallbackInfo ci) {
+        BanditControllerCompat.renderQueuedCursor();
+    }
 }

@@ -1,2 +1,2 @@
 Manifest-Version: 1.0
-MixinConfigs: banditvault-forge-controller.mixins.json
+MixinConfigs: banditvault-forge-controller.mixins.json,banditvault-controller-movement.mixins.json

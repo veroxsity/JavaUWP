@@ -24,3 +24,6 @@ side="CLIENT"
 
 [[mixins]]
 config="banditvault-neoforge-controller.mixins.json"
+
+[[mixins]]
+config="banditvault-controller-movement.mixins.json"

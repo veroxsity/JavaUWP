@@ -21,4 +21,9 @@ public abstract class BanditControllerGameRendererMixin {
     private void banditvault$renderControllerLook(DeltaTracker tickCounter, boolean tick, CallbackInfo ci) {
         BanditControllerCompat.renderFrame(this.minecraft);
     }
+
+    @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render"))
+    private void banditvault$renderControllerCursor(DeltaTracker tickCounter, boolean tick, CallbackInfo ci) {
+        BanditControllerCompat.renderQueuedCursor();
+    }
 }

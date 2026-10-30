@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "banditvault.neoforgecontroller.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "NeoForgeControllerKeyboardInputMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

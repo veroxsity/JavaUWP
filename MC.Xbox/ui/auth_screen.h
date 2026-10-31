@@ -1391,7 +1391,7 @@ private:
         if (len > 0 && len < ARRAYSIZE(value)) {
             wchar_t* end = nullptr;
             const double parsed = wcstod(value, &end);
-            if (parsed >= 0.5 && parsed <= 8.0) {
+            if (parsed >= 0.25 && parsed <= 8.0) {
                 return static_cast<float>(parsed);
             }
         }

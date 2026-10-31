@@ -37,6 +37,7 @@ MC.Xbox/
       fabric.*            Fabric launch provider
       neoforge.*          NeoForge launch provider
       forge.*             Forge launch provider with legacy and modern paths
+      cleanroom.*         Cleanroom launch provider for Forge 1.12.2
 ```
 
 `build.ps1` compiles sources from these folders with include paths for `.`, `common`, `net`, `auth`, `ui`, `mods`, `profiles`, `launch`, `launch/loaders`, and `mouse_support` for the relay mouse API.
@@ -151,6 +152,23 @@ NeoForge generates patched client artifacts on first launch from downloaded offi
 Forge patched client jars are generated locally during build or first launch prep from official inputs. Do not commit or redistribute generated Forge client jars.
 
 Modern Forge controller targets from 1.21 through 26.2 reuse the NeoForge shared source with a Forge entrypoint. Minecraft 1.21.2 has no Forge row because no matching loader was published. Older catalog rows may still exist before their controller providers are implemented.
+
+### Cleanroom
+
+`launch/loaders/cleanroom.cpp` runs Minecraft 1.12.2 with Forge through [Cleanroom](https://github.com/CleanroomMC/Cleanroom), a Forge 1.12.2 fork that runs on modern Java and LWJGL 3. Plain 1.12.2 uses LWJGL 2, which opens its own Win32 window and never goes through the GLFW shim. Cleanroom swaps it for LWJGL 3 plus lwjglxx, an LWJGL 2 API on top of GLFW, so 1.12.2 gets the same windowing, input and graphics path as current versions.
+
+The target is pinned to Cleanroom `0.3.35-alpha`, which runs on Java 21 and LWJGL 3.3.6. Later releases do not work here. `0.4` added the Kirino render engine, which binds the wrong texture while the block atlas uploads. `0.5.13` and later need Java 25, and `0.7.0` moved windowing to SDL.
+
+- The manifest mirrors Cleanroom's own library list. Vanilla's LWJGL 2, netty and oshi come out, and only authlib, realms, text2speech and paulscode are kept from vanilla. Keeping vanilla's LWJGL 2 next to LWJGL 3 fails with `NoSuchMethodError`. Only x64 natives are taken.
+- The jar Cleanroom runs from is only published inside its installer. The copy on Cleanroom's maven is a development build without the binpatches. `CleanroomBeforeLaunch` extracts it from the downloaded installer into `game/libraries`.
+- There is no install step beyond that. Cleanroom binpatches the vanilla client while classes load, like Forge did on 1.12, so the runtime jar goes on the classpath ahead of the client.
+- `CleanroomBeforeLaunch` seeds three config values the first time. The Forge loading splash is turned off, because it draws from a second thread on a shared GL context and the shim only has one. Forge's IME blocking is turned off, since it loads `imm32` through JNA and the UWP container refuses that. The patch-mod check is turned off, so the game does not stop at a "press any key" screen.
+- Chunk render buffers take about 10 MB each and 1.12 makes one per builder, so Cleanroom launches with `-Xmx2560M -XX:MaxDirectMemorySize=1G`.
+- lwjglxx resets its idea of the window size after the first poll and would draw at 854x480. The GLFW shim re-sends the real window and framebuffer size on the first swap when it differs from what was asked for.
+- `patch/cleanroom/` builds `cleanroom-uwp-patch.jar` with no-op replacements for the dwmapi, ntdll and taskbar hooks in Cleanroom `0.4` and later. It is skipped for `0.3.35`, which has none of them.
+- Mod browsers search Forge mods for this target, and the launch screen labels it Forge.
+
+The 1.12.2 controller mod lives in `controller_mod/cleanroom/`. It is written against SRG names and compiled against a vanilla client renamed with mcp_config's `joined.tsrg`, with the Cleanroom jar on the classpath as shipped. Forge APIs whose signatures use vanilla classes are avoided for that reason. It shares `controller_mod/core` with the other loaders and has the same features: button guides, snap navigation, the radial menu, the settings screen and the console keyboard. Input goes into lwjglxx's own mouse and keyboard event queues, so vanilla handles hover, drag and clicks in every screen, modded ones included.
 
 To add another Forge target:
 

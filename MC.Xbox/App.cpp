@@ -21,6 +21,7 @@
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Display.h>
+#include <winrt/Windows.Graphics.Display.Core.h>
 #include <winrt/Windows.Media.Capture.h>
 
 #include "runtime_config.h"
@@ -360,6 +361,47 @@ static void ApplyMesaEnvOverrides(const std::wstring& exeDir) {
     WriteLogF(L"mesa_env.txt applied %d override(s) from %s", applied, path.c_str());
 }
 
+static double HdmiPixelsPerViewPixel(ICoreWindow* window) {
+    if (!window) return 0.0;
+    ABI::Windows::Foundation::Rect bounds = {};
+    if (FAILED(window->get_Bounds(&bounds)) || bounds.Height <= 0.0f) return 0.0;
+    try {
+        auto hdmi = winrt::Windows::Graphics::Display::Core::HdmiDisplayInformation::GetForCurrentView();
+        if (!hdmi) return 0.0;
+        auto mode = hdmi.GetCurrentDisplayMode();
+        if (!mode) return 0.0;
+        const uint32_t rawHeight = mode.ResolutionHeightInRawPixels();
+        WriteLogF(L"display scale: hdmi mode %ux%u, window %.0fx%.0f",
+            mode.ResolutionWidthInRawPixels(), rawHeight, bounds.Width, bounds.Height);
+        return rawHeight > 0 ? rawHeight / (double)bounds.Height : 0.0;
+    } catch (const winrt::hresult_error& ex) {
+        WriteLogF(L"display scale: hdmi display mode unavailable hr=0x%08X",
+            static_cast<unsigned int>(ex.code()));
+        return 0.0;
+    }
+}
+
+static void DetectDisplayScale(ICoreWindow* window) {
+    try {
+        // the console reports 1.0 here whatever the tv mode is, the hdmi mode gives the real ratio
+        double rawPixelsPerViewPixel = HdmiPixelsPerViewPixel(window);
+        if (rawPixelsPerViewPixel <= 0.0) {
+            rawPixelsPerViewPixel =
+                winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView()
+                    .RawPixelsPerViewPixel();
+        }
+        if (rawPixelsPerViewPixel >= 0.25 && rawPixelsPerViewPixel <= 8.0) {
+            wchar_t scaleText[32] = {};
+            swprintf_s(scaleText, L"%.6f", rawPixelsPerViewPixel);
+            SetEnvironmentVariableW(L"MC_RAW_PIXELS_PER_VIEW_PIXEL", scaleText);
+            WriteLogF(L"display scale: rawPixelsPerViewPixel=%s", scaleText);
+        }
+    } catch (const winrt::hresult_error& ex) {
+        WriteLogF(L"display scale: DisplayInformation unavailable hr=0x%08X msg=%s",
+            static_cast<unsigned int>(ex.code()), ex.message().c_str());
+    }
+}
+
 class App : public RuntimeClass<RuntimeClassFlags<WinRtClassicComMix>, IFrameworkView>
 {
 public:
@@ -375,21 +417,6 @@ public:
         }
         EnsureDirectoryTree(g_logDir);
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
-
-        try {
-            const double rawPixelsPerViewPixel =
-                winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView()
-                    .RawPixelsPerViewPixel();
-            if (rawPixelsPerViewPixel >= 0.5 && rawPixelsPerViewPixel <= 8.0) {
-                wchar_t scaleText[32] = {};
-                swprintf_s(scaleText, L"%.6f", rawPixelsPerViewPixel);
-                SetEnvironmentVariableW(L"MC_RAW_PIXELS_PER_VIEW_PIXEL", scaleText);
-                WriteLogF(L"SetWindow: rawPixelsPerViewPixel=%s", scaleText);
-            }
-        } catch (const winrt::hresult_error& ex) {
-            WriteLogF(L"SetWindow: DisplayInformation scale unavailable hr=0x%08X msg=%s",
-                static_cast<unsigned int>(ex.code()), ex.message().c_str());
-        }
 
         // On Xbox, the B button is also treated as a UWP Back request. If it is
         // not handled here, the shell can suspend/back out of the app before the
@@ -500,6 +527,8 @@ public:
             WriteLogF(L"mesa shader cache dir=%s", mesaCacheDir.c_str());
         }
         WriteLog(L"mesa_glthread enabled");
+        // here and not in SetWindow, Run starts the log afresh
+        DetectDisplayScale(g_authWindow.Get());
         ApplyMesaEnvOverrides(exeDir);
 
         WriteLog(L"=== MC.App Run() started ===");
@@ -828,7 +857,7 @@ public:
             loaderLabel = L"Fabric";
         } else if (versionInfo.loader == L"neoforge") {
             loaderLabel = L"NeoForge";
-        } else if (versionInfo.loader == L"forge") {
+        } else if (versionInfo.loader == L"forge" || versionInfo.loader == L"cleanroom") {
             loaderLabel = L"Forge";
         }
 

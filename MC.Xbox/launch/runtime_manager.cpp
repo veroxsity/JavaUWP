@@ -170,7 +170,8 @@ static bool IsBanditControllerJarName(const std::wstring& fileName) {
         lower.compare(lower.size() - 4, 4, L".jar") == 0 &&
         (lower.rfind(L"banditvault-fabric-controller", 0) == 0 ||
             lower.rfind(L"banditvault-forge-controller", 0) == 0 ||
-            lower.rfind(L"banditvault-neoforge-controller", 0) == 0);
+            lower.rfind(L"banditvault-neoforge-controller", 0) == 0 ||
+            lower.rfind(L"banditvault-cleanroom-controller", 0) == 0);
 }
 
 static bool IsControlifyJarName(const std::wstring& fileName) {

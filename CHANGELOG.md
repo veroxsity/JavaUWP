@@ -2,6 +2,18 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-10-31
+
+### Added
+
+**Minecraft 1.12.2 with Forge.** 1.12.2 is in the version list as an experimental target. It runs through Cleanroom, a version of Forge 1.12.2 that works on newer Java, so most Forge 1.12.2 mods load as they are. The controller has the same features as on newer versions: button guides, menu snapping, the radial menu, the controller settings on Back, and the console keyboard for chat and signs.
+
+**Recommended mods for 1.12.2.** The Recommended tab now lists mods that were tested on Xbox with 1.12.2: Nothirium for faster chunk rendering, VintageFix, Universal Tweaks, Entity Culling, Had Enough Items, Xaero's Minimap and LemonSkin. OptiFine does not work on 1.12.2 in the launcher yet. It shows up in the mod list but does not change anything.
+
+### Fixed
+
+**The game fills the screen at 1440p and 4K.** The console used to report the same scale whatever the TV was set to, so a 1440p or 4K output showed a 1080p picture in one corner unless the scale was set by hand in `mesa_env.txt`. The launcher now reads the TV's output mode and sizes the game to match. A value set in `mesa_env.txt` still takes priority.
+
 ## 2026-10-30
 
 ### Fixed

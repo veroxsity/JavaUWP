@@ -68,7 +68,7 @@ The default target is **1.21.11 + Fabric 0.19.5**, using Java 21. The catalog al
 | `1.19.2` | Fabric | Testing. |
 | `1.18.2` | Forge | Experimental. No bundled controller provider. |
 | `1.16.5` | Fabric | Testing. |
-| `1.12.2` | Forge, Vanilla | Catalog entries only. The legacy launch provider is not implemented. |
+| `1.12.2` | Forge | Experimental. Forge runs through Cleanroom, and the controller works the same as on newer versions. Vanilla 1.12.2 is not supported. |
 
 Fabric uses **0.19.5** on listed targets from `1.20.1` onward, and **0.14.25** on `1.19.2` and `1.16.5`. Exact Forge and NeoForge versions, runtime choices and controller providers are listed in [the version catalog](config/versions.tsv).
 

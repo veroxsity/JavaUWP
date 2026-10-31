@@ -53,5 +53,5 @@ minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	contr
 1.19.2	1.19.2 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
 1.18.2	1.18.2 Forge	forge	40.2.27	java17	experimental	none	Legacy target retained
 1.16.5	1.16.5 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
-1.12.2	1.12.2 Forge	forge	selected	legacy	experimental	none	Legacy provider not implemented yet
+1.12.2	1.12.2 Forge	cleanroom	0.3.35-alpha	java21	experimental	cleanroom	Forge 1.12.2 through Cleanroom on Java 21 and LWJGL 3
 1.12.2	1.12.2 Vanilla	vanilla	none	legacy	experimental	none	Legacy provider not implemented yet

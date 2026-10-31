@@ -33,6 +33,13 @@ versions above are the releases the patch is applied against, which is not
 necessarily the same thing. Worth pinning properly the next time these files are
 refreshed from upstream.
 
+## Stand-ins under `patch/cleanroom/`
+
+`DwmApi.java`, `NtDll.java` and `TaskbarApi.java` are written for this repository, not
+copied. They share the names of [Cleanroom](https://github.com/CleanroomMC/Cleanroom)'s
+window hooks so they can take their place on the classpath, and every method does
+nothing. They are only built for Cleanroom 0.4 and later, which have those hooks.
+
 ## Prebuilt binaries under `mesa-runtime/`
 
 Prebuilt Mesa UWP DLLs. Not built from source in this repository and not modified
@@ -50,5 +57,13 @@ dependency surface is written down in one place.
   rights are granted by this repository, and the launcher verifies ownership
   before downloading any of it.
 - Fabric Loader, Forge, NeoForge and their libraries.
+- [Cleanroom](https://github.com/CleanroomMC/Cleanroom) 0.3.35-alpha and its libraries,
+  from `repo.cleanroommc.com`. That release is LGPL-2.1. Cleanroom moved to the
+  source-available CleanroomMC License on 2026-09-29, so a newer pin needs its
+  terms read first.
+- MCP's `mcp_config` mappings and
+  [ForgeAutoRenamingTool](https://github.com/MinecraftForge/ForgeAutoRenamingTool)
+  0.1.22 (LGPL-2.1), used on the build machine only to compile the 1.12.2
+  controller mod.
 - LWJGL and its native jars.
 - The Java runtime, packaged from a locally installed JDK.

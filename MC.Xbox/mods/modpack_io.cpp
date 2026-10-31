@@ -60,7 +60,7 @@ static std::wstring ModrinthDependencyLoaderKey(const std::wstring& loader) {
     if (l == L"fabric") return L"fabric-loader";
     if (l == L"quilt") return L"quilt-loader";
     if (l == L"neoforge") return L"neoforge";
-    if (l == L"forge") return L"forge";
+    if (l == L"forge" || l == L"cleanroom") return L"forge";
     return L"";
 }
 

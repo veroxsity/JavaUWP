@@ -49,7 +49,8 @@ static std::string ModrinthLoaderId(const std::wstring& loader) {
     std::wstring l = loader;
     for (auto& c : l) c = static_cast<wchar_t>(towlower(c));
     if (l == L"neoforge") return "neoforge";
-    if (l == L"forge") return "forge";
+    // cleanroom runs ordinary 1.12.2 forge mods
+    if (l == L"forge" || l == L"cleanroom") return "forge";
     if (l == L"quilt") return "quilt";
     if (l == L"vanilla") return "";
     return "fabric";

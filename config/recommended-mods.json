@@ -22,7 +22,6 @@
     "26.2": ["sodium", "modernfix", "ferrite-core", "c2me-fabric", "scalablelux", "mcwifipnp", "fpsdisplay", "modmenu"]
   },
   "forge": {
-    "1.12.2": ["ferrite-core", "entityculling", "clumps"],
     "1.18.2": ["ferrite-core", "rubidium", "entityculling", "canary", "saturn", "modernfix", "lightspeed", "clumps", "embeddium", "memoryleakfix", "fastload"],
     "1.20.1": ["ferrite-core", "rubidium", "entityculling", "canary", "immediatelyfast", "saturn", "modernfix", "clumps", "embeddium", "memoryleakfix", "noisiumed", "fastload"],
     "1.21": [ "entityculling", "immediatelyfast", "clumps", "noisiumed"],
@@ -40,6 +39,9 @@
     "26.1.1": [],
     "26.1.2": [],
     "26.2": []
+  },
+  "cleanroom": {
+    "1.12.2": ["nothirium", "vintagefix", "universal-tweaks", "entityculling", "had-enough-items", "xaeros-minimap", "lemonskin"]
   },
   "neoforge": {
     "1.20.4": [],

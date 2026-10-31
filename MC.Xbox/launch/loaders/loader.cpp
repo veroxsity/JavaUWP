@@ -1,5 +1,6 @@
 #include "loader.h"
 
+#include "cleanroom.h"
 #include "fabric.h"
 #include "forge.h"
 #include "neoforge.h"
@@ -21,6 +22,9 @@ void LoaderFinalizeVersionInfo(
     case LoaderId::Forge:
         ForgeFinalizeVersionInfo(info, target, defaultTarget);
         break;
+    case LoaderId::Cleanroom:
+        CleanroomFinalizeVersionInfo(info, target, defaultTarget);
+        break;
     default:
         info.supported = false;
         break;
@@ -32,6 +36,8 @@ void LoaderBeforeLaunch(const LoaderPreLaunchContext& ctx) {
         NeoForgeBeforeLaunch(ctx);
     } else if (IsLoader(ctx.versionInfo.loader, LoaderId::Forge)) {
         ForgeBeforeLaunch(ctx);
+    } else if (IsLoader(ctx.versionInfo.loader, LoaderId::Cleanroom)) {
+        CleanroomBeforeLaunch(ctx);
     }
 }
 
@@ -53,6 +59,8 @@ void LoaderAdjustClasspath(const LoaderJvmContext& ctx, std::wstring& classPath,
         NeoForgeAdjustClasspath(ctx, classPath, result);
     } else if (ctx.loader == LoaderId::Forge) {
         ForgeAdjustClasspath(ctx, classPath, result);
+    } else if (ctx.loader == LoaderId::Cleanroom) {
+        CleanroomAdjustClasspath(ctx, classPath, result);
     }
 }
 
@@ -66,6 +74,9 @@ void LoaderAddJvmOptions(const LoaderJvmContext& ctx, std::vector<std::string>& 
         break;
     case LoaderId::Forge:
         ForgeAddJvmOptions(ctx, vmOptions);
+        break;
+    case LoaderId::Cleanroom:
+        CleanroomAddJvmOptions(ctx, vmOptions);
         break;
     default:
         break;

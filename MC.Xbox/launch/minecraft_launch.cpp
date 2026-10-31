@@ -838,7 +838,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         loaderLabel = L"Fabric";
     } else if (loaderId == LoaderId::NeoForge) {
         loaderLabel = L"NeoForge";
-    } else if (loaderId == LoaderId::Forge) {
+    } else if (loaderId == LoaderId::Forge || loaderId == LoaderId::Cleanroom) {
         loaderLabel = L"Forge";
     }
     reportProgress(
@@ -920,7 +920,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     EnsureDirectoryTree(gameDir + L"\\showdown");
     EnsureDirectoryTree(exeDir + L"\\showdown");
     EnsureDirectoryTree(userModsDir);
-    if ((loaderId == LoaderId::Forge || loaderId == LoaderId::NeoForge) &&
+    if ((loaderId == LoaderId::Forge || loaderId == LoaderId::NeoForge || loaderId == LoaderId::Cleanroom) &&
         !bundledModsDir.empty() &&
         DirectoryExists(bundledModsDir)) {
         CopyDirectoryContentsAlways(bundledModsDir, userModsDir);

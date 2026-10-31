@@ -323,6 +323,10 @@ static BOOL g_initialised = FALSE;
 static BOOL g_should_close = FALSE;
 static int g_window_width = 1920;
 static int g_window_height = 1080;
+// the size the app asked glfwCreateWindow for, which the console never gives it
+static int g_created_width = 0;
+static int g_created_height = 0;
+static bool g_created_size_announced = false;
 static int g_framebuffer_width = 1920;
 static int g_framebuffer_height = 1080;
 static int g_menu_window_width = 960;
@@ -1806,7 +1810,7 @@ static void QueryDisplayScale(double& scaleX, double& scaleY) {
     if (envLen > 0 && envLen < (DWORD)(sizeof(envScale) / sizeof(envScale[0]))) {
         wchar_t* end = nullptr;
         const double value = wcstod(envScale, &end);
-        if (value >= 0.5 && value <= 8.0) {
+        if (value >= 0.25 && value <= 8.0) {
             scaleX = value;
             scaleY = value;
             return;
@@ -2730,6 +2734,9 @@ extern "C" __declspec(dllexport)
 GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFWwindow*) {
     ShimLog("glfwCreateWindow %dx%d '%s'", w, h, title ? title : "");
     if (!g_initialised && !glfwInit()) return NULL;
+    g_created_width = w;
+    g_created_height = h;
+    g_created_size_announced = false;
 
     if (w > 0) {
         g_menu_window_width = w;
@@ -3632,6 +3639,15 @@ extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
     if (g_swap_log_count < 12) {
         ++g_swap_log_count;
         ShimLog("glfwSwapBuffers #%d", g_swap_log_count);
+    }
+    // lwjglxx resets to the requested size after its first poll, so the real size goes out again after the first frame
+    if (!g_created_size_announced && g_winsize_cb && g_created_width > 0 && g_created_height > 0 &&
+        (g_created_width != g_window_width || g_created_height != g_window_height)) {
+        g_created_size_announced = true;
+        ShimLog("Announcing window size %dx%d after create asked for %dx%d",
+            g_window_width, g_window_height, g_created_width, g_created_height);
+        g_winsize_cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
+        if (g_fbsize_cb) g_fbsize_cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
     }
     if (g_cursorMode == GLFW_CURSOR_NORMAL &&
         CurrentCursorInputOwner() == CursorInputOwnerMouse) {

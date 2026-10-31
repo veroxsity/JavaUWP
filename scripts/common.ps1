@@ -667,6 +667,22 @@ function Ensure-Dir {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
 }
 
+function Get-JarClassRelease {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $entry = $zip.Entries | Where-Object { $_.FullName -like "*.class" } | Select-Object -First 1
+        if (-not $entry) { throw "No class files in $Path" }
+        $stream = $entry.Open()
+        try {
+            $header = New-Object byte[] 8
+            [void]$stream.Read($header, 0, 8)
+        } finally { $stream.Dispose() }
+        return (($header[6] -shl 8) -bor $header[7]) - 44
+    } finally { $zip.Dispose() }
+}
+
 function Test-JarComplete {
     param([string]$Path, [string]$RequiredEntry)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }

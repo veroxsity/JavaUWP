@@ -1,0 +1,10 @@
+[
+  {
+    "modid": "banditvault_controller",
+    "name": "Bandit Controller",
+    "description": "Xbox controller support for Bandit Launcher.",
+    "version": "1.0.0",
+    "mcversion": "1.12.2",
+    "authorList": ["BanditVault"]
+  }
+]

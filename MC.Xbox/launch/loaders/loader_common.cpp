@@ -20,6 +20,7 @@ LoaderId ParseLoaderId(const std::wstring& loader) {
     if (_wcsicmp(loader.c_str(), L"fabric") == 0) return LoaderId::Fabric;
     if (_wcsicmp(loader.c_str(), L"neoforge") == 0) return LoaderId::NeoForge;
     if (_wcsicmp(loader.c_str(), L"forge") == 0) return LoaderId::Forge;
+    if (_wcsicmp(loader.c_str(), L"cleanroom") == 0) return LoaderId::Cleanroom;
     return LoaderId::Unknown;
 }
 

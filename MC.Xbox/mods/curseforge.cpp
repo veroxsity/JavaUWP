@@ -334,7 +334,7 @@ bool KeyConfigured() {
 
 int LoaderType(const std::wstring& loader) {
     const std::wstring l = ToLowerW(loader);
-    if (l == L"forge") return 1;
+    if (l == L"forge" || l == L"cleanroom") return 1;
     if (l == L"fabric") return 4;
     if (l == L"quilt") return 5;
     if (l == L"neoforge") return 6;

@@ -161,6 +161,11 @@ function Add-MinecraftLibraries($VersionJson, [System.Collections.Generic.List[o
         if ($X64NativesOnly -and $library.name -match ':natives-windows-(arm64|x86)$') {
             continue
         }
+        # and it has no os rule on its linux and mac natives either, the console never loads them
+        if ($X64NativesOnly -and $library.name -match '[:-](natives-)?(linux|osx|macos|freebsd)([-_][A-Za-z0-9_]+)*$') {
+            Write-Host "Skipping non windows library $($library.name)"
+            continue
+        }
 
         if ($library.downloads.artifact) {
             $artifact = $library.downloads.artifact

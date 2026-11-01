@@ -8,6 +8,8 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 **The mouse cursor should now line up at 1440p and 4K.** After the 1440p and 4K fix, the cursor could be drawn in one place while clicks landed near the top left of the screen. This also happened after switching fullscreen. The game and the cursor were using different screen sizes, and they now match. Tell us if it still happens, and include the line starting `Window size` from the shim log.
 
+**1.12.2 no longer tries to download Linux libraries.** Preparing Minecraft 1.12.2 with Forge could stop on "Download failed after retries" at a Linux-only netty file the console never uses. Those files are no longer in the download list. If you still get a download error on 1.12.2, send the `mc_launch.log` from the launcher's log folder.
+
 ## 2026-10-31
 
 ### Added

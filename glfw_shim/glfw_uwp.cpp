@@ -2344,7 +2344,11 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
     if (hasPoint) {
-        DispatchCursorPos(x, y);
+        if (g_cursorDisabled) {
+            DispatchCursorPos(x, y);
+        } else {
+            DispatchMouseWindowAbsolute(x, y);
+        }
     } else if (kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
@@ -3045,10 +3049,10 @@ extern "C" __declspec(dllexport) void glfwSetInputMode(GLFWwindow*, int mode, in
             g_menu_abs_x = ClampDouble(MenuInputToWindowX(g_pending_cursor_x), 0.0, CursorMaxX());
             g_menu_abs_y = ClampDouble(MenuInputToWindowY(g_pending_cursor_y), 0.0, CursorMaxY());
         } else {
-            g_menu_abs_x = ClampDouble(g_cursor_x, 0.0, CursorMaxX());
-            g_menu_abs_y = ClampDouble(g_cursor_y, 0.0, CursorMaxY());
+            g_menu_abs_x = ClampDouble(MenuInputToWindowX(g_cursor_x), 0.0, CursorMaxX());
+            g_menu_abs_y = ClampDouble(MenuInputToWindowY(g_cursor_y), 0.0, CursorMaxY());
         }
-        DispatchCursorPos(g_menu_abs_x, g_menu_abs_y);
+        DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), false);
     }
     if (value == GLFW_CURSOR_NORMAL) {
 

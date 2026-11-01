@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-01
+
+### Fixed
+
+**The mouse cursor should now line up at 1440p and 4K.** After the 1440p and 4K fix, the cursor could be drawn in one place while clicks landed near the top left of the screen. This also happened after switching fullscreen. The game and the cursor were using different screen sizes, and they now match. Tell us if it still happens, and include the line starting `Window size` from the shim log.
+
 ## 2026-10-31
 
 ### Added

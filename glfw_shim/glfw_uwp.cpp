@@ -2403,7 +2403,12 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
     double y = g_cursor_y;
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
-    if (!hasPoint && kind == PointerDispatchEnter) {
+    if (hasPoint && !g_cursorDisabled) {
+        // summed raw deltas drift from the accelerated console pointer so menus take its position instead
+        g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
+        g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
+        DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), false);
+    } else if (!hasPoint && kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
 
@@ -2457,19 +2462,12 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
-    static const double menuSpeed = MouseSpeedFromEnvironment(L"MC_MOUSE_MENU_SPEED");
     static const double gameSpeed = MouseSpeedFromEnvironment(L"MC_MOUSE_GAME_SPEED");
-    const double speed = g_cursorDisabled ? gameSpeed : menuSpeed;
     SetCursorInputOwner(CursorInputOwnerMouse);
+    // menus take the pointer position in HandlePointerEvent
     if (g_cursorDisabled) {
-        DispatchMouseDelta(delta.X * speed, delta.Y * speed);
-        return;
+        DispatchMouseDelta(delta.X * gameSpeed, delta.Y * gameSpeed);
     }
-    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + delta.X * speed, 0.0, CursorMaxX());
-    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + delta.Y * speed, 0.0, CursorMaxY());
-    g_menu_abs_x = windowX;
-    g_menu_abs_y = windowY;
-    DispatchCursorPosInternal(WindowToMenuInputX(windowX), WindowToMenuInputY(windowY), false);
 }
 static float ApplyDeadzone(float value, float deadzone) {
     const float absValue = value < 0.0f ? -value : value;
@@ -3152,6 +3150,18 @@ extern "C" __declspec(dllexport) void glfwSetCursorPos(GLFWwindow*, double x, do
     g_menu_abs_x = ClampDouble(MenuInputToWindowX(x), 0.0, CursorMaxX());
     g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
     DispatchCursorPosInternal(x, y, false);
+
+    // move the console pointer too or menus jump back to it on the next move
+    if (!AcquireCoreWindow()) return;
+    ComPtr<ICoreWindow2> coreWindow2;
+    if (SUCCEEDED(g_coreWindow.As(&coreWindow2)) && coreWindow2) {
+        const double sx = CurrentPointerScaleX();
+        const double sy = CurrentPointerScaleY();
+        Point position = {};
+        position.X = (FLOAT)(sx > 0.0 ? g_menu_abs_x / sx : g_menu_abs_x);
+        position.Y = (FLOAT)(sy > 0.0 ? g_menu_abs_y / sy : g_menu_abs_y);
+        coreWindow2->put_PointerPosition(position);
+    }
 }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateCursor(const GLFWimage*, int, int) { return (GLFWcursor*)1; }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateStandardCursor(int) { return (GLFWcursor*)1; }

@@ -6,7 +6,7 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 ### Fixed
 
-**A mouse plugged into the console should now click where the cursor is in Minecraft menus.** The menu cursor was worked out from raw mouse movement and drifted away from the pointer on screen, so clicks landed up and to the left of it at every resolution. Menus now take the pointer position. Controllers and the mouse relay were not affected. Menu mouse sensitivity now only changes the launcher's own menus. Gameplay sensitivity still applies to the camera.
+**A mouse plugged into the console should click where the cursor is on the title screen and other menus.** Until a world was joined, the launcher treated menus as gameplay unless the controller mod was installed, so the mouse cursor was not drawn or kept on screen and clicks drifted away from it. Menus are now treated as menus from the start. A change earlier today that stopped the mouse moving in menus has also been undone.
 
 ## 2026-11-01
 

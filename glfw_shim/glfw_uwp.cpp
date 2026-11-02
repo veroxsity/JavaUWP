@@ -447,12 +447,13 @@ static float g_content_scale = 1.f;
 static bool g_controller_lb_down = false;
 static unsigned char g_controller_mouse_state[8] = {};
 static bool g_controller_rb_down = false;
-static bool g_cursorDisabled = true;
+static bool g_cursorDisabled = false;
 // Queue cursor moves requested while disabled until menu mode is restored.
 static bool g_pending_cursor_valid = false;
 static double g_pending_cursor_x = 0.0;
 static double g_pending_cursor_y = 0.0;
-static int g_cursorMode = GLFW_CURSOR_DISABLED;
+// real glfw starts in normal mode and minecraft only sets the mode when it grabs or releases the mouse
+static int g_cursorMode = GLFW_CURSOR_NORMAL;
 static bool g_cursor_inside = false;
 static double g_cursor_x = 960.0;
 static double g_cursor_y = 540.0;
@@ -464,6 +465,7 @@ static bool g_mouseDeviceHooksInstalled = false;
 static ComPtr<MouseDeviceMovedHandler> g_mouseMovedHandler;
 static EventRegistrationToken g_mouseMovedToken = {};
 static int g_mouse_log_count = 0;
+static int g_pointer_log_count = 0;
 static unsigned char g_mouse_state[8] = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerCaptureLostHandler;
 static EventRegistrationToken g_pointerCaptureLostToken = {};
@@ -2403,12 +2405,7 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
     double y = g_cursor_y;
     ComPtr<ABI::Windows::UI::Input::IPointerPointProperties> props;
     const bool hasPoint = ReadPointerEvent(args, &x, &y, &props);
-    if (hasPoint && !g_cursorDisabled) {
-        // summed raw deltas drift from the accelerated console pointer so menus take its position instead
-        g_menu_abs_x = ClampDouble(x, 0.0, CursorMaxX());
-        g_menu_abs_y = ClampDouble(y, 0.0, CursorMaxY());
-        DispatchCursorPosInternal(WindowToMenuInputX(g_menu_abs_x), WindowToMenuInputY(g_menu_abs_y), false);
-    } else if (!hasPoint && kind == PointerDispatchEnter) {
+    if (!hasPoint && kind == PointerDispatchEnter) {
         DispatchCursorEnter(true);
     }
 
@@ -2447,13 +2444,13 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
         g_coreWindow->ReleasePointerCapture();
     }
 
-    if (g_mouse_log_count < 24 &&
+    if (g_pointer_log_count < 40 &&
         (kind == PointerDispatchMove || kind == PointerDispatchPress ||
          kind == PointerDispatchRelease || kind == PointerDispatchWheel ||
          kind == PointerDispatchEnter)) {
-        ++g_mouse_log_count;
-        ShimLog("Pointer event kind=%d cursor=%.1f,%.1f buttons=%d%d%d%d%d",
-            (int)kind, g_cursor_x, g_cursor_y,
+        ++g_pointer_log_count;
+        ShimLog("Pointer event kind=%d pointer=%.1f,%.1f cursor=%.1f,%.1f buttons=%d%d%d%d%d",
+            (int)kind, x, y, g_cursor_x, g_cursor_y,
             g_mouse_state[0], g_mouse_state[1], g_mouse_state[2], g_mouse_state[3], g_mouse_state[4]);
     }
 }
@@ -2462,12 +2459,19 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
+    static const double menuSpeed = MouseSpeedFromEnvironment(L"MC_MOUSE_MENU_SPEED");
     static const double gameSpeed = MouseSpeedFromEnvironment(L"MC_MOUSE_GAME_SPEED");
+    const double speed = g_cursorDisabled ? gameSpeed : menuSpeed;
     SetCursorInputOwner(CursorInputOwnerMouse);
-    // menus take the pointer position in HandlePointerEvent
     if (g_cursorDisabled) {
-        DispatchMouseDelta(delta.X * gameSpeed, delta.Y * gameSpeed);
+        DispatchMouseDelta(delta.X * speed, delta.Y * speed);
+        return;
     }
+    const double windowX = ClampDouble(MenuInputToWindowX(g_cursor_x) + delta.X * speed, 0.0, CursorMaxX());
+    const double windowY = ClampDouble(MenuInputToWindowY(g_cursor_y) + delta.Y * speed, 0.0, CursorMaxY());
+    g_menu_abs_x = windowX;
+    g_menu_abs_y = windowY;
+    DispatchCursorPosInternal(WindowToMenuInputX(windowX), WindowToMenuInputY(windowY), false);
 }
 static float ApplyDeadzone(float value, float deadzone) {
     const float absValue = value < 0.0f ? -value : value;
@@ -3150,18 +3154,6 @@ extern "C" __declspec(dllexport) void glfwSetCursorPos(GLFWwindow*, double x, do
     g_menu_abs_x = ClampDouble(MenuInputToWindowX(x), 0.0, CursorMaxX());
     g_menu_abs_y = ClampDouble(MenuInputToWindowY(y), 0.0, CursorMaxY());
     DispatchCursorPosInternal(x, y, false);
-
-    // move the console pointer too or menus jump back to it on the next move
-    if (!AcquireCoreWindow()) return;
-    ComPtr<ICoreWindow2> coreWindow2;
-    if (SUCCEEDED(g_coreWindow.As(&coreWindow2)) && coreWindow2) {
-        const double sx = CurrentPointerScaleX();
-        const double sy = CurrentPointerScaleY();
-        Point position = {};
-        position.X = (FLOAT)(sx > 0.0 ? g_menu_abs_x / sx : g_menu_abs_x);
-        position.Y = (FLOAT)(sy > 0.0 ? g_menu_abs_y / sy : g_menu_abs_y);
-        coreWindow2->put_PointerPosition(position);
-    }
 }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateCursor(const GLFWimage*, int, int) { return (GLFWcursor*)1; }
 extern "C" __declspec(dllexport) GLFWcursor* glfwCreateStandardCursor(int) { return (GLFWcursor*)1; }

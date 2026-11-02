@@ -2403,7 +2403,10 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
-    DispatchMouseDelta(delta.X, delta.Y);
+    // summed raw deltas drift from the accelerated console pointer so menus take its position instead
+    if (g_cursorDisabled) {
+        DispatchMouseDelta(delta.X, delta.Y);
+    }
 }
 static void PollCoreWindowPointerPosition() {
     if (!g_coreWindow || g_cursorDisabled ||

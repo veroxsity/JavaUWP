@@ -2,13 +2,19 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-02
+
+### Fixed
+
+**A mouse plugged into the console should now click where the cursor is in Minecraft menus.** Raw mouse movement was added on top of the pointer position and drifted away from the pointer on screen, so clicks landed up and to the left of it at every resolution. Menus now take only the pointer position. Controllers and the mouse relay were not affected.
+
 ## 2026-11-01
 
 ### Fixed
 
-**The mouse cursor should now line up at 1440p and 4K.** After the 1440p and 4K fix, the cursor could be drawn in one place while clicks landed near the top left of the screen. This also happened after switching fullscreen. The game and the cursor were using different screen sizes, and they now match. Tell us if it still happens, and include the line starting `Window size` from the shim log.
+**Mouse positions at 1440p and 4K are converted for the game.** At those resolutions a mouse plugged into the console reported its position in a smaller scale than the game reads. The position is now converted first.
 
-**1.12.2 no longer tries to download Linux libraries.** Preparing Minecraft 1.12.2 with Forge could stop on "Download failed after retries" at a Linux-only netty file the console never uses. Those files are no longer in the download list. If you still get a download error on 1.12.2, send the `mc_launch.log` from the launcher's log folder.
+**1.12.2 no longer tries to download Linux libraries.** Preparing Minecraft 1.12.2 with Forge could stop with a download failure on a Linux only netty file the console never uses. Those files are no longer in the download list. If a download still fails on 1.12.2, send the `mc_launch.log` from the launcher's log folder.
 
 ## 2026-10-31
 

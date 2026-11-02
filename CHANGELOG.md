@@ -6,7 +6,7 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 ### Fixed
 
-**A mouse plugged into the console should now click where the cursor is in Minecraft menus.** Raw mouse movement was added on top of the pointer position and drifted away from the pointer on screen, so clicks landed up and to the left of it at every resolution. Menus now take only the pointer position. Controllers and the mouse relay were not affected.
+**A change earlier today that stopped the mouse moving in Minecraft menus has been undone.** Menus take mouse movement the way they did before.
 
 ## 2026-11-01
 

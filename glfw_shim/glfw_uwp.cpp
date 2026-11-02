@@ -396,6 +396,7 @@ static bool g_mouseDeviceHooksInstalled = false;
 static ComPtr<MouseDeviceMovedHandler> g_mouseMovedHandler;
 static EventRegistrationToken g_mouseMovedToken = {};
 static int g_mouse_log_count = 0;
+static int g_pointer_log_count = 0;
 static int g_menu_abs_log_count = 0;
 static unsigned char g_mouse_state[8] = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerCaptureLostHandler;
@@ -2388,13 +2389,13 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
         g_coreWindow->ReleasePointerCapture();
     }
 
-    if (g_mouse_log_count < 24 &&
+    if (g_pointer_log_count < 40 &&
         (kind == PointerDispatchMove || kind == PointerDispatchPress ||
          kind == PointerDispatchRelease || kind == PointerDispatchWheel ||
          kind == PointerDispatchEnter)) {
-        ++g_mouse_log_count;
-        ShimLog("Pointer event kind=%d cursor=%.1f,%.1f buttons=%d%d%d%d%d",
-            (int)kind, g_cursor_x, g_cursor_y,
+        ++g_pointer_log_count;
+        ShimLog("Pointer event kind=%d pointer=%.1f,%.1f cursor=%.1f,%.1f buttons=%d%d%d%d%d",
+            (int)kind, x, y, g_cursor_x, g_cursor_y,
             g_mouse_state[0], g_mouse_state[1], g_mouse_state[2], g_mouse_state[3], g_mouse_state[4]);
     }
 }
@@ -2403,10 +2404,7 @@ static void HandleMouseDeviceMoved(ABI::Windows::Devices::Input::IMouseEventArgs
 
     ABI::Windows::Devices::Input::MouseDelta delta = {};
     if (FAILED(args->get_MouseDelta(&delta))) return;
-    // summed raw deltas drift from the accelerated console pointer so menus take its position instead
-    if (g_cursorDisabled) {
-        DispatchMouseDelta(delta.X, delta.Y);
-    }
+    DispatchMouseDelta(delta.X, delta.Y);
 }
 static void PollCoreWindowPointerPosition() {
     if (!g_coreWindow || g_cursorDisabled ||

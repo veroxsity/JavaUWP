@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-03
+
+### Fixed
+
+**The mouse cursor in Minecraft should reach the whole screen again.** Since the 1440p and 4K update, the game was given mouse positions for an 854 by 480 window, the size Minecraft asks for before the launcher resizes it. The cursor could only reach the top left part of the screen, and clicks landed up and to the left of where it was drawn.
+
 ## 2026-11-02
 
 ### Fixed

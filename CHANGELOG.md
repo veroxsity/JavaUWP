@@ -8,6 +8,8 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 **The mouse cursor in Minecraft should reach the whole screen again.** Since the 1440p and 4K update, the game was given mouse positions for an 854 by 480 window, the size Minecraft asks for before the launcher resizes it. The cursor could only reach the top left part of the screen, and clicks landed up and to the left of where it was drawn.
 
+**Fixes from the main channel that this channel had missed are back in.** Closing Minecraft should shut its graphics down cleanly, so the launcher is in a good state if the game is started again. Minecraft is told the real screen size after it starts and when fullscreen is toggled. The mouse cursor no longer changes what the game has set up for drawing, and copying and pasting text no longer leaks memory.
+
 ## 2026-11-02
 
 ### Fixed

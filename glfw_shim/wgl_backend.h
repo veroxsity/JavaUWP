@@ -135,6 +135,17 @@ static bool CreateContext(HWND coreWindow) {
     return true;
 }
 
+static HGLRC Context() { return s_ctx; }
+static bool Destroy() {
+    if (!s_ctx) { s_active = false; return true; }
+    if (p_makecur) p_makecur(nullptr, nullptr);
+    if (!p_delete || !p_delete(s_ctx)) { Log("wgl delete context failed err=%lu", GetLastError()); return false; }
+    s_ctx = nullptr;
+    s_dc = nullptr;
+    s_active = false;
+    return true;
+}
+
 static bool MakeCurrent(bool bind) {
     if (!p_makecur) return false;
     return bind ? (p_makecur(s_dc, s_ctx) != 0) : (p_makecur(nullptr, nullptr) != 0);

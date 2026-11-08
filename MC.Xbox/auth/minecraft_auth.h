@@ -8,7 +8,20 @@ struct LaunchAuthConfig {
     std::string uuid;
     std::string accessToken;
     std::chrono::steady_clock::time_point expiresAt{};
+    bool isLocalTrial = false;
 };
+
+// Local trial identity, distinct from a Microsoft-authenticated account.
+inline LaunchAuthConfig MakeLocalTrialAuthConfig() {
+    LaunchAuthConfig out;
+    out.username = "LocalPlayer";
+    // Java's UUID.nameUUIDFromBytes("OfflinePlayer:LocalPlayer" in UTF-8).
+    out.uuid = "c6d762506d42328ebfce7a3312675f70";
+    out.accessToken = "0"; // Required launch argument; not an account credential.
+    out.expiresAt = (std::chrono::steady_clock::time_point::max)();
+    out.isLocalTrial = true;
+    return out;
+}
 
 struct DeviceCodeResponse {
     std::string userCode;
@@ -17,6 +30,9 @@ struct DeviceCodeResponse {
     int expiresIn = 900;
     int interval = 5;
 };
+
+LaunchAuthConfig LoadLocalTrialAuthConfig();
+bool SaveLocalTrialName(const std::wstring& name, LaunchAuthConfig& out);
 
 struct MicrosoftTokenResponse {
     std::string accessToken;

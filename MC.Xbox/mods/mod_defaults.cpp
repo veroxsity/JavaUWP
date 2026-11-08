@@ -657,11 +657,6 @@ static bool DirectoryHasBanditController(const std::wstring& modsDir) {
             modsDir,
             L"banditvault_neoforge_controller",
             L"banditvault-neoforge-controller",
-            controllerJar) ||
-        FindModJarByFabricIdOrName(
-            modsDir,
-            L"banditvault_controller",
-            L"banditvault-cleanroom-controller",
             controllerJar);
 }
 

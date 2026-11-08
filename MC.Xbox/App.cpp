@@ -22,12 +22,10 @@
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Display.h>
-#include <winrt/Windows.Graphics.Display.Core.h>
 #include <winrt/Windows.Media.Capture.h>
 
 #include "runtime_config.h"
 #include "launcher_common.h"
-#include "i18n.h"
 #include "crash_report.h"
 #include "mod_defaults.h"
 #include "minecraft_auth.h"
@@ -42,9 +40,6 @@
 #include "minecraft_launch.h"
 #include "telemetry.h"
 #include "update_check.h"
-
-using i18n::Tr;
-using i18n::TrFormat;
 
 // ICoreWindowInterop is forward-declared without a GUID, so IID_PPV_ARGS
 // cannot use it directly. Redeclare it with the correct uuid here.
@@ -217,7 +212,10 @@ static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
     if (!window) return;
     g_pointerHandler = Callback<CoreWindowPointerHandler>(
         [](ICoreWindow* sender, IPointerEventArgs* args) -> HRESULT {
-            if (!sender || !args) return S_OK;
+            // While Minecraft is running SDL owns pointer/mouse delivery. Keep the
+            // launcher's handlers registered for the menu, but make them inert so
+            // the same CoreWindow event is not interpreted by both input stacks.
+            if (g_minecraftRunning.load() || !sender || !args) return S_OK;
             ComPtr<ABI::Windows::UI::Input::IPointerPoint> point;
             if (FAILED(args->get_CurrentPoint(point.GetAddressOf())) || !point) return S_OK;
             ABI::Windows::Foundation::Point position{};
@@ -260,7 +258,7 @@ static void RegisterCoreWindowPointerHandlers(ICoreWindow* window) {
             g_nativeMouseMovedHandler = Callback<MouseDeviceMovedHandler>(
                 [](ABI::Windows::Devices::Input::IMouseDevice*,
                    ABI::Windows::Devices::Input::IMouseEventArgs* args) -> HRESULT {
-                    if (!args || !g_authWindow) return S_OK;
+                    if (g_minecraftRunning.load() || !args || !g_authWindow) return S_OK;
                     ABI::Windows::Devices::Input::MouseDelta delta{};
                     ABI::Windows::Foundation::Rect bounds{};
                     if (SUCCEEDED(args->get_MouseDelta(&delta)) &&
@@ -384,7 +382,7 @@ static void ApplyMesaEnvOverrides(const std::wstring& exeDir) {
             L"# One NAME=VALUE per line. Lines starting with # are ignored.\n"
             L"#\n"
             L"# These are set after the launcher's own, so anything here wins. Already set:\n"
-            L"#   mesa_glthread=true\n"
+            L"#   mesa_glthread=false (stability default for SDL3/WinRT)\n"
             L"#   MESA_SHADER_CACHE_DIR, MESA_SHADER_CACHE_MAX_SIZE=1G\n"
             L"#\n"
             L"# Check mc_launch.log for \"mesa_env.txt applying:\" to confirm what was picked up.\n"
@@ -437,47 +435,6 @@ static void ApplyMesaEnvOverrides(const std::wstring& exeDir) {
     WriteLogF(L"mesa_env.txt applied %d override(s) from %s", applied, path.c_str());
 }
 
-static double HdmiPixelsPerViewPixel(ICoreWindow* window) {
-    if (!window) return 0.0;
-    ABI::Windows::Foundation::Rect bounds = {};
-    if (FAILED(window->get_Bounds(&bounds)) || bounds.Height <= 0.0f) return 0.0;
-    try {
-        auto hdmi = winrt::Windows::Graphics::Display::Core::HdmiDisplayInformation::GetForCurrentView();
-        if (!hdmi) return 0.0;
-        auto mode = hdmi.GetCurrentDisplayMode();
-        if (!mode) return 0.0;
-        const uint32_t rawHeight = mode.ResolutionHeightInRawPixels();
-        WriteLogF(L"display scale: hdmi mode %ux%u, window %.0fx%.0f",
-            mode.ResolutionWidthInRawPixels(), rawHeight, bounds.Width, bounds.Height);
-        return rawHeight > 0 ? rawHeight / (double)bounds.Height : 0.0;
-    } catch (const winrt::hresult_error& ex) {
-        WriteLogF(L"display scale: hdmi display mode unavailable hr=0x%08X",
-            static_cast<unsigned int>(ex.code()));
-        return 0.0;
-    }
-}
-
-static void DetectDisplayScale(ICoreWindow* window) {
-    try {
-        // the console reports 1.0 here whatever the tv mode is, the hdmi mode gives the real ratio
-        double rawPixelsPerViewPixel = HdmiPixelsPerViewPixel(window);
-        if (rawPixelsPerViewPixel <= 0.0) {
-            rawPixelsPerViewPixel =
-                winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView()
-                    .RawPixelsPerViewPixel();
-        }
-        if (rawPixelsPerViewPixel >= 0.25 && rawPixelsPerViewPixel <= 8.0) {
-            wchar_t scaleText[32] = {};
-            swprintf_s(scaleText, L"%.6f", rawPixelsPerViewPixel);
-            SetEnvironmentVariableW(L"MC_RAW_PIXELS_PER_VIEW_PIXEL", scaleText);
-            WriteLogF(L"display scale: rawPixelsPerViewPixel=%s", scaleText);
-        }
-    } catch (const winrt::hresult_error& ex) {
-        WriteLogF(L"display scale: DisplayInformation unavailable hr=0x%08X msg=%s",
-            static_cast<unsigned int>(ex.code()), ex.message().c_str());
-    }
-}
-
 class App : public RuntimeClass<RuntimeClassFlags<WinRtClassicComMix>, IFrameworkView>
 {
 public:
@@ -493,6 +450,21 @@ public:
         }
         EnsureDirectoryTree(g_logDir);
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
+
+        try {
+            const double rawPixelsPerViewPixel =
+                winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView()
+                    .RawPixelsPerViewPixel();
+            if (rawPixelsPerViewPixel >= 0.5 && rawPixelsPerViewPixel <= 8.0) {
+                wchar_t scaleText[32] = {};
+                swprintf_s(scaleText, L"%.6f", rawPixelsPerViewPixel);
+                SetEnvironmentVariableW(L"MC_RAW_PIXELS_PER_VIEW_PIXEL", scaleText);
+                WriteLogF(L"SetWindow: rawPixelsPerViewPixel=%s", scaleText);
+            }
+        } catch (const winrt::hresult_error& ex) {
+            WriteLogF(L"SetWindow: DisplayInformation scale unavailable hr=0x%08X msg=%s",
+                static_cast<unsigned int>(ex.code()), ex.message().c_str());
+        }
 
         // On Xbox, the B button is also treated as a UWP Back request. If it is
         // not handled here, the shell can suspend/back out of the app before the
@@ -588,14 +560,18 @@ public:
         SetCurrentDirectoryW(exeDir.c_str());
         SetEnvironmentVariableW(L"MC_RUNTIME_DIR", exeDir.c_str());
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
-        i18n::Init();
         ApplyMouseSensitivity(LoadMouseSensitivity());
         telemetry::ReportHardCrash(exeDir);
         telemetry::FlushQueueAsync();
         updates::StartCheckAsync();
         const std::wstring graphicsRuntime = DetectGraphicsRuntimeName();
         SetEnvironmentVariableW(L"MC_GRAPHICS_RUNTIME", graphicsRuntime.c_str());
-        SetEnvironmentVariableW(L"mesa_glthread", L"true");
+        // SDL's UWP controller implementation is Windows.Gaming.Input (WGI).
+        // Upstream SDL leaves this backend opt-in, which otherwise makes
+        // SDL_INIT_GAMEPAD succeed while enumerating zero Xbox controllers.
+        SetEnvironmentVariableW(L"SDL_JOYSTICK_WGI", L"1");
+        SetEnvironmentVariableW(L"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", L"1");
+        SetEnvironmentVariableW(L"mesa_glthread", L"false");
         const std::wstring mesaCacheDir = exeDir + L"\\mesa_cache";
         if (EnsureDirectoryTree(mesaCacheDir)) {
             // UWP has no XDG_CACHE_HOME or HOME so mesa disables its shader disk cache unless the dir is set explicitly
@@ -603,9 +579,8 @@ public:
             SetEnvironmentVariableW(L"MESA_SHADER_CACHE_MAX_SIZE", L"1G");
             WriteLogF(L"mesa shader cache dir=%s", mesaCacheDir.c_str());
         }
-        WriteLog(L"mesa_glthread enabled");
-        // here and not in SetWindow, Run starts the log afresh
-        DetectDisplayScale(g_authWindow.Get());
+        WriteLog(L"SDL WinRT input: Windows.Gaming.Input (WGI) forced on for Xbox controllers");
+        WriteLog(L"mesa_glthread disabled by default for SDL3/WinRT stability; mesa_env.txt may override after bring-up");
         ApplyMesaEnvOverrides(exeDir);
 
         WriteLog(L"=== MC.App Run() started ===");
@@ -631,10 +606,9 @@ public:
         for (;;) {
         bool repairDownloads = false;
         while (true) {
-            if (!authConfigReady && !ResolveLaunchAuthConfig(g_authWindow.Get(), authConfig)) {
-                WriteLog(L"Dynamic authentication failed");
-                Sleep(1000);
-                continue;
+            if (!authConfigReady) {
+                authConfig = LoadLocalTrialAuthConfig();
+                WriteLog(L"Local trial session initialized; Microsoft sign-in disabled in this local build");
             }
             authConfigReady = true;
 
@@ -648,10 +622,10 @@ public:
                 break;
             }
 
-            ClearRefreshToken();
+            if (!authConfig.isLocalTrial) ClearRefreshToken();
             authConfig = LaunchAuthConfig{};
             authConfigReady = false;
-            WriteLog(L"Saved Microsoft refresh token cleared by sign out");
+            WriteLog(L"Launcher session reset");
         }
 
         EnsureProfilesInitialized(exeDir);
@@ -674,17 +648,17 @@ public:
                 selectedInfo.mainClass.empty() ? L"(none)" : selectedInfo.mainClass.c_str(),
                 selectedInfo.loaderJar.empty() ? L"(none)" : selectedInfo.loaderJar.c_str(),
                 selectedInfo.bundledModsDir.empty() ? L"(none)" : selectedInfo.bundledModsDir.c_str());
-            const std::wstring targetName = TargetProfileText(selectedTarget);
-            std::wstring unsupportedDetail;
+            std::wstring unsupportedDetail = TargetProfileText(selectedTarget) + L" is in the catalog, but ";
             if (selectedInfo.manifestPath.empty()) {
-                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its download manifest is missing from the installed package. Rebuild/reinstall the launcher with per-version manifests enabled.", { targetName });
+                unsupportedDetail += L"its download manifest is missing from the installed package. Rebuild/reinstall the launcher with per-version manifests enabled.";
             } else if (selectedInfo.assetIndex.empty() || selectedInfo.launchVersion.empty() || selectedInfo.mainClass.empty()) {
-                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its download manifest is incomplete. Reinstall the latest launcher build.", { targetName });
+                unsupportedDetail += L"its download manifest is incomplete. Reinstall the latest launcher build.";
             } else if (!selectedInfo.missingBundledModsDir.empty()) {
-                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its bundled mods are missing from the installed package. Expected {1}. Rebuild without -SkipVersionCompat and reinstall.",
-                    { targetName, selectedInfo.missingBundledModsDir });
+                unsupportedDetail += L"its bundled mods are missing from the installed package. Expected " +
+                    selectedInfo.missingBundledModsDir +
+                    L". Rebuild without -SkipVersionCompat and reinstall.";
             } else {
-                unsupportedDetail = TrFormat(L"{0} is in the catalog, but its launch provider is not available in this build yet.", { targetName });
+                unsupportedDetail += L"its launch provider is not available in this build yet.";
             }
             AuthScreenRenderer unsupportedRendererInstance;
             AuthScreenRenderer* unsupportedRenderer = nullptr;
@@ -695,7 +669,7 @@ public:
             RenderPreparationProgress(
                 unsupportedRenderer,
                 unsupportedState,
-                Tr(L"Unsupported launch target"),
+                L"Unsupported launch target",
                 unsupportedDetail.c_str(),
                 1.0f);
             SleepWithAuthUi(unsupportedRenderer, unsupportedState, 8000);
@@ -713,8 +687,8 @@ public:
             RenderPreparationProgress(
                 prepRenderer,
                 prepState,
-                Tr(L"Preparing local runtime"),
-                Tr(L"Copying packaged files into writable app storage"),
+                L"Preparing local runtime",
+                L"Copying packaged files into writable app storage",
                 0.04f);
 
             const bool seeded = SeedLocalRuntime(packageDir, exeDir,
@@ -723,7 +697,7 @@ public:
                 });
 
             if (!seeded) {
-                RenderPreparationProgress(prepRenderer, prepState, Tr(L"Runtime copy failed"), Tr(L"Check available storage and retry from the menu"), 1.0f);
+                RenderPreparationProgress(prepRenderer, prepState, L"Runtime copy failed", L"Check available storage and retry from the menu", 1.0f);
                 SleepWithAuthUi(prepRenderer, prepState, 5000);
                 continue;
             }
@@ -759,8 +733,8 @@ public:
             RenderPreparationProgress(
                 downloadRenderer,
                 downloadState,
-                Tr(L"Checking installed files"),
-                Tr(L"Validating Minecraft downloads"),
+                L"Checking installed files",
+                L"Validating Minecraft downloads",
                 0.0f);
 
             int downloadAttempt = 0;
@@ -789,8 +763,8 @@ public:
                 RenderPreparationProgress(
                     downloadRenderer,
                     downloadState,
-                    lastDownloadStatus.empty() ? Tr(L"Download failed") : lastDownloadStatus.c_str(),
-                    (TrFormat(L"{0}\nRetrying in 10 seconds. B or Escape returns to the menu", { lastDownloadDetail })).c_str(),
+                    lastDownloadStatus.empty() ? L"Download failed" : lastDownloadStatus.c_str(),
+                    (lastDownloadDetail + L"\nRetrying in 10 seconds. B or Escape returns to the menu").c_str(),
                     1.0f);
                 for (int wait = 0; wait < 100 && !downloadCancelled; ++wait) {
                     SleepWithAuthUi(downloadRenderer, downloadState, 100);
@@ -802,8 +776,8 @@ public:
                 RenderPreparationProgress(
                     downloadRenderer,
                     downloadState,
-                    Tr(L"Retrying download"),
-                    Tr(L"Checking Minecraft files again"),
+                    L"Retrying download",
+                    L"Checking Minecraft files again",
                     0.0f);
             }
 
@@ -826,17 +800,42 @@ public:
         const std::wstring effManifestPath = versionInfo.manifestPath.empty()
             ? (packageDir + L"\\download_manifest.tsv")
             : versionInfo.manifestPath;
+        const WindowBackend windowBackend = versionInfo.windowBackend;
+        const bool usesSdlWindowBackend = windowBackend == WindowBackend::Sdl3;
+        WriteLogF(L"Target window backend: %s (target=%s version=%s)",
+            WindowBackendName(windowBackend),
+            versionInfo.targetId.c_str(),
+            versionInfo.minecraftVersion.c_str());
         std::wstring targetNativesDir;
         std::wstring nativesDir;
-        if (PrepareTargetNativeDir(effManifestPath, exeDir, packageDir, versionInfo.targetId, targetNativesDir)) {
+        if (PrepareTargetNativeDir(
+                effManifestPath,
+                exeDir,
+                packageDir,
+                versionInfo.targetId,
+                windowBackend,
+                targetNativesDir)) {
             nativesDir = targetNativesDir;
+        } else if (usesSdlWindowBackend) {
+            // The package-level native seed is built from the launcher's default
+            // Minecraft target and may contain an older LWJGL ABI. 26.3 must use
+            // the natives extracted from its own manifest; failing preparation is
+            // a hard launch error rather than a silent fallback to incompatible
+            // lwjgl.dll/SDL natives. PrepareTargetNativeDir sets this path even
+            // when it returns false so RunEmbeddedMinecraft can report it cleanly.
+            nativesDir = targetNativesDir;
+            WriteLogF(
+                L"Target-specific SDL3 natives incomplete; refusing legacy native fallback target=%s dir=%s",
+                versionInfo.targetId.c_str(),
+                nativesDir.c_str());
         } else {
+            const std::wstring windowRuntime = L"glfw.dll";
             nativesDir =
                 GetFileAttributesW((packageNativesDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-                GetFileAttributesW((packageNativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES
+                GetFileAttributesW((packageNativesDir + L"\\" + windowRuntime).c_str()) != INVALID_FILE_ATTRIBUTES
                     ? packageNativesDir
                     : localNativesDir;
-            WriteLogF(L"Falling back to default natives for target=%s", versionInfo.targetId.c_str());
+            WriteLogF(L"Falling back to default GLFW natives for target=%s", versionInfo.targetId.c_str());
         }
         const std::wstring minecraftVersion = versionInfo.minecraftVersion;
         const std::wstring packageRuntimeDir = packageDir + L"\\runtime";
@@ -847,6 +846,34 @@ public:
             versionInfo.targetId,
             versionInfo.bundledModsDir,
             activeProfileInfo.controllerModEnabled);
+        if (activeProfileInfo.controllerModEnabled &&
+            !versionInfo.controllerProvider.empty() &&
+            versionInfo.controllerProvider != L"none") {
+            const std::wstring expectedControllerJar =
+                bundledModsDir + L"\\banditvault-" + versionInfo.controllerProvider + L"-controller-1.0.0.jar";
+            if (GetFileAttributesW(expectedControllerJar.c_str()) == INVALID_FILE_ATTRIBUTES) {
+                WriteLogF(L"Controller mod requested but missing: %s", expectedControllerJar.c_str());
+                AuthScreenRenderer controllerRendererInstance;
+                AuthScreenRenderer* controllerRenderer = nullptr;
+                if (controllerRendererInstance.Initialize(g_authWindow.Get())) {
+                    controllerRenderer = &controllerRendererInstance;
+                }
+                AuthUiState controllerState;
+                const std::wstring controllerDetail =
+                    L"This profile has controller support enabled, but its version-specific controller mod is missing.\n\nExpected:\n" +
+                    expectedControllerJar +
+                    L"\n\nRebuild/reinstall with per-version compatibility mods, or disable Controller Mod in this profile.";
+                RenderPreparationProgress(
+                    controllerRenderer,
+                    controllerState,
+                    L"Controller support missing",
+                    controllerDetail.c_str(),
+                    1.0f);
+                SleepWithAuthUi(controllerRenderer, controllerState, 8000);
+                continue;
+            }
+            WriteLogF(L"Controller mod verified: %s", expectedControllerJar.c_str());
+        }
         const std::wstring clientJar = sharedGameDir + L"\\versions\\" + minecraftVersion + L"\\" + minecraftVersion + L".jar";
         const std::wstring argsPath = g_logDir + L"\\java_args.txt";
         const std::wstring javaLog = g_logDir + L"\\java_output.log";
@@ -928,17 +955,19 @@ public:
         (void)launchRendererInstance;
         AuthUiState launchState;
         DeleteFileW((g_logDir + L"\\glfw_uwp.log").c_str());
+        DeleteFileW((g_logDir + L"\\sdl_wgl_stage.log").c_str());
 
         std::wstring loaderLabel = L"Minecraft";
         if (versionInfo.loader == L"fabric") {
             loaderLabel = L"Fabric";
         } else if (versionInfo.loader == L"neoforge") {
             loaderLabel = L"NeoForge";
-        } else if (versionInfo.loader == L"forge" || versionInfo.loader == L"cleanroom") {
+        } else if (versionInfo.loader == L"forge") {
             loaderLabel = L"Forge";
         }
 
-        if (std::chrono::steady_clock::now() + std::chrono::minutes(5) >= authConfig.expiresAt) {
+        if (!authConfig.isLocalTrial &&
+            std::chrono::steady_clock::now() + std::chrono::minutes(5) >= authConfig.expiresAt) {
             authConfigReady = ResolveLaunchAuthConfig(g_authWindow.Get(), authConfig);
             if (!authConfigReady) continue;
         }
@@ -980,6 +1009,7 @@ public:
                     versionInfo.neoFormVersion,
                     versionInfo.neoForgeInstallToolsVersion,
                     versionInfo.neoForgeBinaryPatcherVersion,
+                    windowBackend,
                     authConfig,
                     progress);
             });
@@ -992,13 +1022,13 @@ public:
                 failedRenderer = &failedRendererInstance;
             }
             AuthUiState failedState;
-            const wchar_t* failedTitle = Tr(L"Launch failed");
-            const wchar_t* failedDetail = Tr(L"Minecraft could not start. Check logs for details.");
+            const wchar_t* failedTitle = L"Launch failed";
+            const wchar_t* failedDetail = L"Minecraft could not start. Check logs for details.";
             if (jvmSpentBeforeLaunch) {
-                failedTitle = Tr(L"Restart the launcher");
-                failedDetail = Tr(L"An earlier launch used this session's Java runtime. Close the launcher and open it again to play.");
+                failedTitle = L"Restart the launcher";
+                failedDetail = L"An earlier launch used this session's Java runtime. Close the launcher and open it again to play.";
             } else if (EmbeddedJvmAlreadyUsed()) {
-                failedDetail = Tr(L"Minecraft could not start. Check logs for details. Close the launcher and open it again before trying another version.");
+                failedDetail = L"Minecraft could not start. Check logs for details. Close the launcher and open it again before trying another version.";
             }
             RenderPreparationProgress(
                 failedRenderer,

@@ -6,6 +6,14 @@
 
 #include "profiles.h"
 
+enum class WindowBackend {
+    Glfw,
+    Sdl3,
+};
+
+const wchar_t* WindowBackendName(WindowBackend backend);
+WindowBackend ResolveWindowBackend(const std::wstring& manifestPath, const std::wstring& minecraftVersion);
+
 struct DownloadManifestEntry {
     std::wstring relativePath;
     std::wstring url;
@@ -35,6 +43,7 @@ struct MinecraftVersionInfo {
     std::wstring loader;
     std::wstring loaderVersion;
     std::wstring javaRuntime;
+    std::wstring controllerProvider;
     std::wstring assetIndex;
     std::wstring launchVersion;
     std::wstring mainClass;
@@ -48,6 +57,7 @@ struct MinecraftVersionInfo {
     std::wstring clientJar;
     std::wstring bundledModsDir;
     std::wstring missingBundledModsDir;
+    WindowBackend windowBackend = WindowBackend::Glfw;
     bool supported = false;
 };
 
@@ -90,6 +100,7 @@ bool PrepareTargetNativeDir(
     const std::wstring& runtimeRoot,
     const std::wstring& packageDir,
     const std::wstring& targetId,
+    WindowBackend windowBackend,
     std::wstring& nativeDir);
 bool Sha1File(const std::wstring& path, std::string* outHex);
 bool FileMatchesSha1(const std::wstring& path, const std::string& expectedSha1);

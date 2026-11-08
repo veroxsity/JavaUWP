@@ -24,6 +24,11 @@ struct AuthUiState {
     bool isError = false;
     bool showDeviceCode = true;
     bool showMainMenu = false;
+    bool localNameVisible = false;
+    bool localNameEditing = false;
+    bool localNameError = false;
+    std::wstring localName;
+    std::wstring localNameNote;
     bool showRemoteFiles = false;
     bool showModsPage = false;
     int selectedMenuIndex = 0;
@@ -63,6 +68,7 @@ struct AuthUiState {
     std::wstring modsProfileTargetText;
     bool modsProfileBuiltin = false;
     bool modsProfileControllerModEnabled = true;
+    bool modsProfileControllerAvailable = true;
     std::vector<std::wstring> modsProfileMods;
     int modsProfileScroll = 0;
     int modsProfileFocus = 0;
@@ -103,7 +109,6 @@ struct AuthUiState {
 
     bool showSettings = false;
     bool settingsUpdateCheckOn = true;
-    std::wstring settingsLanguageName;
     int settingsSelected = 0;
     int settingsMenuMouseSpeed = 100;
     int settingsGameMouseSpeed = 100;

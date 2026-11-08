@@ -1,0 +1,215 @@
+--- a/src/video/winrt/SDL_winrtvideo.cpp
++++ b/src/video/winrt/SDL_winrtvideo.cpp
+@@ -100,7 +100,29 @@ static void WINRT_GetWindowSizeInPixels(SDL_VideoDevice *_this, SDL_Window *wind
+ extern bool WINRT_SuspendScreenSaver(SDL_VideoDevice *_this);
+ 
+ // SDL-internal globals:
+ SDL_Window *WINRT_GlobalSDLWindow = NULL;
++
++/* Exported build marker used by Bandit's packager to reject stock SDL-UWP
++   binaries. Bump this whenever the external-host contract changes. */
++extern "C" __declspec(dllexport) int BanditSDL_ExternalHostPatchVersion(void)
++{
++    return 6;
++}
++
++/* V6 keeps the external CoreWindow/event bridge and SDL_main readiness fix,
++   and adds the packaged-Mesa absolute-path normalization contract. */
++extern "C" __declspec(dllexport) int BanditSDL_WinRTIntegrationPatchV6(void)
++{
++    return 6;
++}
++
++#ifdef SDL_VIDEO_OPENGL_WGL
++/* This symbol only exists when the runtime was actually compiled with WGL. */
++extern "C" __declspec(dllexport) int BanditSDL_WinRTWGLBackendV1(void)
++{
++    return 1;
++}
++#endif
+ 
+ static int WINRT_CachedOutputWidth;
+ static int WINRT_CachedOutputHeight;
+@@ -354,30 +369,33 @@ static SDL_VideoDevice *WINRT_CreateDevice(void)
+ 
+     WINTRT_InitialiseInputPaneEvents(device);
+ #endif
+ 
+-#ifdef SDL_VIDEO_OPENGL_EGL
+-    device->GL_LoadLibrary = WINRT_GLES_LoadLibrary;
+-    device->GL_GetProcAddress = WINRT_GLES_GetProcAddress;
+-    device->GL_UnloadLibrary = WINRT_GLES_UnloadLibrary;
+-    device->GL_CreateContext = WINRT_GLES_CreateContext;
+-    device->GL_MakeCurrent = WINRT_GLES_MakeCurrent;
+-    device->GL_SetSwapInterval = WINRT_GLES_SetSwapInterval;
+-    device->GL_GetSwapInterval = WINRT_GLES_GetSwapInterval;
+-    device->GL_SwapWindow = WINRT_GLES_SwapWindow;
+-    device->GL_DestroyContext = WINRT_GLES_DestroyContext;
+-#elif SDL_VIDEO_OPENGL_WGL
+-    /* Use EGL based functions */
++#ifdef SDL_VIDEO_OPENGL_WGL
++    /* Minecraft 26.3 needs desktop OpenGL. Prefer Mesa's WinRT/WGL path even
++       if an SDL build accidentally enables EGL/OpenGL ES as well. */
+     device->GL_LoadLibrary = WIN_GL_LoadLibrary;
+     device->GL_GetProcAddress = WIN_GL_GetProcAddress;
+     device->GL_UnloadLibrary = WIN_GL_UnloadLibrary;
+     device->GL_CreateContext = WIN_GL_CreateContext;
+     device->GL_MakeCurrent = WIN_GL_MakeCurrent;
+     device->GL_SetSwapInterval = WIN_GL_SetSwapInterval;
+     device->GL_GetSwapInterval = WIN_GL_GetSwapInterval;
+     device->GL_SwapWindow = WIN_GL_SwapWindow;
+     device->GL_DestroyContext = WIN_GL_DestroyContext;
++    SDL_Log("Bandit SDL: WinRT GL backend=WGL");
++#elif defined(SDL_VIDEO_OPENGL_EGL)
++    device->GL_LoadLibrary = WINRT_GLES_LoadLibrary;
++    device->GL_GetProcAddress = WINRT_GLES_GetProcAddress;
++    device->GL_UnloadLibrary = WINRT_GLES_UnloadLibrary;
++    device->GL_CreateContext = WINRT_GLES_CreateContext;
++    device->GL_MakeCurrent = WINRT_GLES_MakeCurrent;
++    device->GL_SetSwapInterval = WINRT_GLES_SetSwapInterval;
++    device->GL_GetSwapInterval = WINRT_GLES_GetSwapInterval;
++    device->GL_SwapWindow = WINRT_GLES_SwapWindow;
++    device->GL_DestroyContext = WINRT_GLES_DestroyContext;
++    SDL_Log("Bandit SDL: WinRT GL backend=EGL (unexpected fallback)");
+ #endif
+     device->free = WINRT_DeleteDevice;
+ 
+     return device;
+ }
+@@ -1035,8 +1052,18 @@ bool WINRT_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Propertie
+     /* Make sure the WinRT app's IFramworkView can post events on
+        behalf of SDL:
+     */
+     WINRT_GlobalSDLWindow = window;
++
++    /* Bandit Launcher embeds SDL inside an already-running UWP IFrameworkView.
++       Attach SDL's standard WinRT event sink to the host-owned CoreWindow so
++       SDL_PollEvent pumps keyboard, mouse, text, window and activation events. */
++    if (!SDL_WinRTGlobalApp && data->coreWindow.Get() != nullptr) {
++        SDL_WinRTGlobalApp = ref new SDL_WinRTApp();
++        SDL_WinRTGlobalApp->Initialize(CoreApplication::GetCurrentView());
++        SDL_WinRTGlobalApp->SetWindow(data->coreWindow.Get());
++        SDL_Log("WinRT: attached SDL event sink to external CoreWindow host thread=%lu", (unsigned long)GetCurrentThreadId());
++    }
+ 
+     // All done!
+     return true;
+ }
+--- a/src/SDL.c
++++ b/src/SDL.c
+@@ -326,8 +326,20 @@ bool SDL_InitSubSystem(SDL_InitFlags flags)
+ {
+     Uint32 flags_initialized = 0;
+ 
++#ifdef SDL_PLATFORM_WINRT
++    /* Bandit does not enter through SDL_main: its UWP IFrameworkView already
++       exists and launches the JVM directly. SDL's normal WinRT bootstrap
++       therefore never gets a chance to call SDL_SetMainReady(). Prime the
++       flag lazily on the first SDL subsystem request before enforcing the
++       normal SDL_main readiness check. */
++    if (!SDL_MainIsReady) {
++        SDL_SetMainReady();
++        SDL_Log("WinRT: external host marked SDL main ready");
++    }
++#endif
++
+     if (!SDL_MainIsReady) {
+         return SDL_SetError("Application didn't initialize properly, did you include SDL_main.h in the file containing your main() function?");
+     }
+ 
+ #ifdef SDL_PLATFORM_EMSCRIPTEN
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2332,13 +2332,17 @@ if(WIN32)
+   if(SDL_VIDEO)
+     if(WINDOWS_STORE)
+       set(SDL_VIDEO_DRIVER_WINRT 1)
+       sdl_glob_sources(
+         "${SDL3_SOURCE_DIR}/src/video/winrt/*.c"
+         "${SDL3_SOURCE_DIR}/src/video/winrt/*.cpp"
+         "${SDL3_SOURCE_DIR}/src/render/direct3d11/*.cpp"
+         "${SDL3_SOURCE_DIR}/src/render/direct3d12/SDL_render_d3d12_winrt.cpp"
+       )
++      # The WinRT video backend can expose the normal Windows WGL bridge.
++      # CMake's WindowsStore source list does not include it by default, while
++      # the VisualC-WinRT project does. Minecraft 26.3 uses this with Mesa.
++      sdl_sources("${SDL3_SOURCE_DIR}/src/video/windows/SDL_windowsopengl.c")
+     else()
+       set(SDL_VIDEO_DRIVER_WINDOWS 1)
+       sdl_glob_sources(
+         "${SDL3_SOURCE_DIR}/src/video/windows/*.c"
+@@ -2479,16 +2484,17 @@ if(WIN32)
+   set(SDL_TIMER_WINDOWS 1)
+   sdl_glob_sources("${SDL3_SOURCE_DIR}/src/timer/windows/*.c")
+   set(HAVE_SDL_TIMERS TRUE)
+ 
+   set(SDL_LOADSO_WINDOWS 1)
+-  if(NOT WINDOWS_STORE)
+-    sdl_glob_sources("${SDL3_SOURCE_DIR}/src/loadso/windows/*.c")
+-    set(HAVE_SDL_LOADSO TRUE)
+-  endif()
++  # WinRT/WGL loads the packaged Mesa opengl32.dll through SDL_LoadObject().
++  # The Windows loader is UWP-aware and uses LoadPackagedLibrary when
++  # SDL_PLATFORM_WINRT is defined, so do not fall back to the dummy loader.
++  sdl_glob_sources("${SDL3_SOURCE_DIR}/src/loadso/windows/*.c")
++  set(HAVE_SDL_LOADSO TRUE)
+ 
+   if(NOT WINDOWS_STORE)
+     sdl_glob_sources(
+       "${SDL3_SOURCE_DIR}/src/core/windows/*.c"
+       "${SDL3_SOURCE_DIR}/src/core/windows/*.h"
+     )
+   endif()
+--- a/src/loadso/windows/SDL_sysloadso.c
++++ b/src/loadso/windows/SDL_sysloadso.c
+@@ -27,10 +27,22 @@
+ 
+ #include "../../core/windows/SDL_windows.h"
+ 
++#ifdef SDL_PLATFORM_WINRT
++__declspec(dllexport) int BanditSDL_WinRTAbsoluteLoadFixV1(void)
++{
++    return 1;
++}
++#endif
++
+ SDL_SharedObject *SDL_LoadObject(const char *sofile)
+ {
+     void *handle;
+     LPWSTR wstr;
++#ifdef SDL_PLATFORM_WINRT
++    LPWSTR cursor;
++    LPCWSTR packaged_path;
++    const wchar_t *mesa_path;
++#endif
+ 
+     if (!sofile) {
+         SDL_InvalidParamError("sofile");
+@@ -41,8 +53,26 @@
+     /* WinRT only publicly supports LoadPackagedLibrary() for loading .dll
+        files.  LoadLibrary() is a private API, and not available for apps
+        (that can be published to MS' Windows Store.)
++
++       Minecraft 26.3 passes the absolute path of LWJGL's already-loaded
++       OpenGL provider to SDL_GL_LoadLibrary(). LoadPackagedLibrary rejects
++       absolute paths with ERROR_INVALID_PARAMETER, so normalize Bandit's
++       packaged Mesa path back to a package-relative module name.
+     */
+-    handle = (void *)LoadPackagedLibrary(wstr, 0);
++    cursor = wstr;
++    while (cursor && *cursor) {
++        if (*cursor == L'/') {
++            *cursor = L'\\';
++        }
++        ++cursor;
++    }
++    packaged_path = wstr;
++    mesa_path = SDL_wcsstr(wstr, L"\\graphics\\mesa\\");
++    if (mesa_path) {
++        packaged_path = mesa_path + 1;
++        SDL_Log("Bandit SDL: normalized absolute Mesa path for LoadPackagedLibrary");
++    }
++    handle = (void *)LoadPackagedLibrary(packaged_path, 0);
+ #else
+     handle = (void *)LoadLibrary(wstr);
+ #endif

@@ -54,6 +54,7 @@ constexpr int kTabBase = 100;
 constexpr int kCrashButtonBase = 300;
 constexpr int kChangelogButtonBase = 350;
 constexpr int kSettingsRowBase = 400;
+constexpr int kLocalName = 490;
 constexpr int kSourceBase = 500;
 constexpr int kCardBase = 1000;
 constexpr int kTargetItemBase = 100000;

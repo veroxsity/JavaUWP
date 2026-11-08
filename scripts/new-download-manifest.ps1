@@ -67,7 +67,7 @@ function Get-RemoteTextOrThrow([string]$Url) {
     $lastError = $null
     for ($attempt = 1; $attempt -le 4; $attempt++) {
         try {
-            $content = (Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 30).Content
+            $content = Get-RemoteText -Uri $Url -TimeoutSec 30
             $text = if ($content -is [byte[]]) {
                 [System.Text.Encoding]::ASCII.GetString($content).Trim()
             } else {
@@ -152,34 +152,22 @@ function Test-LibraryAllowed($Library) {
     return $allowed
 }
 
-function Add-MinecraftLibraries($VersionJson, [System.Collections.Generic.List[object]]$Entries, [switch]$X64NativesOnly) {
+function Add-MinecraftLibraries($VersionJson, [System.Collections.Generic.List[object]]$Entries) {
     foreach ($library in $VersionJson.libraries) {
         if (-not (Test-LibraryAllowed $library)) {
-            continue
-        }
-        # cleanroom lists every windows native with a bare os rule, so arm64 and x86 would pass too
-        if ($X64NativesOnly -and $library.name -match ':natives-windows-(arm64|x86)$') {
-            continue
-        }
-        # its linux and mac natives have no os rule either and the console never loads them
-        if ($X64NativesOnly -and $library.name -match '[:-](natives-)?(linux|osx|macos|freebsd)([-_][A-Za-z0-9_]+)*$') {
-            Write-Host "Skipping non windows library $($library.name)"
             continue
         }
 
         if ($library.downloads.artifact) {
             $artifact = $library.downloads.artifact
-            # cleanroom copies some vanilla entries without their path
-            $path = if ($artifact.path) { $artifact.path } else { Convert-MavenNameToPath $library.name }
-            Add-Entry $Entries "game/libraries/$path" $artifact.sha1 ([UInt64]$artifact.size) $artifact.url
+            Add-Entry $Entries "game/libraries/$($artifact.path)" $artifact.sha1 ([UInt64]$artifact.size) $artifact.url
         }
 
         if ($library.natives -and $library.natives.windows -and $library.downloads.classifiers) {
             $classifier = $library.natives.windows.Replace('${arch}', '64')
             $native = $library.downloads.classifiers.$classifier
             if ($native) {
-                $path = if ($native.path) { $native.path } else { Convert-MavenNameToPath "$($library.name):$classifier" }
-                Add-Entry $Entries "game/libraries/$path" $native.sha1 ([UInt64]$native.size) $native.url
+                Add-Entry $Entries "game/libraries/$($native.path)" $native.sha1 ([UInt64]$native.size) $native.url
             }
         }
     }
@@ -394,13 +382,6 @@ function Get-LoaderProfile([string]$Loader, [string]$MinecraftVersion, [string]$
         return Get-ZipJson $jar "version.json"
     }
 
-    if ($Loader -eq "cleanroom") {
-        $jar = Join-Path $tmp "cleanroom-$LoaderVersion-installer.jar"
-        $url = "https://repo.cleanroommc.com/releases/com/cleanroommc/cleanroom/$LoaderVersion/cleanroom-$LoaderVersion-installer.jar"
-        Save-RemoteFile -Uri $url -Path $jar
-        return Get-ZipJson $jar "version.json"
-    }
-
     if ($Loader -eq "vanilla") {
         return $null
     }
@@ -409,7 +390,7 @@ function Get-LoaderProfile([string]$Loader, [string]$MinecraftVersion, [string]$
 }
 
 function Get-LoaderInstallProfile([string]$Loader, [string]$MinecraftVersion, [string]$LoaderVersion) {
-    if ($Loader -ne "forge" -and $Loader -ne "neoforge" -and $Loader -ne "cleanroom") {
+    if ($Loader -ne "forge" -and $Loader -ne "neoforge") {
         return $null
     }
 
@@ -429,9 +410,6 @@ function Get-LoaderInstallerJarPath([string]$Loader, [string]$MinecraftVersion, 
     }
     if ($Loader -eq "neoforge") {
         return Join-Path $tmp "neoforge-$LoaderVersion-installer.jar"
-    }
-    if ($Loader -eq "cleanroom") {
-        return Join-Path $tmp "cleanroom-$LoaderVersion-installer.jar"
     }
     return $null
 }
@@ -457,30 +435,7 @@ function Add-LoaderInstallerJarEntry(
         $sha1 = Get-RemoteTextOrThrow "$url.sha1"
         $size = Get-RemoteSizeOrZero $url
         Add-Entry $Entries "game/libraries/$path" $sha1 $size $url
-        return
     }
-
-    if ($Loader -eq "cleanroom") {
-        # the runtime jar only ships inside the installer, the one on their maven is a dev build
-        $path = "com/cleanroommc/cleanroom/$LoaderVersion/cleanroom-$LoaderVersion-installer.jar"
-        $url = "https://repo.cleanroommc.com/releases/$path"
-        $sha1 = Get-RemoteTextOrThrow "$url.sha1"
-        $size = Get-RemoteSizeOrZero $url
-        Add-Entry $Entries "game/libraries/$path" $sha1 $size $url
-    }
-}
-
-function Get-LegacyTweakArgs([string]$MinecraftArguments) {
-    $out = @()
-    $parts = @($MinecraftArguments -split '\s+' | Where-Object { $_ })
-    for ($i = 0; $i -lt $parts.Count - 1; $i++) {
-        if ($parts[$i] -eq "--tweakClass") {
-            $out += $parts[$i]
-            $out += $parts[$i + 1]
-            $i++
-        }
-    }
-    return $out
 }
 
 function Get-GameArgumentValue($Arguments, [string]$Name) {
@@ -585,23 +540,7 @@ if ($versionJson.downloads.client_mappings) {
     $clientMappings = $versionJson.downloads.client_mappings
     Add-Entry $entries "game/libraries/net/minecraft/client/$MinecraftVersion/client-$MinecraftVersion-mappings.txt" $clientMappings.sha1 ([UInt64]$clientMappings.size) $clientMappings.url
 }
-if ($Loader -eq "cleanroom") {
-    # older cleanroom profiles inherit vanilla's libraries, these are the only ones its multimc pack keeps
-    $cleanroomLibraries = @($loaderProfile.libraries)
-    if ($loaderProfile.inheritsFrom) {
-        $vanillaKept = @("com.mojang:authlib:*", "com.mojang:realms:*", "com.mojang:text2speech:*", "com.paulscode:*", "ca.weblite:java-objc-bridge:*")
-        foreach ($library in $versionJson.libraries) {
-            if ($vanillaKept | Where-Object { $library.name -like $_ }) { $cleanroomLibraries += $library }
-        }
-    }
-    Add-MinecraftLibraries ([pscustomobject]@{ libraries = $cleanroomLibraries }) $entries -X64NativesOnly
-    if ($installProfile) {
-        Add-LoaderLibraries $installProfile $entries "https://repo.cleanroommc.com/releases/"
-    }
-    Add-LoaderInstallerJarEntry $Loader $MinecraftVersion $LoaderVersion $entries
-} else {
-    Add-MinecraftLibraries $versionJson $entries
-}
+Add-MinecraftLibraries $versionJson $entries
 if ($Loader -eq "fabric") {
     Add-FabricLibraries $loaderProfile $entries
     # fabric only, forge and neoforge add their installer's older dupes last and would win here
@@ -653,9 +592,6 @@ $argumentsProperty = if ($loaderProfile -and $loaderProfile.PSObject.Properties[
 if ($argumentsProperty -and $Loader -ne "fabric") {
     $jvmArgs = Convert-JvmArgsForEmbeddedJvm (Convert-ArgumentArrayToList $argumentsProperty.jvm)
     $gameArgs = Convert-ArgumentArrayToList $argumentsProperty.game
-} elseif ($Loader -eq "cleanroom" -and $loaderProfile.minecraftArguments) {
-    # the launcher passes the account and path args itself, only the tweaker is loader specific
-    $gameArgs = Get-LegacyTweakArgs $loaderProfile.minecraftArguments
 }
 $lines.Add("# launchVersion`t$launchVersion")
 $lines.Add("# mainClass`t$mainClass")

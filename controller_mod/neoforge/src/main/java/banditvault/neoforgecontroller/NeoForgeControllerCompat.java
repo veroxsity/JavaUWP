@@ -54,8 +54,6 @@ public final class NeoForgeControllerCompat {
     private static double lastMouseCursorX = Double.NaN;
     private static double lastMouseCursorY = Double.NaN;
     private static boolean mouseOwnsCursor;
-    private static Screen queuedCursorScreen;
-    private static Object queuedCursorGraphics;
     private static boolean snapStickLatched;
     private static KeyMapping radialPressedKey;
     private static boolean radialPressedAsKeyboard;
@@ -164,18 +162,7 @@ public final class NeoForgeControllerCompat {
         applyLook(client.player, axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X), y, seconds, settings);
     }
 
-    // Screens only queue the cursor. It is drawn from GameRenderer once the screen,
-    // anything mods draw over it and the toasts are done, so it always ends up on top.
     public static void renderCursor(Screen screen, Object graphics) {
-        queuedCursorScreen = screen;
-        queuedCursorGraphics = graphics;
-    }
-
-    public static void renderQueuedCursor() {
-        Screen screen = queuedCursorScreen;
-        Object graphics = queuedCursorGraphics;
-        queuedCursorScreen = null;
-        queuedCursorGraphics = null;
         Minecraft client = Minecraft.getInstance();
         if (screen instanceof NeoForgeControllerSettingsScreen || screen instanceof NeoForgeControllerRadialScreen) {
             return;
@@ -183,15 +170,16 @@ public final class NeoForgeControllerCompat {
         if (!active || screen == null || graphics == null || client == null || NeoForgeClientApi.screen(client) != screen) {
             return;
         }
-        NeoForgeVersionApi.beginCursorLayer(graphics);
         if (!mouseOwnsCursor) renderControllerGuide(screen, graphics, client);
-        if (!mouseOwnsCursor && cursorX >= 0.0 && cursorY >= 0.0) {
-            NeoForgeVersionApi.renderCursor(graphics, (int) Math.round(cursorX), (int) Math.round(cursorY));
+        if (mouseOwnsCursor || cursorX < 0.0 || cursorY < 0.0) {
+            return;
         }
+        int x = (int) Math.round(cursorX);
+        int y = (int) Math.round(cursorY);
+        NeoForgeVersionApi.renderCursor(graphics, x, y);
     }
 
     private static void renderControllerGuide(Screen screen, Object graphics, Minecraft client) {
-        if (!NeoForgeControllerSettings.get().showGuides) return;
         NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
         boolean container = screen instanceof AbstractContainerScreen;
         NeoForgeControllerGuide.drawVerticalLeft(graphics, client.font, 8, 8,
@@ -214,7 +202,6 @@ public final class NeoForgeControllerCompat {
     }
 
     public static void renderGameplayGuide(Object graphics) {
-        if (!NeoForgeControllerSettings.get().showGuides) return;
         Minecraft client = Minecraft.getInstance();
         if (!active || graphics == null || client == null || NeoForgeClientApi.screen(client) != null || client.player == null || NeoForgeClientApi.isHudHidden(client)) return;
         NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
@@ -308,23 +295,6 @@ public final class NeoForgeControllerCompat {
         }
     }
 
-    private static boolean analogMovementEnabled(NeoForgeControllerSettings settings) {
-        return !settings.keyboardMovement;
-    }
-
-    // read by the keyboard input mixin, null leaves the vanilla movement alone
-    public static float[] analogMovement() {
-        NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
-        Minecraft client = Minecraft.getInstance();
-        if (!active || !analogMovementEnabled(settings) || client == null || NeoForgeClientApi.screen(client) != null) {
-            return null;
-        }
-        return ControllerRuntime.shapedMovement(
-            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
-            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
-            settings.moveDeadzone);
-    }
-
     private static void tickGameplay(Minecraft client) {
         NeoForgeControllerSettings settings = NeoForgeControllerSettings.get();
         Options options = client.options;
@@ -346,11 +316,10 @@ public final class NeoForgeControllerCompat {
 
         float lx = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
         float ly = axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        boolean analog = analogMovementEnabled(settings);
-        setHeld(keys.forward, !analog && ly < -settings.moveDeadzone);
-        setHeld(keys.back, !analog && ly > settings.moveDeadzone);
-        setHeld(keys.left, !analog && lx < -settings.moveDeadzone);
-        setHeld(keys.right, !analog && lx > settings.moveDeadzone);
+        setHeld(keys.forward, ly < -settings.moveDeadzone);
+        setHeld(keys.back, ly > settings.moveDeadzone);
+        setHeld(keys.left, lx < -settings.moveDeadzone);
+        setHeld(keys.right, lx > settings.moveDeadzone);
         setHeld(keys.jump, button(settings, ControllerAction.JUMP));
 
         boolean sneakHeld;

@@ -11,6 +11,10 @@ Bandit Launcher runs **Minecraft Java Edition directly on Xbox Series X|S in Dev
 [Website](https://launcher.banditvault.co.uk/) ·
 [Download](#download) · [Getting started](#getting-started) · [Minecraft versions](#minecraft-versions) · [Discord](https://discord.gg/XTFYUKbG7g) · [Video guide](https://youtu.be/ATHiVaBenY8)
 
+## V15 input status
+
+Minecraft 26.3 uses the patched SDL3/WinRT input backend. V15 repairs the SDL3 keyboard and mouse-button calling convention, uses direct CoreWindow key events, resets input on capture/focus loss, and links SDL's transparent WinRT cursor resource. The V12 Mesa/WGL rendering path remains unchanged. Older GLFW-based targets continue using the established GLFW/UWP input path. Microsoft authentication remains disabled in local builds.
+
 ## Requirements
 
 - **Xbox Series S or Xbox Series X** with Developer Mode enabled.
@@ -61,16 +65,22 @@ The default target is **1.21.11 + Fabric 0.19.5**, using Java 21. The catalog al
 
 | Minecraft version | Loaders in the catalog | Status |
 | --- | --- | --- |
-| `26.1`, `26.1.1`, `26.1.2`, `26.2` | Fabric, Forge, NeoForge | Experimental. Uses the Java 25 runtime. |
+| `26.1`, `26.1.1`, `26.1.2`, `26.2`, `26.3` | Fabric, Forge, NeoForge | Experimental. Uses the Java 25 runtime. 26.3 uses direct SDL3/WinRT; the bundled 26.3 controller is currently enabled only for Fabric. |
 | `1.21` through `1.21.11` | Fabric and NeoForge. Forge on every listed version except `1.21.2`. | Experimental. Uses Java 21. |
-| `1.20.4` | Fabric, NeoForge | Fabric is testing. NeoForge is experimental and has no bundled controller provider. |
-| `1.20.1` | Fabric, Forge | Fabric is testing. Forge is experimental. |
-| `1.19.2` | Fabric | Testing. |
+| `1.20.4` | Fabric, NeoForge | Fabric is testing. NeoForge is experimental and has no bundled controller provider. Uses the Java 17 compatibility runtime. |
+| `1.20.1` | Fabric, Forge | Fabric is testing. Forge is experimental. Uses the Java 17 compatibility runtime. |
+| `1.19.2` | Fabric | Testing. Uses Java 17. |
 | `1.18.2` | Forge | Experimental. No bundled controller provider. |
-| `1.16.5` | Fabric | Testing. |
-| `1.12.2` | Forge | Experimental. Forge runs through Cleanroom, and the controller works the same as on newer versions. Vanilla 1.12.2 is not supported. |
+| `1.16.5` | Fabric | Experimental legacy target. Uses the packaged Java 17 compatibility runtime; no bundled controller provider. |
+| `1.12.2` | Forge, Vanilla | Catalog entries only. The legacy launch provider is not implemented. |
 
 Fabric uses **0.19.5** on listed targets from `1.20.1` onward, and **0.14.25** on `1.19.2` and `1.16.5`. Exact Forge and NeoForge versions, runtime choices and controller providers are listed in [the version catalog](config/versions.tsv).
+
+Window/input compatibility is selected from each target's own LWJGL manifest instead of a hardcoded Minecraft-version cutoff. Targets containing `lwjgl-sdl` use the patched SDL3/WinRT path; targets containing `lwjgl-glfw` use the UWP GLFW shim. Minecraft 26.3 currently resolves to SDL3, while the 1.21.x/1.20.x families resolve to GLFW. The hardware-proven V12 graphics path mirrors the Series-S Mesa pixel-format contract (`wglChoosePixelFormat` → Gallium `SetPixelFormat`) and V14 keeps that graphics sequence unchanged, forces the WinRT Windows.Gaming.Input controller backend on for SDL3 targets, and adds a CoreWindow relative-mouse fallback when Xbox does not expose a raw MouseDevice source.
+See [Minecraft 26.3 SDL3 / Xbox UWP](docs/MC-26.3-SDL3.md) for the runtime architecture, controller status, build acceptance checks, and Xbox runtime checklist.
+
+
+For local development, both `scripts/build-local-263.ps1` (historical command name) and `scripts/build-local-multiversion.ps1` now build the full catalog with per-version manifests, compatibility/controller mods and strict package validation. Use `scripts/build-regression-263.ps1` only when you deliberately want a 26.3-only developer regression package.
 
 A catalog entry is not proof that the game or every mod works on Xbox. A target needs its launch files and bundled support files in the installed package. Experimental targets still need testing, and available targets can differ between builds. Check the installed launcher's target list and the release notes.
 
@@ -137,12 +147,12 @@ Crash and usage reporting is off until enabled. It can be changed in launcher Se
 ## Project docs
 
 - [Building](docs/BUILDING.md)
+- [Version compatibility](docs/VERSION-COMPATIBILITY.md)
 - [Compatible mods](docs/COMPATIBLE-MODS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Patching notes](docs/PATCHING.md)
 - [Privacy](docs/PRIVACY.md)
 - [Contributing](CONTRIBUTING.md)
-- [Translating](docs/TRANSLATING.md)
 - [Third-party components](docs/THIRD-PARTY.md)
 
 ## License and creator content
@@ -154,3 +164,9 @@ Videos, streams, screenshots, reviews, benchmarks and tutorials are allowed when
 Redistributing APPX packages, including nightly builds, requires prior written permission. Removing or bypassing Microsoft/Xbox authentication or Minecraft ownership checks is not permitted.
 
 Bandit Launcher does not bundle Minecraft game files. Minecraft and all third-party components remain under their own licenses and terms. See [Legal notes](docs/LEGAL.md) for more detail.
+
+
+
+### V16 cursor parity
+
+For SDL3/26.3 targets, the visible menu pointer uses Bandit's launcher-style custom WinRT cursor (resource 5001), while gameplay uses the transparent resource 5000. The full multi-version catalog remains enabled.

@@ -246,22 +246,83 @@ typedef struct { unsigned char buttons[15]; float axes[6]; } GLFWgamepadstate;
 #define GL_RENDERER 0x1F01
 #define GL_VERSION  0x1F02
 
+typedef void* EGLDisplay;
+typedef void* EGLSurface;
+typedef void* EGLContext;
+typedef void* EGLConfig;
+typedef void* EGLNativeDisplayType;
+typedef IInspectable* EGLNativeWindowType;
+typedef int32_t EGLint;
+typedef int32_t EGLBoolean;
+typedef uint32_t EGLenum;
+
+#define EGL_FALSE 0
+#define EGL_TRUE 1
+#define EGL_DEFAULT_DISPLAY ((EGLNativeDisplayType)0)
+#define EGL_NO_DISPLAY ((EGLDisplay)0)
+#define EGL_NO_SURFACE ((EGLSurface)0)
+#define EGL_NO_CONTEXT ((EGLContext)0)
+#define EGL_NONE 0x3038
+#define EGL_RED_SIZE 0x3024
+#define EGL_GREEN_SIZE 0x3023
+#define EGL_BLUE_SIZE 0x3022
+#define EGL_ALPHA_SIZE 0x3021
+#define EGL_DEPTH_SIZE 0x3025
+#define EGL_STENCIL_SIZE 0x3026
+#define EGL_SURFACE_TYPE 0x3033
+#define EGL_RENDERABLE_TYPE 0x3040
+#define EGL_WINDOW_BIT 0x0004
+#define EGL_OPENGL_BIT 0x0008
+#define EGL_OPENGL_ES2_BIT 0x0004
+#define EGL_OPENGL_ES3_BIT_KHR 0x00000040
+#define EGL_OPENGL_API 0x30A2
+#define EGL_OPENGL_ES_API 0x30A0
+#define EGL_VENDOR 0x3053
+#define EGL_VERSION 0x3054
+#define EGL_CONTEXT_CLIENT_VERSION 0x3098
+#define EGL_CONTEXT_MAJOR_VERSION_KHR 0x3098
+#define EGL_CONTEXT_MINOR_VERSION_KHR 0x30FB
+#define EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR 0x30FD
+#define EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR 0x00000001
+#define EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR 0x00000002
+
+typedef EGLDisplay (WINAPI* PFN_eglGetDisplay)(EGLNativeDisplayType);
+typedef EGLDisplay (WINAPI* PFN_eglGetPlatformDisplay)(EGLenum, void*, const EGLint*);
+typedef EGLBoolean (WINAPI* PFN_eglInitialize)(EGLDisplay, EGLint*, EGLint*);
+typedef EGLBoolean (WINAPI* PFN_eglTerminate)(EGLDisplay);
+typedef EGLBoolean (WINAPI* PFN_eglBindAPI)(EGLenum);
+typedef EGLBoolean (WINAPI* PFN_eglChooseConfig)(EGLDisplay, const EGLint*, EGLConfig*, EGLint, EGLint*);
+typedef EGLSurface (WINAPI* PFN_eglCreateWindowSurface)(EGLDisplay, EGLConfig, EGLNativeWindowType, const EGLint*);
+typedef EGLSurface (WINAPI* PFN_eglCreatePlatformWindowSurface)(EGLDisplay, EGLConfig, void*, const EGLint*);
+typedef EGLContext (WINAPI* PFN_eglCreateContext)(EGLDisplay, EGLConfig, EGLContext, const EGLint*);
+typedef EGLBoolean (WINAPI* PFN_eglDestroyContext)(EGLDisplay, EGLContext);
+typedef EGLBoolean (WINAPI* PFN_eglDestroySurface)(EGLDisplay, EGLSurface);
+typedef EGLBoolean (WINAPI* PFN_eglMakeCurrent)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+typedef EGLBoolean (WINAPI* PFN_eglSwapBuffers)(EGLDisplay, EGLSurface);
+typedef EGLBoolean (WINAPI* PFN_eglSwapInterval)(EGLDisplay, EGLint);
+typedef const char* (WINAPI* PFN_eglQueryString)(EGLDisplay, EGLint);
+typedef void* (WINAPI* PFN_eglGetProcAddress)(const char*);
+typedef EGLint (WINAPI* PFN_eglGetError)(void);
+typedef EGLBoolean (WINAPI* PFN_eglGetConfigAttrib)(EGLDisplay, EGLConfig, EGLint, EGLint*);
 typedef const unsigned char* (APIENTRY* PFN_glGetString)(unsigned int);
 typedef void (*PFN_proc_init)(void);
 
 static constexpr wchar_t kEGLNativeWindowTypeProperty[] = L"EGLNativeWindowTypeProperty";
-static DWORD g_contextThreadId = 0;
+static constexpr wchar_t kEGLRenderSurfaceSizeProperty[] = L"EGLRenderSurfaceSizeProperty";
+
+static EGLDisplay g_eglDisplay = EGL_NO_DISPLAY;
+static EGLSurface g_eglSurface = EGL_NO_SURFACE;
+static EGLContext g_eglContext = EGL_NO_CONTEXT;
+static EGLConfig  g_eglConfig = nullptr;
+static DWORD g_eglContextThreadId = 0;
+static HMODULE g_libEGL = NULL;
 static HMODULE g_opengl32 = NULL;
+static HMODULE g_libGLESv2 = NULL;
 static BOOL g_graphicsRuntimeUsesGles = FALSE;
 static BOOL g_initialised = FALSE;
 static BOOL g_should_close = FALSE;
 static int g_window_width = 1920;
 static int g_window_height = 1080;
-// the size the app asked glfwCreateWindow for, which the console never gives it
-static int g_created_width = 0;
-static int g_created_height = 0;
-static bool g_created_size_announced = false;
-static bool g_window_size_notification_pending = false;
 static int g_framebuffer_width = 1920;
 static int g_framebuffer_height = 1080;
 static int g_menu_window_width = 960;
@@ -286,6 +347,24 @@ static int g_current_context_log_count = 0;
 static int g_window_attrib_log_count = 0;
 static int g_extension_log_count = 0;
 
+static PFN_eglGetDisplay p_eglGetDisplay = nullptr;
+static PFN_eglGetPlatformDisplay p_eglGetPlatformDisplay = nullptr;
+static PFN_eglInitialize p_eglInitialize = nullptr;
+static PFN_eglTerminate p_eglTerminate = nullptr;
+static PFN_eglBindAPI p_eglBindAPI = nullptr;
+static PFN_eglChooseConfig p_eglChooseConfig = nullptr;
+static PFN_eglCreateWindowSurface p_eglCreateWindowSurface = nullptr;
+static PFN_eglCreatePlatformWindowSurface p_eglCreatePlatformWindowSurface = nullptr;
+static PFN_eglCreateContext p_eglCreateContext = nullptr;
+static PFN_eglDestroyContext p_eglDestroyContext = nullptr;
+static PFN_eglDestroySurface p_eglDestroySurface = nullptr;
+static PFN_eglMakeCurrent p_eglMakeCurrent = nullptr;
+static PFN_eglSwapBuffers p_eglSwapBuffers = nullptr;
+static PFN_eglSwapInterval p_eglSwapInterval = nullptr;
+static PFN_eglQueryString p_eglQueryString = nullptr;
+static PFN_eglGetProcAddress p_eglGetProcAddress = nullptr;
+static PFN_eglGetError p_eglGetError = nullptr;
+static PFN_eglGetConfigAttrib p_eglGetConfigAttrib = nullptr;
 
 static GLFWerrorfun           g_error_cb       = NULL;
 static GLFWframebuffersizefun g_fbsize_cb      = NULL;
@@ -345,6 +424,7 @@ static void* g_joystick_user_pointer = NULL;
 
 static ComPtr<ICoreWindow> g_coreWindow;
 static ComPtr<ICoreDispatcher> g_dispatcher;
+static ComPtr<IInspectable> g_nativeWindowPropertySet;
 
 enum PointerDispatchKind {
     PointerDispatchMove,
@@ -359,19 +439,20 @@ enum PointerDispatchKind {
 using CoreWindowPointerHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CUI__CCore__CCoreWindow_Windows__CUI__CCore__CPointerEventArgs_t;
 using MouseDeviceMovedHandler = ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CDevices__CInput__CMouseDevice_Windows__CDevices__CInput__CMouseEventArgs_t;
 static char g_clipboard_buf[65536] = {};
+static float g_content_scale = 1.f;
 static bool g_controller_lb_down = false;
 static unsigned char g_controller_mouse_state[8] = {};
 static bool g_controller_rb_down = false;
-static bool g_cursorDisabled = false;
+static bool g_cursorDisabled = true;
 // Queue cursor moves requested while disabled until menu mode is restored.
 static bool g_pending_cursor_valid = false;
 static double g_pending_cursor_x = 0.0;
 static double g_pending_cursor_y = 0.0;
-// real glfw starts in normal mode and minecraft only sets the mode when it grabs or releases the mouse
-static int g_cursorMode = GLFW_CURSOR_NORMAL;
+static int g_cursorMode = GLFW_CURSOR_DISABLED;
 static bool g_cursor_inside = false;
 static double g_cursor_x = 960.0;
 static double g_cursor_y = 540.0;
+static int g_height = 1080;
 static double g_menu_abs_x = 960.0;
 static double g_menu_abs_y = 540.0;
 static ComPtr<ABI::Windows::Devices::Input::IMouseDevice> g_mouseDevice;
@@ -379,7 +460,6 @@ static bool g_mouseDeviceHooksInstalled = false;
 static ComPtr<MouseDeviceMovedHandler> g_mouseMovedHandler;
 static EventRegistrationToken g_mouseMovedToken = {};
 static int g_mouse_log_count = 0;
-static int g_pointer_log_count = 0;
 static unsigned char g_mouse_state[8] = {};
 static ComPtr<CoreWindowPointerHandler> g_pointerCaptureLostHandler;
 static EventRegistrationToken g_pointerCaptureLostToken = {};
@@ -398,10 +478,12 @@ static ComPtr<CoreWindowPointerHandler> g_pointerWheelHandler;
 static EventRegistrationToken g_pointerWheelToken = {};
 static bool g_raw_mouse_motion = false;
 static const ULONGLONG kDisplayScaleCacheMs = 500;
+static int g_width = 1920;
 static volatile LONG g_processing_events = 0;
 static int g_process_events_error_log_count = 0;
 static int g_nested_process_log_count = 0;
 static int g_process_events_offthread_log_count = 0;
+static bool g_controller_bridge_enabled = false;
 
 enum CursorInputOwner : LONG {
     CursorInputOwnerNone = 0,
@@ -448,13 +530,13 @@ static void RemoveMouseDeviceHooks();
 static bool InstallMouseDeviceHooks();
 static void RemovePointerHooks();
 static bool InstallPointerHooks();
-namespace bandit_cursor { static void Reset(); }
 static IClipboardStatics* GetClipboardStatics();
 
 struct FakeWindow {
     DWORD magic;
     int width;
     int height;
+    BOOL should_close;
     void* user_pointer;
 };
 static FakeWindow g_fake_window;
@@ -641,7 +723,10 @@ static FARPROC ResolveProc(HMODULE module, const char* name) {
     return proc;
 }
 
-
+static void ReportEglError(const char* label) {
+    const EGLint err = p_eglGetError ? p_eglGetError() : 0;
+    ShimLog("%s failed eglError=0x%04X", label, err);
+}
 
 static int MapVirtualKeyToGlfw(VirtualKey key) {
     // the oem punctuation keys have no VirtualKey names, so the switch runs on the raw value
@@ -1479,7 +1564,9 @@ static bool PollGameInputGamepad(bool fireCallbacks) {
             SetCursorInputOwner(CursorInputOwnerController);
         }
     }
-
+    if (fireCallbacks) {
+        UpdateControllerBridge(state);
+    }
 
     if (!g_haveGameInputGamepadState) {
         g_haveGameInputGamepadState = true;
@@ -1719,7 +1806,7 @@ static void QueryDisplayScale(double& scaleX, double& scaleY) {
     if (envLen > 0 && envLen < (DWORD)(sizeof(envScale) / sizeof(envScale[0]))) {
         wchar_t* end = nullptr;
         const double value = wcstod(envScale, &end);
-        if (value >= 0.25 && value <= 8.0) {
+        if (value >= 0.5 && value <= 8.0) {
             scaleX = value;
             scaleY = value;
             return;
@@ -1800,17 +1887,13 @@ static void RefreshWindowMetrics(bool fireCallbacks) {
         newFramebufferHeight == g_framebuffer_height &&
         newContentScaleX == g_content_scale_x &&
         newContentScaleY == g_content_scale_y) {
-        if (fireCallbacks && g_window_size_notification_pending && g_winsize_cb) {
-            g_window_size_notification_pending = false;
-            g_winsize_cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
-        }
         return;
     }
 
     g_window_width = newWindowWidth;
     g_window_height = newWindowHeight;
-    g_menu_window_width = newFramebufferWidth;
-    g_menu_window_height = newFramebufferHeight;
+    g_menu_window_width = g_framebuffer_width;
+    g_menu_window_height = g_framebuffer_height;
     g_framebuffer_width = newFramebufferWidth;
     g_framebuffer_height = newFramebufferHeight;
     g_content_scale_x = newContentScaleX;
@@ -1819,7 +1902,6 @@ static void RefreshWindowMetrics(bool fireCallbacks) {
     g_vidmode.height = g_framebuffer_height;
     g_fake_window.width = g_window_width;
     g_fake_window.height = g_window_height;
-    g_window_size_notification_pending = true;
     ShimLog("Window size %dx%d, framebuffer %dx%d, scale %.3fx%.3f%s",
         g_window_width, g_window_height,
         g_framebuffer_width, g_framebuffer_height,
@@ -1827,16 +1909,179 @@ static void RefreshWindowMetrics(bool fireCallbacks) {
         rawScaledFramebuffer ? " raw-scaled" : "");
 
     if (fireCallbacks) {
-        if (g_winsize_cb) {
-            g_window_size_notification_pending = false;
-            g_winsize_cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
-        }
+        if (g_winsize_cb) g_winsize_cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
         if (g_fbsize_cb) g_fbsize_cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
         if (g_contentscale_cb) g_contentscale_cb((GLFWwindow*)&g_fake_window, g_content_scale_x, g_content_scale_y);
     }
 }
 
+static bool BuildNativeWindowPropertySet() {
+    if (g_nativeWindowPropertySet) return true;
+    if (!AcquireCoreWindow()) return false;
+
+    ComPtr<IActivationFactory> propSetFactory;
+    HRESULT hr = GetActivationFactory(
+        HStringReference(RuntimeClass_Windows_Foundation_Collections_PropertySet).Get(),
+        &propSetFactory);
+    if (FAILED(hr)) {
+        ShimLog("PropertySet factory failed hr=0x%08X", hr);
+        return false;
+    }
+
+    ComPtr<IInspectable> propertySetInspectable;
+    hr = propSetFactory->ActivateInstance(propertySetInspectable.GetAddressOf());
+    if (FAILED(hr)) {
+        ShimLog("PropertySet ActivateInstance failed hr=0x%08X", hr);
+        return false;
+    }
+
+    ComPtr<IPropertySet> propertySet;
+    hr = propertySetInspectable.As(&propertySet);
+    if (FAILED(hr)) {
+        ShimLog("PropertySet As(IPropertySet) failed hr=0x%08X", hr);
+        return false;
+    }
+
+    ComPtr<IMap<HSTRING, IInspectable*>> propMap;
+    hr = propertySet.As(&propMap);
+    if (FAILED(hr)) {
+        ShimLog("PropertySet As(IMap) failed hr=0x%08X", hr);
+        return false;
+    }
+
+    RefreshWindowMetrics(false);
+
+    boolean replaced = false;
+    hr = propMap->Insert(HStringReference(kEGLNativeWindowTypeProperty).Get(), g_coreWindow.Get(), &replaced);
+    if (FAILED(hr)) {
+        ShimLog("Insert(EGLNativeWindowTypeProperty) failed hr=0x%08X", hr);
+        return false;
+    }
+
+    ComPtr<IPropertyValueStatics> propertyValueStatics;
+    hr = GetActivationFactory(
+        HStringReference(RuntimeClass_Windows_Foundation_PropertyValue).Get(),
+        &propertyValueStatics);
+    if (FAILED(hr)) {
+        ShimLog("PropertyValue factory failed hr=0x%08X", hr);
+        return false;
+    }
+
+    Size size = {};
+    size.Width = (FLOAT)g_framebuffer_width;
+    size.Height = (FLOAT)g_framebuffer_height;
+
+    ComPtr<IInspectable> sizeInspectable;
+    hr = propertyValueStatics->CreateSize(size, sizeInspectable.GetAddressOf());
+    if (FAILED(hr)) {
+        ShimLog("CreateSize failed hr=0x%08X", hr);
+        return false;
+    }
+
+    hr = propMap->Insert(HStringReference(kEGLRenderSurfaceSizeProperty).Get(), sizeInspectable.Get(), &replaced);
+    if (FAILED(hr)) {
+        ShimLog("Insert(EGLRenderSurfaceSizeProperty) failed hr=0x%08X", hr);
+        return false;
+    }
+
+    propertySet.As(&g_nativeWindowPropertySet);
+    ShimLog("Created EGL PropertySet surface descriptor (%dx%d)",
+        g_framebuffer_width, g_framebuffer_height);
+    return true;
+}
+
 #include "wgl_backend.h"
+
+static bool LoadMesaEGL() {
+    if (g_libEGL && g_opengl32) return true;
+
+    wchar_t runtimeDir[MAX_PATH];
+    wchar_t packagePrefix[MAX_PATH];
+    SelectGraphicsRuntimeDir(runtimeDir, MAX_PATH, packagePrefix, MAX_PATH);
+
+    struct RuntimeDll {
+        const wchar_t* file;
+        const char* label;
+        bool required;
+    };
+
+    const RuntimeDll siblings[] = {
+        { L"libglapi.dll", "libglapi.dll", false },
+        { L"z-1.dll", "z-1.dll", false },
+        { L"libgallium_wgl.dll", "libgallium_wgl.dll", false },
+        { L"libGLESv2.dll", "libGLESv2.dll", false },
+        { L"libGLESv1_CM.dll", "libGLESv1_CM.dll", false },
+        { L"glu32.dll", "glu32.dll", false },
+        { L"dxil.dll", "dxil.dll", false },
+    };
+
+    for (const RuntimeDll& dll : siblings) {
+        wchar_t absolutePath[MAX_PATH];
+        wchar_t packagedPath[MAX_PATH];
+        RuntimeDllPath(runtimeDir, packagePrefix, dll.file,
+            absolutePath, MAX_PATH, packagedPath, MAX_PATH);
+        if (GetFileAttributesW(absolutePath) != INVALID_FILE_ATTRIBUTES) {
+            HMODULE loaded = LoadPackagedOrFile(packagedPath, absolutePath, dll.label);
+            if (_wcsicmp(dll.file, L"libGLESv2.dll") == 0) {
+                g_libGLESv2 = loaded;
+            }
+        }
+    }
+
+    wchar_t glPath[MAX_PATH];
+    wchar_t glPackaged[MAX_PATH];
+    wchar_t eglPath[MAX_PATH];
+    wchar_t eglPackaged[MAX_PATH];
+    RuntimeDllPath(runtimeDir, packagePrefix, L"opengl32.dll", glPath, MAX_PATH, glPackaged, MAX_PATH);
+    RuntimeDllPath(runtimeDir, packagePrefix, L"libEGL.dll", eglPath, MAX_PATH, eglPackaged, MAX_PATH);
+
+    ShimLog("libEGL=%S", eglPath);
+    ShimLog("opengl32=%S", glPath);
+
+    g_opengl32 = LoadPackagedOrFile(glPackaged, glPath, "opengl32.dll");
+    g_libEGL = LoadPackagedOrFile(eglPackaged, eglPath, "libEGL.dll");
+    if (!g_opengl32 || !g_libEGL) {
+        ShimLog("Graphics loader failed gl=%p egl=%p err=%u", g_opengl32, g_libEGL, GetLastError());
+        return false;
+    }
+
+    PFN_proc_init procInit = (PFN_proc_init)GetProcAddress(g_opengl32, "proc_init");
+    if (procInit) {
+        ShimLog("Calling opengl32!proc_init");
+        procInit();
+        ShimLog("opengl32!proc_init returned");
+    } else if (g_graphicsRuntimeUsesGles) {
+        ShimLog("opengl32!proc_init not exported");
+    }
+
+    p_eglGetDisplay = (PFN_eglGetDisplay)ResolveProc(g_libEGL, "eglGetDisplay");
+    p_eglGetPlatformDisplay = (PFN_eglGetPlatformDisplay)ResolveProc(g_libEGL, "eglGetPlatformDisplay");
+    p_eglInitialize = (PFN_eglInitialize)ResolveProc(g_libEGL, "eglInitialize");
+    p_eglTerminate = (PFN_eglTerminate)ResolveProc(g_libEGL, "eglTerminate");
+    p_eglBindAPI = (PFN_eglBindAPI)ResolveProc(g_libEGL, "eglBindAPI");
+    p_eglChooseConfig = (PFN_eglChooseConfig)ResolveProc(g_libEGL, "eglChooseConfig");
+    p_eglCreateWindowSurface = (PFN_eglCreateWindowSurface)ResolveProc(g_libEGL, "eglCreateWindowSurface");
+    p_eglCreatePlatformWindowSurface = (PFN_eglCreatePlatformWindowSurface)ResolveProc(g_libEGL, "eglCreatePlatformWindowSurface");
+    p_eglCreateContext = (PFN_eglCreateContext)ResolveProc(g_libEGL, "eglCreateContext");
+    p_eglDestroyContext = (PFN_eglDestroyContext)ResolveProc(g_libEGL, "eglDestroyContext");
+    p_eglDestroySurface = (PFN_eglDestroySurface)ResolveProc(g_libEGL, "eglDestroySurface");
+    p_eglMakeCurrent = (PFN_eglMakeCurrent)ResolveProc(g_libEGL, "eglMakeCurrent");
+    p_eglSwapBuffers = (PFN_eglSwapBuffers)ResolveProc(g_libEGL, "eglSwapBuffers");
+    p_eglSwapInterval = (PFN_eglSwapInterval)ResolveProc(g_libEGL, "eglSwapInterval");
+    p_eglQueryString = (PFN_eglQueryString)ResolveProc(g_libEGL, "eglQueryString");
+    p_eglGetProcAddress = (PFN_eglGetProcAddress)ResolveProc(g_libEGL, "eglGetProcAddress");
+    p_eglGetError = (PFN_eglGetError)ResolveProc(g_libEGL, "eglGetError");
+    p_eglGetConfigAttrib = (PFN_eglGetConfigAttrib)ResolveProc(g_libEGL, "eglGetConfigAttrib");
+
+    if (!p_eglGetDisplay || !p_eglInitialize || !p_eglBindAPI || !p_eglChooseConfig ||
+        !p_eglCreateWindowSurface || !p_eglCreateContext || !p_eglMakeCurrent ||
+        !p_eglSwapBuffers || !p_eglGetProcAddress) {
+        ShimLog("Critical EGL exports missing");
+        return false;
+    }
+
+    return true;
+}
 
 static void WglLogLine(const char* s) { ShimLog("%s", s); }
 
@@ -1853,7 +2098,7 @@ static HMODULE WglLoadDll(const wchar_t* name) {
     return LoadPackagedOrFile(packagedPath, absolutePath, label);
 }
 
-static bool CreateWglContext() {
+static bool CreateEglContext() {
     if (wglb::Active()) return true;
     if (!AcquireCoreWindow()) return false;
     if (!wglb::Load(WglLoadDll, WglLogLine)) return false;
@@ -1885,7 +2130,7 @@ extern "C" __declspec(dllexport) int glfwInit(void) {
     if (g_initialised) return GLFW_TRUE;
     if (!AcquireCoreWindow()) return GLFW_FALSE;
     RefreshWindowMetrics(false);
-    g_fake_window = {0x58574C47u, g_window_width, g_window_height, NULL};
+    g_fake_window = {0x58574C47u, g_window_width, g_window_height, FALSE, NULL};
     g_initialised = TRUE;
     ShimLog("glfwInit OK window %dx%d framebuffer %dx%d",
         g_window_width, g_window_height,
@@ -2193,13 +2438,13 @@ static void HandlePointerEvent(IPointerEventArgs* args, PointerDispatchKind kind
         g_coreWindow->ReleasePointerCapture();
     }
 
-    if (g_pointer_log_count < 40 &&
+    if (g_mouse_log_count < 24 &&
         (kind == PointerDispatchMove || kind == PointerDispatchPress ||
          kind == PointerDispatchRelease || kind == PointerDispatchWheel ||
          kind == PointerDispatchEnter)) {
-        ++g_pointer_log_count;
-        ShimLog("Pointer event kind=%d pointer=%.1f,%.1f cursor=%.1f,%.1f buttons=%d%d%d%d%d",
-            (int)kind, x, y, g_cursor_x, g_cursor_y,
+        ++g_mouse_log_count;
+        ShimLog("Pointer event kind=%d cursor=%.1f,%.1f buttons=%d%d%d%d%d",
+            (int)kind, g_cursor_x, g_cursor_y,
             g_mouse_state[0], g_mouse_state[1], g_mouse_state[2], g_mouse_state[3], g_mouse_state[4]);
     }
 }
@@ -2442,18 +2687,24 @@ extern "C" __declspec(dllexport) void glfwTerminate(void) {
     ZeroMemory(g_controller_key_state, sizeof(g_controller_key_state));
     g_haveGameInputPollCache = false;
     g_lastGameInputPollMs = 0;
-    if (!wglb::Destroy()) return;
-    g_contextThreadId = 0;
-    if (g_coreWindow) {
-        if (g_visibilityToken.value) g_coreWindow->remove_VisibilityChanged(g_visibilityToken);
-        if (g_activatedToken.value) g_coreWindow->remove_Activated(g_activatedToken);
+    if (p_eglMakeCurrent && g_eglDisplay != EGL_NO_DISPLAY) {
+        p_eglMakeCurrent(g_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
-    g_visibilityToken = {};
-    g_activatedToken = {};
-    g_visibilityHandler.Reset();
-    g_activatedHandler.Reset();
-    g_lifecycleHooksInstalled = false;
-    bandit_cursor::Reset();
+    g_eglContextThreadId = 0;
+    if (p_eglDestroyContext && g_eglDisplay != EGL_NO_DISPLAY && g_eglContext != EGL_NO_CONTEXT) {
+        p_eglDestroyContext(g_eglDisplay, g_eglContext);
+    }
+    if (p_eglDestroySurface && g_eglDisplay != EGL_NO_DISPLAY && g_eglSurface != EGL_NO_SURFACE) {
+        p_eglDestroySurface(g_eglDisplay, g_eglSurface);
+    }
+    if (p_eglTerminate && g_eglDisplay != EGL_NO_DISPLAY) {
+        p_eglTerminate(g_eglDisplay);
+    }
+    g_eglContext = EGL_NO_CONTEXT;
+    g_eglSurface = EGL_NO_SURFACE;
+    g_eglDisplay = EGL_NO_DISPLAY;
+    g_eglConfig = nullptr;
+    g_nativeWindowPropertySet.Reset();
     g_initialised = FALSE;
     ShimLog("glfwTerminate complete");
 }
@@ -2464,7 +2715,7 @@ extern "C" __declspec(dllexport) int  glfwPlatformSupported(int platform) {
     return platform == GLFW_ANY_PLATFORM || platform == GLFW_PLATFORM_WIN32;
 }
 extern "C" __declspec(dllexport) void glfwGetVersion(int*a,int*b,int*c) { if(a)*a=3; if(b)*b=3; if(c)*c=3; }
-extern "C" __declspec(dllexport) const char* glfwGetVersionString(void) { return "3.3.3 UWP-WGL"; }
+extern "C" __declspec(dllexport) const char* glfwGetVersionString(void) { return "3.3.3 UWP-EGL"; }
 extern "C" __declspec(dllexport) int  glfwGetError(const char**d) { if(d)*d=NULL; return GLFW_NO_ERROR; }
 extern "C" __declspec(dllexport) GLFWerrorfun glfwSetErrorCallback(GLFWerrorfun cb) {
     GLFWerrorfun p = g_error_cb;
@@ -2477,12 +2728,8 @@ extern "C" __declspec(dllexport) void glfwWindowHintString(int,const char*) {}
 
 extern "C" __declspec(dllexport)
 GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFWwindow*) {
-    g_should_close = FALSE;
     ShimLog("glfwCreateWindow %dx%d '%s'", w, h, title ? title : "");
     if (!g_initialised && !glfwInit()) return NULL;
-    g_created_width = w;
-    g_created_height = h;
-    g_created_size_announced = false;
 
     if (w > 0) {
         g_menu_window_width = w;
@@ -2499,8 +2746,8 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
             : h;
     }
     RefreshWindowMetrics(false);
-    if (!CreateWglContext()) {
-        ShimLog("CreateWglContext FAILED");
+    if (!CreateEglContext()) {
+        ShimLog("CreateEglContext FAILED");
         return NULL;
     }
 
@@ -2550,7 +2797,7 @@ extern "C" __declspec(dllexport) void glfwHideWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwFocusWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwRequestWindowAttention(GLFWwindow*) {}
 extern "C" __declspec(dllexport) GLFWmonitor* glfwGetWindowMonitor(GLFWwindow*) { return NULL; }
-extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) { g_window_size_notification_pending = true; }
+extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) {}
 extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
     if (g_window_attrib_log_count < 32) {
         ++g_window_attrib_log_count;
@@ -2573,7 +2820,7 @@ extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
     case GLFW_OPENGL_PROFILE:
         return EnvFlagEnabled(L"MC_LEGACY_OPENGL_CONTEXT") ? GLFW_OPENGL_COMPAT_PROFILE : GLFW_OPENGL_CORE_PROFILE;
     case GLFW_CONTEXT_CREATION_API:
-        return GLFW_NATIVE_CONTEXT_API;
+        return GLFW_EGL_CONTEXT_API;
     default:
         return 0;
     }
@@ -2699,7 +2946,9 @@ extern "C" __declspec(dllexport) void glfwPollEvents(void) {
             ShimLog("Skipping ProcessEvents off dispatcher thread hr=0x%08X access=%d", accessHr, hasDispatcherAccess ? 1 : 0);
         }
     }
-    PollGameInputGamepad(true);
+    if (g_controller_bridge_enabled) {
+        PollGameInputGamepad(true);
+    }
     RefreshWindowMetrics(true);
 }
 extern "C" __declspec(dllexport) void glfwWaitEvents(void) {
@@ -2904,8 +3153,7 @@ extern "C" __declspec(dllexport) void glfwSetCursor(GLFWwindow*, GLFWcursor*) {}
 extern "C" __declspec(dllexport) const char* glfwGetClipboardString(GLFWwindow*) {
     g_clipboard_buf[0] = '\0';
 
-    ComPtr<IClipboardStatics> clip;
-    clip.Attach(GetClipboardStatics());
+    ComPtr<IClipboardStatics> clip(GetClipboardStatics());
     if (!clip) { ShimLog("Clipboard: IClipboardStatics unavailable (sandbox?)"); return g_clipboard_buf; }
 
     ComPtr<IDataPackageView> view;
@@ -2995,8 +3243,7 @@ extern "C" __declspec(dllexport) void glfwSetClipboardString(GLFWwindow*, const 
     if (FAILED(pkg->SetText(hstr))) { WindowsDeleteString(hstr); return; }
     WindowsDeleteString(hstr);
 
-    ComPtr<IClipboardStatics> clip;
-    clip.Attach(GetClipboardStatics());
+    ComPtr<IClipboardStatics> clip(GetClipboardStatics());
     if (!clip) return;
     if (FAILED(clip->SetContent(pkg.Get()))) {
         ShimLog("Clipboard: SetContent failed");
@@ -3036,39 +3283,43 @@ extern "C" __declspec(dllexport) uint64_t glfwGetTimerFrequency(void) {
 
 extern "C" __declspec(dllexport) void glfwMakeContextCurrent(GLFWwindow* w) {
     const DWORD tid = GetCurrentThreadId();
-    ShimLog("MakeContextCurrent %p tid=%lu previousTid=%lu", (void*)w, tid, g_contextThreadId);
+    ShimLog("MakeContextCurrent %p tid=%lu previousTid=%lu", (void*)w, tid, g_eglContextThreadId);
     if (!w) {
-        if (g_contextThreadId != 0 && g_contextThreadId != tid) {
+        if (g_eglContextThreadId != 0 && g_eglContextThreadId != tid) {
             ShimLog("MakeContextCurrent(NULL) ignored: context owned by thread %u, caller %u",
-                (unsigned)g_contextThreadId, (unsigned)tid);
+                (unsigned)g_eglContextThreadId, (unsigned)tid);
             return;
         }
         if (wglb::Active()) {
             wglb::MakeCurrent(false);
-
+        } else if (p_eglMakeCurrent && g_eglDisplay != EGL_NO_DISPLAY) {
+            p_eglMakeCurrent(g_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         }
-        g_contextThreadId = 0;
+        g_eglContextThreadId = 0;
         return;
     }
-    if (!CreateWglContext()) return;
-    if (g_contextThreadId != 0 && g_contextThreadId != tid) {
-        ShimLog("WGL moving context from tid=%lu to tid=%lu", g_contextThreadId, tid);
+    if (!CreateEglContext()) return;
+    if (g_eglContextThreadId != 0 && g_eglContextThreadId != tid) {
+        ShimLog("eglMakeCurrent moving context from tid=%lu to tid=%lu", g_eglContextThreadId, tid);
     }
-    const bool madeCurrent = wglb::Active() && wglb::MakeCurrent(true);
+    const bool madeCurrent = wglb::Active()
+        ? wglb::MakeCurrent(true)
+        : (p_eglMakeCurrent(g_eglDisplay, g_eglSurface, g_eglSurface, g_eglContext) != 0);
     if (!madeCurrent) {
         if (wglb::Active()) ShimLog("wglMakeCurrent failed");
+        else ReportEglError("eglMakeCurrent");
         return;
     }
-    g_contextThreadId = tid;
+    g_eglContextThreadId = tid;
     ShimLog("makeContextCurrent OK tid=%lu", tid);
 }
 extern "C" __declspec(dllexport) GLFWwindow* glfwGetCurrentContext(void) {
     const DWORD tid = GetCurrentThreadId();
-    GLFWwindow* current = (wglb::Active() && g_contextThreadId == tid) ? (GLFWwindow*)&g_fake_window : NULL;
+    GLFWwindow* current = ((g_eglContext != EGL_NO_CONTEXT || wglb::Active()) && g_eglContextThreadId == tid) ? (GLFWwindow*)&g_fake_window : NULL;
     if (g_current_context_log_count < 16) {
         ++g_current_context_log_count;
         ShimLog("glfwGetCurrentContext #%d tid=%lu boundTid=%lu => %p",
-            g_current_context_log_count, tid, g_contextThreadId, (void*)current);
+            g_current_context_log_count, tid, g_eglContextThreadId, (void*)current);
     }
     return current;
 }
@@ -3181,6 +3432,7 @@ static GLint g_locColor = -1;
 static void* Resolve(const char* name) {
     void* p = nullptr;
     if (wglb::Active()) p = wglb::GetProc(name);
+    if (!p && p_eglGetProcAddress) p = p_eglGetProcAddress(name);
     if (!p && g_opengl32) p = (void*)GetProcAddress(g_opengl32, name);
     return p;
 }
@@ -3280,9 +3532,6 @@ static bool Init() {
     g_locColor = p_getAttribLoc(g_prog, "aColor");
     if (g_locPos < 0 || g_locColor < 0) return false;
 
-    GLint previousVao = 0, previousArrayBuffer = 0;
-    p_getIntegerv(GL_C_VERTEX_ARRAY_BINDING, &previousVao);
-    p_getIntegerv(GL_C_ARRAY_BUFFER_BINDING, &previousArrayBuffer);
     p_genVao(1, &g_vao);
     p_genBuf(1, &g_vbo);
     p_bindVao(g_vao);
@@ -3292,8 +3541,7 @@ static bool Init() {
     p_vaPointer((GLuint)g_locPos, 2, GL_C_FLOAT, 0, stride, (const void*)0);
     p_enableVaa((GLuint)g_locColor);
     p_vaPointer((GLuint)g_locColor, 4, GL_C_FLOAT, 0, stride, (const void*)(2 * sizeof(GLfloat)));
-    p_bindVao((GLuint)previousVao);
-    p_bindBuf(GL_C_ARRAY_BUFFER, (GLuint)previousArrayBuffer);
+    p_bindVao(0);
     ShimLog("Mouse cursor overlay initialized (OpenGL 3.2 core)");
     return true;
 }
@@ -3352,7 +3600,7 @@ static void Draw() {
     const GLboolean wasCull = p_isEnabled(GL_C_CULL_FACE);
     const GLboolean wasScissor = p_isEnabled(GL_C_SCISSOR_TEST);
 
-    p_bindFb(0x8CA9, 0);
+    p_bindFb(GL_C_FRAMEBUFFER, 0);
     p_viewport(0, 0, (GLsizei)fbw, (GLsizei)fbh);
     if (!wasBlend) p_enable(GL_C_BLEND);
     p_blendFunc(GL_C_SRC_ALPHA, GL_C_ONE_MINUS_SRC_ALPHA);
@@ -3369,7 +3617,7 @@ static void Draw() {
     p_bindVao((GLuint)prevVao);
     p_bindBuf(GL_C_ARRAY_BUFFER, (GLuint)prevArr);
     p_useProg((GLuint)prevProg);
-    p_bindFb(0x8CA9, (GLuint)prevFb);
+    p_bindFb(GL_C_FRAMEBUFFER, (GLuint)prevFb);
     p_viewport(prevVp[0], prevVp[1], (GLsizei)prevVp[2], (GLsizei)prevVp[3]);
     p_blendFuncSep((GLenum)bSrcRgb, (GLenum)bDstRgb, (GLenum)bSrcA, (GLenum)bDstA);
     if (!wasBlend) p_disable(GL_C_BLEND);
@@ -3378,23 +3626,12 @@ static void Draw() {
     if (wasScissor) p_enable(GL_C_SCISSOR_TEST);
 }
 
-static void Reset() { g_ready = false; g_failed = false; g_prog = 0; g_vao = 0; g_vbo = 0; }
-
 } // namespace bandit_cursor
 
 extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
     if (g_swap_log_count < 12) {
         ++g_swap_log_count;
         ShimLog("glfwSwapBuffers #%d", g_swap_log_count);
-    }
-    // lwjglxx resets to the requested size after its first poll, so the real size goes out again after the first frame
-    if (!g_created_size_announced && g_winsize_cb && g_created_width > 0 && g_created_height > 0 &&
-        (g_created_width != g_window_width || g_created_height != g_window_height)) {
-        g_created_size_announced = true;
-        ShimLog("Announcing window size %dx%d after create asked for %dx%d",
-            g_window_width, g_window_height, g_created_width, g_created_height);
-        g_winsize_cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
-        if (g_fbsize_cb) g_fbsize_cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
     }
     if (g_cursorMode == GLFW_CURSOR_NORMAL &&
         CurrentCursorInputOwner() == CursorInputOwnerMouse) {
@@ -3404,11 +3641,18 @@ extern "C" __declspec(dllexport) void glfwSwapBuffers(GLFWwindow*) {
         if (wglb::Swap()) g_presented_frames.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-
+    if (!p_eglSwapBuffers || g_eglDisplay == EGL_NO_DISPLAY || g_eglSurface == EGL_NO_SURFACE) return;
+    if (!p_eglSwapBuffers(g_eglDisplay, g_eglSurface)) {
+        ReportEglError("eglSwapBuffers");
+    } else {
+        g_presented_frames.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 extern "C" __declspec(dllexport) void glfwSwapInterval(int i) {
     if (wglb::Active()) { wglb::SetSwapInterval(i); return; }
-
+    if (p_eglSwapInterval && g_eglDisplay != EGL_NO_DISPLAY) {
+        p_eglSwapInterval(g_eglDisplay, i);
+    }
 }
 extern "C" __declspec(dllexport) int glfwExtensionSupported(const char* name) {
     if (g_extension_log_count < 32) {
@@ -3421,7 +3665,9 @@ extern "C" __declspec(dllexport) int glfwExtensionSupported(const char* name) {
 extern "C" __declspec(dllexport) void* glfwGetProcAddress(const char* name) {
     void* p = NULL;
     if (wglb::Active()) p = wglb::GetProc(name);
+    if (!p && p_eglGetProcAddress) p = p_eglGetProcAddress(name);
     if (!p && g_opengl32) p = (void*)GetProcAddress(g_opengl32, name);
+    if (!p && g_libEGL) p = (void*)GetProcAddress(g_libEGL, name);
     if (g_proc_log_count < 200) {
         ++g_proc_log_count;
         ShimLog("glfwGetProcAddress #%d %s => %p", g_proc_log_count, name ? name : "(null)", p);
@@ -3558,7 +3804,7 @@ extern "C" __declspec(dllexport) HWND  glfwGetWin32Window(GLFWwindow*) { return 
 // kills the whole class for any mod that touches it. there is no real hwnd to attach on uwp
 extern "C" __declspec(dllexport) GLFWwindow* glfwAttachWin32Window(HWND, GLFWwindow*) { return NULL; }
 
-extern "C" __declspec(dllexport) void* glfwGetWGLContext(GLFWwindow*) { return wglb::Context(); }
+extern "C" __declspec(dllexport) void* glfwGetWGLContext(GLFWwindow*) { return NULL; }
 
 typedef struct { void* allocate; void* reallocate; void* deallocate; void* user; } GLFWallocator;
 extern "C" __declspec(dllexport) void glfwInitAllocator(const GLFWallocator*) {}
@@ -3569,10 +3815,10 @@ extern "C" __declspec(dllexport) int   glfwGetPhysicalDevicePresentationSupport(
 extern "C" __declspec(dllexport) int   glfwCreateWindowSurface(void*, GLFWwindow*, const void*, void*) { return 1; }
 extern "C" __declspec(dllexport) const char** glfwGetRequiredInstanceExtensions(unsigned int* c) { if(c)*c=0; return NULL; }
 
-extern "C" __declspec(dllexport) void* glfwGetEGLDisplay(void) { return NULL; }
-extern "C" __declspec(dllexport) void* glfwGetEGLContext(GLFWwindow*) { return NULL; }
-extern "C" __declspec(dllexport) void* glfwGetEGLSurface(GLFWwindow*) { return NULL; }
-extern "C" __declspec(dllexport) void* glfwGetEGLConfig(GLFWwindow*) { return NULL; }
+extern "C" __declspec(dllexport) void* glfwGetEGLDisplay(void) { return g_eglDisplay; }
+extern "C" __declspec(dllexport) void* glfwGetEGLContext(GLFWwindow*) { return g_eglContext; }
+extern "C" __declspec(dllexport) void* glfwGetEGLSurface(GLFWwindow*) { return g_eglSurface; }
+extern "C" __declspec(dllexport) void* glfwGetEGLConfig(GLFWwindow*) { return g_eglConfig; }
 
 extern "C" __declspec(dllexport) int glfwGetOSMesaColorBuffer(GLFWwindow*, int*, int*, int*, void**) { return GLFW_FALSE; }
 extern "C" __declspec(dllexport) int glfwGetOSMesaDepthBuffer(GLFWwindow*, int*, int*, int*, void**) { return GLFW_FALSE; }

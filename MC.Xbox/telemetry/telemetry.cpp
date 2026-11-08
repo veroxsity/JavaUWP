@@ -441,6 +441,7 @@ struct HardCrashSources {
     std::string hsErr;
     std::string latestLog;
     std::string mcLaunchLog;
+    std::string nativeStageLog;
 };
 
 HardCrashSources g_hardCrash;
@@ -718,6 +719,10 @@ void PrepareHardCrash(const std::wstring& runtimeRoot) {
     if (g_hardCrash.mcLaunchLog.empty()) {
         g_hardCrash.mcLaunchLog = ReadFileUtf8(LogsCurrentDir(runtimeRoot) + L"\\mc_launch.log");
     }
+    g_hardCrash.nativeStageLog = ReadFileUtf8(LogsPreviousDir(runtimeRoot) + L"\\sdl_wgl_stage.log");
+    if (g_hardCrash.nativeStageLog.empty()) {
+        g_hardCrash.nativeStageLog = ReadFileUtf8(LogsCurrentDir(runtimeRoot) + L"\\sdl_wgl_stage.log");
+    }
 
     const std::wstring gameDir = a2w(
         crashparse::MarkerValue(g_hardCrash.markerText, "gameDir").c_str());
@@ -743,6 +748,19 @@ void ReportHardCrash(const std::wstring& runtimeRoot) {
         parsed.outerClass = "unknown_hard_crash";
         parsed.rootClass = parsed.outerClass;
         parsed.source = "none";
+
+        if (!g_hardCrash.nativeStageLog.empty()) {
+            std::string stages = g_hardCrash.nativeStageLog;
+            while (!stages.empty() && (stages.back() == '\r' || stages.back() == '\n' || stages.back() == ' ' || stages.back() == '\t')) {
+                stages.pop_back();
+            }
+            const size_t line = stages.find_last_of("\r\n");
+            const std::string lastStage = line == std::string::npos ? stages : stages.substr(line + 1);
+            if (!lastStage.empty()) {
+                parsed.message = "last native SDL/WGL stage: " + lastStage;
+                parsed.source = "sdl_wgl_stage";
+            }
+        }
     }
 
     crashfp::JavaCrash crash = crashfp::Build(

@@ -50,5 +50,6 @@ bool RunEmbeddedMinecraft(
     const std::wstring& neoFormVersion,
     const std::wstring& neoForgeInstallToolsVersion,
     const std::wstring& neoForgeBinaryPatcherVersion,
+    WindowBackend windowBackend,
     const LaunchAuthConfig& authConfig,
     LaunchProgressCallback progress = {});

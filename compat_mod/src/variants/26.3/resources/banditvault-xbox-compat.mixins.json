@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "banditvault.xboxcompat.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CobblemonShowdownFileSystemMixin",
+    "MinecraftClientExitMixin",
+    "PathUtilBypassMixin",
+    "SystemDetailsOshiBypassMixin",
+    "ZipFsBypassMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

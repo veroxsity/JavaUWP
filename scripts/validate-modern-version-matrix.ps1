@@ -21,8 +21,31 @@ try {
             if ($Relative.EndsWith('.jar') -and -not (Test-JarComplete $path)) { throw "Invalid packaged jar $Relative" }
         }
     }
+
+    function Read-EntryText([string]$Relative) {
+        if ($zip) {
+            $entry = $zip.GetEntry($Relative.Replace('\', '/'))
+            if (-not $entry) { throw "Package entry missing $Relative" }
+            $stream = $entry.Open()
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+            try { return $reader.ReadToEnd() }
+            finally { $reader.Dispose(); $stream.Dispose() }
+        }
+        return [System.IO.File]::ReadAllText((Join-Path $PackagePath $Relative), [System.Text.Encoding]::UTF8)
+    }
     Require-Entry "runtime\version_catalog.tsv"
     Require-Entry "runtime\recommended-mods.json"
+    Require-Entry "natives\glfw.dll"
+    if ($targets | Where-Object { Test-MinecraftVersionAtLeast $_.minecraftVersion '26.3' }) {
+        Require-Entry "natives\SDL3.dll"
+        # SDL's UWP WGL backend loads the top-level module with a package-relative
+        # path. Dependencies are also staged at the package root so their plain
+        # module-name lookup remains inside the APPX package graph.
+        Require-Entry "graphics\mesa\opengl32.dll"
+        foreach ($mesaDll in @("libgallium_wgl.dll", "dxil.dll", "spirv_to_dxil.dll", "z-1.dll")) {
+            Require-Entry $mesaDll
+        }
+    }
     foreach ($inputFile in @(
         @{ Source = $CatalogPath; Relative = 'runtime/version_catalog.tsv' },
         @{ Source = (Join-Path $root 'config/recommended-mods.json'); Relative = 'runtime/recommended-mods.json' }
@@ -41,7 +64,39 @@ try {
     }
     foreach ($target in $targets) {
         $id = "$($target.minecraftVersion)-$($target.loader)-$($target.loaderVersion)"
-        Require-Entry "runtime\manifests\$id.tsv"
+        $manifestRelative = "runtime\manifests\$id.tsv"
+        Require-Entry $manifestRelative
+        $manifestText = Read-EntryText $manifestRelative
+        $usesSdlBackend = $manifestText -match '(?i)game/libraries/org/lwjgl/lwjgl-sdl/'
+        $usesGlfwBackend = $manifestText -match '(?i)game/libraries/org/lwjgl/lwjgl-glfw/'
+        if ($usesSdlBackend) {
+            Require-Entry "natives\SDL3.dll"
+        } elseif ($usesGlfwBackend) {
+            Require-Entry "natives\glfw.dll"
+        } else {
+            throw "Target $id manifest declares neither lwjgl-sdl nor lwjgl-glfw; no supported window backend can be selected"
+        }
+
+        if (Test-MinecraftVersionAtLeast $target.minecraftVersion '26.3') {
+            $required263Libraries = @(
+                'game/libraries/org/lwjgl/lwjgl/3.4.3/lwjgl-3.4.3.jar',
+                'game/libraries/org/lwjgl/lwjgl/3.4.3/lwjgl-3.4.3-natives-windows.jar',
+                'game/libraries/org/lwjgl/lwjgl-opengl/3.4.3/lwjgl-opengl-3.4.3.jar',
+                'game/libraries/org/lwjgl/lwjgl-opengl/3.4.3/lwjgl-opengl-3.4.3-natives-windows.jar',
+                'game/libraries/org/lwjgl/lwjgl-sdl/3.4.3/lwjgl-sdl-3.4.3.jar',
+                'game/libraries/org/lwjgl/lwjgl-sdl/3.4.3/lwjgl-sdl-3.4.3-natives-windows.jar',
+                'game/libraries/org/lwjgl/lwjgl-jemalloc/3.4.3/lwjgl-jemalloc-3.4.3-natives-windows.jar'
+            )
+            foreach ($relativeLibrary in $required263Libraries) {
+                if ($manifestText -notmatch [regex]::Escape($relativeLibrary)) {
+                    throw "26.3 target $id is missing the expected LWJGL 3.4.3 artifact/native: $relativeLibrary"
+                }
+            }
+            if ($manifestText -notmatch ('(?m)^# minecraftVersion\t' + [regex]::Escape($target.minecraftVersion) + '\r?$')) {
+                throw "Target $id manifest metadata does not identify Minecraft $($target.minecraftVersion)"
+            }
+        }
+
         if ($target.loader -eq 'fabric') {
             Require-Entry "runtime\libraries\net\fabricmc\fabric-loader\$($target.loaderVersion)\fabric-loader-$($target.loaderVersion).jar"
             Require-Entry "runtime\version-mods\$id\banditvault-xbox-compat-1.0.0.jar"

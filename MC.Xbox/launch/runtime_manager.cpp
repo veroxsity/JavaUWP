@@ -1,5 +1,4 @@
 #include "runtime_manager.h"
-#include "i18n.h"
 
 #include "loader.h"
 #include "launcher_common.h"
@@ -21,11 +20,8 @@
 
 #include "third_party/miniz/miniz.h"
 
-using i18n::Tr;
-using i18n::TrFormat;
-
 static std::wstring RuntimeSeedStamp(const std::wstring& packageDir) {
-    return std::wstring(L"seedVersion=6\n") +
+    return std::wstring(L"seedVersion=7\n") +
         L"packageDir=" + packageDir + L"\n" +
         L"exe=" + FileStamp(packageDir + L"\\MC.Xbox.exe") + L"\n" +
         L"manifest=" + FileStamp(packageDir + L"\\AppxManifest.xml") + L"\n" +
@@ -47,6 +43,7 @@ static std::wstring RuntimeSeedStamp(const std::wstring& packageDir) {
         L"bundledMods=" + FileStamp(packageDir + L"\\runtime\\bundled-mods") + L"\n" +
         L"logConfig=" + FileStamp(packageDir + L"\\runtime\\log_configs\\client-uwp.xml") + L"\n" +
         L"nativeGlfw=" + FileStamp(packageDir + L"\\natives\\glfw.dll") + L"\n" +
+        L"nativeSdl3=" + FileStamp(packageDir + L"\\natives\\SDL3.dll") + L"\n" +
         L"nativeLwjgl=" + FileStamp(packageDir + L"\\natives\\lwjgl.dll") + L"\n" +
         L"mesaOpenGl=" + FileStamp(packageDir + L"\\graphics\\mesa\\opengl32.dll") + L"\n";
 }
@@ -170,8 +167,7 @@ static bool IsBanditControllerJarName(const std::wstring& fileName) {
         lower.compare(lower.size() - 4, 4, L".jar") == 0 &&
         (lower.rfind(L"banditvault-fabric-controller", 0) == 0 ||
             lower.rfind(L"banditvault-forge-controller", 0) == 0 ||
-            lower.rfind(L"banditvault-neoforge-controller", 0) == 0 ||
-            lower.rfind(L"banditvault-cleanroom-controller", 0) == 0);
+            lower.rfind(L"banditvault-neoforge-controller", 0) == 0);
 }
 
 static bool IsControlifyJarName(const std::wstring& fileName) {
@@ -266,13 +262,13 @@ bool SeedLocalRuntime(
         !FileExistsNonEmpty(packageDir + L"\\java-desktop-uwp-awt.jar")) return false;
     WriteLogF(L"Seeding LocalState runtime from %s", packageDir.c_str());
     if (progress) {
-        progress(Tr(L"Copying launcher files"), Tr(L"Preparing mods and log configuration"), 0.12f);
+        progress(L"Copying launcher files", L"Preparing mods and log configuration", 0.12f);
     }
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\bundled-mods", localDir + L"\\game\\mods")) return false;
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\runtime\\log_configs", localDir + L"\\game\\log_configs")) return false;
     if (!CopyFileIfNeeded(packageDir + L"\\runtime\\version_catalog.tsv", localDir + L"\\runtime\\version_catalog.tsv")) return false;
     if (progress) {
-        progress(Tr(L"Copying Java runtime"), Tr(L"Preparing JVM files"), 0.52f);
+        progress(L"Copying Java runtime", L"Preparing JVM files", 0.52f);
     }
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre", localDir + L"\\jre")) return false;
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\jre21", localDir + L"\\jre21")) return false;
@@ -295,12 +291,12 @@ bool SeedLocalRuntime(
         return false;
     }
     if (progress) {
-        progress(Tr(L"Copying native libraries"), Tr(L"Preparing graphics and input runtime"), 0.80f);
+        progress(L"Copying native libraries", L"Preparing graphics and input runtime", 0.80f);
     }
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\natives", localDir + L"\\natives")) return false;
     if (!CopyDirectoryContentsIfNeeded(packageDir + L"\\graphics", localDir + L"\\graphics")) return false;
     if (progress) {
-        progress(Tr(L"Finalizing runtime"), Tr(L"Writing launch configuration"), 0.96f);
+        progress(L"Finalizing runtime", L"Writing launch configuration", 0.96f);
     }
     if (!CopyFileIfNeeded(packageDir + L"\\xbox_security.properties", localDir + L"\\xbox_security.properties")) return false;
     if (!CopyFileIfNeeded(packageDir + L"\\java-base-uwp-filesystem.jar", localDir + L"\\java-base-uwp-filesystem.jar")) return false;
@@ -315,7 +311,7 @@ bool SeedLocalRuntime(
         if (!CopyFileIfNeeded(packageDir + L"\\" + patch, localDir + L"\\" + patch)) return false;
     }
     if (progress) {
-        progress(Tr(L"Runtime ready"), Tr(L"Starting Minecraft"), 1.0f);
+        progress(L"Runtime ready", L"Starting Minecraft", 1.0f);
     }
     if (!MarkLocalRuntimeSeedCurrent(packageDir, localDir)) return false;
     WriteLog(L"LocalState runtime seed complete");
@@ -461,6 +457,53 @@ bool ReadDownloadManifest(const std::wstring& path, std::vector<DownloadManifest
     }
 
     return true;
+}
+
+const wchar_t* WindowBackendName(WindowBackend backend) {
+    return backend == WindowBackend::Sdl3 ? L"sdl3" : L"glfw";
+}
+
+WindowBackend ResolveWindowBackend(const std::wstring& manifestPath, const std::wstring& minecraftVersion) {
+    std::vector<DownloadManifestEntry> entries;
+    bool sawLwjglSdl = false;
+    bool sawLwjglGlfw = false;
+
+    if (!manifestPath.empty() && ReadDownloadManifest(manifestPath, entries)) {
+        for (const DownloadManifestEntry& entry : entries) {
+            std::wstring rel = ToLowerW(entry.relativePath);
+            std::replace(rel.begin(), rel.end(), L'\\', L'/');
+
+            if (rel.find(L"/org/lwjgl/lwjgl-sdl/") != std::wstring::npos ||
+                rel.find(L"/org/lwjgl/lwjgl-sdl-natives-") != std::wstring::npos) {
+                sawLwjglSdl = true;
+            }
+            if (rel.find(L"/org/lwjgl/lwjgl-glfw/") != std::wstring::npos ||
+                rel.find(L"/org/lwjgl/lwjgl-glfw-natives-") != std::wstring::npos) {
+                sawLwjglGlfw = true;
+            }
+        }
+
+        if (sawLwjglSdl) {
+            WriteLogF(L"Window backend resolved from manifest: SDL3 (%s)", manifestPath.c_str());
+            return WindowBackend::Sdl3;
+        }
+        if (sawLwjglGlfw) {
+            WriteLogF(L"Window backend resolved from manifest: GLFW (%s)", manifestPath.c_str());
+            return WindowBackend::Glfw;
+        }
+    }
+
+    // Fallback only for incomplete/legacy manifests. Mojang moved vanilla from
+    // GLFW to SDL3 in 26.3; the manifest capability probe above is authoritative.
+    const WindowBackend fallback =
+        CompareVersionNumbers(w2a(minecraftVersion), "26.3") >= 0
+            ? WindowBackend::Sdl3
+            : WindowBackend::Glfw;
+    WriteLogF(
+        L"Window backend manifest capability missing; fallback version=%s backend=%s",
+        minecraftVersion.c_str(),
+        WindowBackendName(fallback));
+    return fallback;
 }
 
 void ArchiveCurrentLogsToPrevious(const std::wstring& runtimeRoot) {
@@ -798,7 +841,7 @@ bool EnsureRuntimeDownloads(
     }
     if (entries.empty()) {
         WriteLog(L"Download manifest is empty");
-        if (progress) progress(Tr(L"No downloads needed"), Tr(L"Launching Minecraft"), 1.0f);
+        if (progress) progress(L"No downloads needed", L"Launching Minecraft", 1.0f);
         return true;
     }
 
@@ -811,12 +854,15 @@ bool EnsureRuntimeDownloads(
     size_t downloaded = 0;
     unsigned long long completedBytes = 0;
     std::vector<size_t> missing;
-    const std::wstring totalText = TrFormat(L"{0} files, {1} MB", { std::to_wstring(entries.size()), std::to_wstring(totalBytes / (1024ULL * 1024ULL)) });
+    const std::wstring totalText = std::to_wstring(entries.size()) + L" files, " +
+        std::to_wstring(totalBytes / (1024ULL * 1024ULL)) + L" MB";
     auto formatDownloadDetail = [&](size_t fileIndex, unsigned long long bytesDone) {
-        return TrFormat(L"{0}/{1} files  {2}/{3} MB", { std::to_wstring(fileIndex), std::to_wstring(entries.size()), std::to_wstring(bytesDone / (1024ULL * 1024ULL)), std::to_wstring(totalBytes / (1024ULL * 1024ULL)) });
+        return std::to_wstring(fileIndex) + L"/" + std::to_wstring(entries.size()) +
+            L" files  " + std::to_wstring(bytesDone / (1024ULL * 1024ULL)) +
+            L"/" + std::to_wstring(totalBytes / (1024ULL * 1024ULL)) + L" MB";
     };
     WriteLogF(L"Download manifest entries=%zu totalBytes=%llu", entries.size(), totalBytes);
-    if (progress) progress(Tr(L"Preparing download"), totalText.c_str(), 0.0f);
+    if (progress) progress(L"Preparing download", totalText.c_str(), 0.0f);
 
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto& entry = entries[i];
@@ -834,7 +880,7 @@ bool EnsureRuntimeDownloads(
                     ? static_cast<float>(static_cast<double>(completedBytes) / static_cast<double>(totalBytes))
                     : static_cast<float>(static_cast<double>(verified) / static_cast<double>(entries.size()));
                 const std::wstring detail = formatDownloadDetail(verified, completedBytes);
-                progress(Tr(L"Checking installed files"), detail.c_str(), ratio);
+                progress(L"Checking installed files", detail.c_str(), ratio);
             }
             continue;
         }
@@ -845,7 +891,7 @@ bool EnsureRuntimeDownloads(
     if (missing.empty()) {
         WriteLogF(L"Download pass complete verified=%zu downloaded=0", verified);
         MarkDownloadManifestCurrent(manifestPath, runtimeRoot, targetId);
-        if (progress) progress(Tr(L"Download complete"), Tr(L"Launching Minecraft"), 1.0f);
+        if (progress) progress(L"Download complete", L"Launching Minecraft", 1.0f);
         return true;
     }
 
@@ -926,7 +972,7 @@ bool EnsureRuntimeDownloads(
                 DeleteFileW(tempPath.c_str());
                 std::lock_guard<std::mutex> lock(stateMutex);
                 failed = true;
-                failureStatus = Tr(L"Download failed after retries");
+                failureStatus = L"Download failed after retries";
                 failureDetail = entry.relativePath;
                 break;
             }
@@ -941,7 +987,7 @@ bool EnsureRuntimeDownloads(
                 DeleteFileW(tempPath.c_str());
                 std::lock_guard<std::mutex> lock(stateMutex);
                 failed = true;
-                failureStatus = Tr(L"File verification failed");
+                failureStatus = L"File verification failed";
                 failureDetail = entry.relativePath;
                 break;
             }
@@ -952,7 +998,7 @@ bool EnsureRuntimeDownloads(
                 DeleteFileW(tempPath.c_str());
                 std::lock_guard<std::mutex> lock(stateMutex);
                 failed = true;
-                failureStatus = Tr(L"Download install failed");
+                failureStatus = L"Download install failed";
                 failureDetail = entry.relativePath;
                 break;
             }
@@ -1004,12 +1050,12 @@ bool EnsureRuntimeDownloads(
                 : static_cast<float>(static_cast<double>(verifiedSnapshot) / static_cast<double>(entries.size()));
             if (failedSnapshot) {
                 progress(
-                    failureStatusSnapshot.empty() ? Tr(L"Download failed") : failureStatusSnapshot.c_str(),
+                    failureStatusSnapshot.empty() ? L"Download failed" : failureStatusSnapshot.c_str(),
                     failureDetailSnapshot.c_str(),
                     ratio);
             } else {
                 const std::wstring detail = formatDownloadDetail(verifiedSnapshot, bytesSnapshot);
-                progress(Tr(L"Downloading Minecraft files"), detail.c_str(), ratio);
+                progress(L"Downloading Minecraft files", detail.c_str(), ratio);
             }
         }
 
@@ -1032,7 +1078,7 @@ bool EnsureRuntimeDownloads(
 
     WriteLogF(L"Download pass complete verified=%zu downloaded=%zu", verified, downloaded);
     MarkDownloadManifestCurrent(manifestPath, runtimeRoot, targetId);
-    if (progress) progress(Tr(L"Download complete"), Tr(L"Launching Minecraft"), 1.0f);
+    if (progress) progress(L"Download complete", L"Launching Minecraft", 1.0f);
     return true;
 }
 
@@ -1158,6 +1204,7 @@ MinecraftVersionInfo ResolveVersionInfo(const std::wstring& packageDir, const st
     info.loader = target.loader;
     info.loaderVersion = target.loaderVersion;
     info.javaRuntime = target.javaRuntime.empty() ? L"current" : target.javaRuntime;
+    info.controllerProvider = target.controllerProvider.empty() ? L"none" : ToLowerW(target.controllerProvider);
     info.clientJar = runtimeRoot + L"\\game\\versions\\" + target.minecraftVersion + L"\\" + target.minecraftVersion + L".jar";
 
     const LaunchTarget def = DefaultLaunchTarget();
@@ -1176,6 +1223,7 @@ MinecraftVersionInfo ResolveVersionInfo(const std::wstring& packageDir, const st
             info.neoFormVersion, info.neoForgeInstallToolsVersion,
             info.neoForgeBinaryPatcherVersion);
     }
+    info.windowBackend = ResolveWindowBackend(info.manifestPath, info.minecraftVersion);
 
     if (info.assetIndex.empty() && isDefault) info.assetIndex = a2w(kMinecraftAssetIndex);
     if (info.launchVersion.empty() && isDefault) info.launchVersion = a2w(kFabricLaunchVersion);
@@ -1298,19 +1346,29 @@ bool PrepareTargetNativeDir(
     const std::wstring& runtimeRoot,
     const std::wstring& packageDir,
     const std::wstring& targetId,
+    WindowBackend windowBackend,
     std::wstring& nativeDir) {
     if (manifestPath.empty() || targetId.empty()) return false;
 
     nativeDir = runtimeRoot + L"\\runtime\\natives\\" + SafePathSegment(targetId);
     const std::wstring packageNativesDir = packageDir + L"\\natives";
     const std::wstring markerPath = nativeDir + L"\\.native_manifest";
-    const std::wstring marker = L"nativeVersion=3\nmanifest=" + FileStamp(manifestPath) +
-        L"\nglfw=" + FileStamp(packageNativesDir + L"\\glfw.dll") + L"\n";
+    const bool useSdlBackend = windowBackend == WindowBackend::Sdl3;
+    const std::wstring backendName = WindowBackendName(windowBackend);
+    const std::wstring marker = L"nativeVersion=4\nmanifest=" + FileStamp(manifestPath) +
+        L"\nbackend=" + backendName +
+        L"\nglfw=" + FileStamp(packageNativesDir + L"\\glfw.dll") +
+        L"\nsdl3=" + FileStamp(packageNativesDir + L"\\SDL3.dll") + L"\n";
+
+    const auto requiredWindowRuntimeExists = [&]() {
+        const wchar_t* name = useSdlBackend ? L"SDL3.dll" : L"glfw.dll";
+        return GetFileAttributesW((nativeDir + L"\\" + name).c_str()) != INVALID_FILE_ATTRIBUTES;
+    };
 
     std::wstring existingMarker;
     if (ReadTextFile(markerPath, existingMarker) && existingMarker == marker &&
         GetFileAttributesW((nativeDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((nativeDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        requiredWindowRuntimeExists() &&
         GetFileAttributesW((nativeDir + L"\\jemalloc.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES) {
         return true;
@@ -1322,8 +1380,8 @@ bool PrepareTargetNativeDir(
     std::vector<std::wstring> lwjglNativeJars;
     std::vector<std::wstring> jnaJars;
     CollectManifestNativeSources(manifestPath, runtimeRoot, lwjglNativeJars, jnaJars);
-    WriteLogF(L"Preparing target natives target=%s lwjglNativeJars=%zu jnaJars=%zu",
-        targetId.c_str(), lwjglNativeJars.size(), jnaJars.size());
+    WriteLogF(L"Preparing target natives target=%s backend=%s lwjglNativeJars=%zu jnaJars=%zu",
+        targetId.c_str(), backendName.c_str(), lwjglNativeJars.size(), jnaJars.size());
 
     bool extractedLwjgl = false;
     for (const std::wstring& jar : lwjglNativeJars) {
@@ -1335,19 +1393,32 @@ bool PrepareTargetNativeDir(
         extractedJna = ExtractDllsFromJar(jar, nativeDir, true) || extractedJna;
     }
 
-    CopyFileIfNeeded(packageNativesDir + L"\\glfw.dll", nativeDir + L"\\glfw.dll");
+    // Preserve the backend declared by the target's own LWJGL library set.
+    // GLFW targets use our UWP GLFW shim. SDL targets overwrite the desktop SDL3.dll
+    // extracted from Mojang's native JAR with the packaged, external-host-patched
+    // WinRT/UWP build. Do not accept the extracted desktop DLL if this copy fails.
+    const std::wstring packagedWindowRuntime = packageNativesDir +
+        (useSdlBackend ? L"\\SDL3.dll" : L"\\glfw.dll");
+    const std::wstring targetWindowRuntime = nativeDir +
+        (useSdlBackend ? L"\\SDL3.dll" : L"\\glfw.dll");
+    const bool packagedWindowRuntimeExists =
+        GetFileAttributesW(packagedWindowRuntime.c_str()) != INVALID_FILE_ATTRIBUTES;
+    const bool copiedWindowRuntime =
+        packagedWindowRuntimeExists && CopyFileIfNeeded(packagedWindowRuntime, targetWindowRuntime);
 
     const bool ready =
         extractedLwjgl &&
         extractedJna &&
+        copiedWindowRuntime &&
         GetFileAttributesW((nativeDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((nativeDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        requiredWindowRuntimeExists() &&
         GetFileAttributesW((nativeDir + L"\\jemalloc.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
     if (ready) {
         WriteTextFile(markerPath, marker);
     } else {
-        WriteLogF(L"Target native preparation incomplete target=%s dir=%s", targetId.c_str(), nativeDir.c_str());
+        WriteLogF(L"Target native preparation incomplete target=%s backend=%s dir=%s",
+            targetId.c_str(), backendName.c_str(), nativeDir.c_str());
     }
     return ready;
 }

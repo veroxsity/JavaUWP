@@ -17,7 +17,6 @@ enum class LoaderId {
     Fabric,
     NeoForge,
     Forge,
-    Cleanroom,
 };
 
 LoaderId ParseLoaderId(const std::wstring& loader);

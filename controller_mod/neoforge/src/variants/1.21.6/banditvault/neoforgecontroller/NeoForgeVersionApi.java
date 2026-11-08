@@ -58,10 +58,6 @@ final class NeoForgeVersionApi {
         graphics.fill(x, y - 5, x + 1, y + 6, 0xFFFFFFFF);
     }
 
-    static void beginCursorLayer(Object target) {
-        ((GuiGraphics)target).nextStratum();
-    }
-
     static int guiWidth(Object target) {
         return ((GuiGraphics)target).guiWidth();
     }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "auth_ui_state.h"
-#include "i18n.h"
 #include "launcher_common.h"
 #include "launcher_mouse.h"
 #include "mods_ui_globals.h"
@@ -23,8 +22,6 @@
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
-using i18n::Tr;
-using i18n::TrFormat;
 using namespace ABI::Windows::Foundation;
 using namespace ABI::Windows::UI::Core;
 
@@ -273,7 +270,7 @@ public:
             ProcessAuthUiEvents();
         };
 
-        const std::wstring title = state.title.empty() ? Tr(L"Microsoft sign-in") : state.title;
+        const std::wstring title = state.title.empty() ? L"Microsoft sign-in" : state.title;
         if (state.showModsPage) {
             if (state.modsDetailOpen) {
                 const ModCard& card = state.modsDetailCard;
@@ -298,7 +295,7 @@ public:
                 const float headLeft = iconRect.right + 24.0f;
                 DrawText(card.title.c_str(), titleFormat_.Get(),
                     D2D1::RectF(headLeft, top, right, top + 48.0f), white.Get());
-                DrawText(Tr(ContentLabel(card.kind)), captionFormat_.Get(),
+                DrawText(ContentLabel(card.kind), captionFormat_.Get(),
                     D2D1::RectF(headLeft, top + 50.0f, headLeft + 200.0f, top + 74.0f), accent.Get());
                 const std::wstring metaLine = !state.modsDetailMeta.empty() ? state.modsDetailMeta : card.status;
                 DrawText(metaLine.c_str(), smallFormat_.Get(),
@@ -315,12 +312,12 @@ public:
                 FillRound(installBtn, installing ? panel.Get() : accent.Get(), 12.0f);
                 StrokeRound(installBtn, accent.Get(), 12.0f, 2.0f);
                 DrawIcon(installing ? L"\uE895" : L"\uE896", D2D1::RectF(installBtn.left + 18.0f, installBtn.top, installBtn.left + 46.0f, installBtn.bottom), installing ? muted.Get() : black.Get());
-                DrawText(installing ? Tr(L"Installing...") : (card.kind == ContentKind::Modpack ? Tr(L"Install pack") : Tr(L"Install")),
+                DrawText(installing ? L"Installing..." : (card.kind == ContentKind::Modpack ? L"Install pack" : L"Install"),
                     bodyMid_.Get(), D2D1::RectF(installBtn.left + 52.0f, installBtn.top, installBtn.right - 8.0f, installBtn.bottom), installing ? muted.Get() : black.Get());
 
                 RegisterHit(launchhit::kBack, D2D1::RectF(left, iconRect.bottom + 22.0f, left + 220.0f, iconRect.bottom + 62.0f));
                 DrawIcon(L"\uE72B", D2D1::RectF(left, iconRect.bottom + 26.0f, left + 26.0f, iconRect.bottom + 26.0f + 30.0f), muted.Get());
-                DrawText(Tr(L"Back"), smallFormat_.Get(),
+                DrawText(L"Back", smallFormat_.Get(),
                     D2D1::RectF(left + 30.0f, iconRect.bottom + 30.0f, left + 220.0f, iconRect.bottom + 30.0f + 28.0f), muted.Get());
 
                 if (!state.status.empty()) {
@@ -340,7 +337,7 @@ public:
                 const float scrollPx = static_cast<float>(state.modsDetailScroll) * lineStep;
 
                 const std::wstring bodyText = (state.modsDetailLoading || state.modsDetailBody.empty())
-                    ? std::wstring(Tr(L"Loading description..."))
+                    ? std::wstring(L"Loading description...")
                     : state.modsDetailBody;
                 ComPtr<IDWriteTextLayout> layout;
                 if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
@@ -386,12 +383,10 @@ public:
                 const D2D1_RECT_F profileBack = DrawBackChip(left, top, surfaceFill.Get(), softEdge.Get(), muted.Get());
                 DrawText(nameShown.c_str(), titleFormat_.Get(),
                     D2D1::RectF(profileBack.right + 16.0f, top, right - actionBarW - 28.0f, top + 48.0f), state.modsRenaming ? accent.Get() : white.Get());
-                const std::wstring modCount = std::to_wstring(state.modsProfileMods.size());
                 const std::wstring sub = state.modsProfileBuiltin
-                    ? TrFormat(L"{0} - Pure vanilla, always available", { state.modsProfileTargetText })
-                    : state.modsProfileMods.size() == 1
-                        ? TrFormat(L"{0} - {1} mod installed", { state.modsProfileTargetText, modCount })
-                        : TrFormat(L"{0} - {1} mods installed", { state.modsProfileTargetText, modCount });
+                    ? (state.modsProfileTargetText + L" - Pure vanilla, always available")
+                    : (state.modsProfileTargetText + L" - " + std::to_wstring(state.modsProfileMods.size()) +
+                        (state.modsProfileMods.size() == 1 ? L" mod installed" : L" mods installed"));
                 DrawText(sub.c_str(), captionFormat_.Get(),
                     D2D1::RectF(left, top + 50.0f, right - actionBarW - 28.0f, top + 74.0f), muted.Get());
 
@@ -402,21 +397,24 @@ public:
                 FillRound(playBtn, isActive ? panel.Get() : accent.Get(), 12.0f);
                 StrokeRound(playBtn, accent.Get(), 12.0f, playFocus ? 3.0f : 2.0f);
                 DrawIcon(L"\uE768", D2D1::RectF(playBtn.left + 14.0f, playBtn.top, playBtn.left + 40.0f, playBtn.bottom), isActive ? muted.Get() : black.Get());
-                DrawText(isActive ? Tr(L"Playing") : Tr(L"Play"), bodyMid_.Get(),
+                DrawText(isActive ? L"Playing" : L"Play", bodyMid_.Get(),
                     D2D1::RectF(playBtn.left + 44.0f, playBtn.top, playBtn.right - 8.0f, playBtn.bottom), isActive ? muted.Get() : black.Get());
 
                 if (!state.modsProfileBuiltin) {
                     const D2D1_RECT_F controllerBtn = D2D1::RectF(right - btnW * 2.0f - btnGap, top, right - btnW - btnGap, top + btnH);
-                    RegisterHit(launchhit::kProfileController, controllerBtn);
-                    const bool controllerFocus = state.modsProfileFocus == 5;
+                    if (state.modsProfileControllerAvailable) {
+                        RegisterHit(launchhit::kProfileController, controllerBtn);
+                    }
+                    const bool controllerFocus = state.modsProfileControllerAvailable && state.modsProfileFocus == 5;
+                    const bool controllerOn = state.modsProfileControllerAvailable && state.modsProfileControllerModEnabled;
                     if (controllerFocus) GlowSelect(controllerBtn, 12.0f);
                     FillRound(controllerBtn, surfaceFill.Get(), 12.0f);
-                    StrokeRound(controllerBtn, state.modsProfileControllerModEnabled ? accent.Get() : muted.Get(), 12.0f, controllerFocus ? 3.0f : 2.0f);
+                    StrokeRound(controllerBtn, controllerOn ? accent.Get() : muted.Get(), 12.0f, controllerFocus ? 3.0f : 2.0f);
                     DrawIcon(L"\uE7FC", D2D1::RectF(controllerBtn.left + 12.0f, controllerBtn.top, controllerBtn.left + 36.0f, controllerBtn.bottom),
-                        state.modsProfileControllerModEnabled ? accent.Get() : muted.Get());
-                    DrawText(state.modsProfileControllerModEnabled ? Tr(L"Bandit On") : Tr(L"Bandit Off"), smallMid_.Get(),
+                        controllerOn ? accent.Get() : muted.Get());
+                    DrawText(!state.modsProfileControllerAvailable ? L"Bandit N/A" : (controllerOn ? L"Bandit On" : L"Bandit Off"), smallMid_.Get(),
                         D2D1::RectF(controllerBtn.left + 38.0f, controllerBtn.top, controllerBtn.right - 6.0f, controllerBtn.bottom),
-                        state.modsProfileControllerModEnabled ? accent.Get() : muted.Get());
+                        controllerOn ? accent.Get() : muted.Get());
 
                     const D2D1_RECT_F exportBtn = D2D1::RectF(right - btnW * 3.0f - btnGap * 2.0f, top, right - btnW * 2.0f - btnGap * 2.0f, top + btnH);
                     RegisterHit(launchhit::kProfileExport, exportBtn);
@@ -425,7 +423,7 @@ public:
                     FillRound(exportBtn, surfaceFill.Get(), 12.0f);
                     StrokeRound(exportBtn, accent.Get(), 12.0f, exportFocus ? 3.0f : 2.0f);
                     DrawIcon(L"\uE898", D2D1::RectF(exportBtn.left + 14.0f, exportBtn.top, exportBtn.left + 40.0f, exportBtn.bottom), accent.Get());
-                    DrawText(Tr(L"Export"), bodyMid_.Get(),
+                    DrawText(L"Export", bodyMid_.Get(),
                         D2D1::RectF(exportBtn.left + 44.0f, exportBtn.top, exportBtn.right - 8.0f, exportBtn.bottom), accent.Get());
 
                     const D2D1_RECT_F backupBtn = D2D1::RectF(right - btnW * 4.0f - btnGap * 3.0f, top, right - btnW * 3.0f - btnGap * 3.0f, top + btnH);
@@ -435,7 +433,7 @@ public:
                     FillRound(backupBtn, surfaceFill.Get(), 12.0f);
                     StrokeRound(backupBtn, accent.Get(), 12.0f, backupFocus ? 3.0f : 2.0f);
                     DrawIcon(L"\uE74E", D2D1::RectF(backupBtn.left + 14.0f, backupBtn.top, backupBtn.left + 40.0f, backupBtn.bottom), accent.Get());
-                    DrawText(Tr(L"Backup"), bodyMid_.Get(),
+                    DrawText(L"Backup", bodyMid_.Get(),
                         D2D1::RectF(backupBtn.left + 44.0f, backupBtn.top, backupBtn.right - 8.0f, backupBtn.bottom), accent.Get());
 
                     const D2D1_RECT_F delBtn = D2D1::RectF(right - btnW * 5.0f - btnGap * 4.0f, top, right - btnW * 4.0f - btnGap * 4.0f, top + btnH);
@@ -445,20 +443,20 @@ public:
                     FillRound(delBtn, surfaceFill.Get(), 12.0f);
                     StrokeRound(delBtn, danger.Get(), 12.0f, delFocus ? 3.0f : 2.0f);
                     DrawIcon(L"\uE74D", D2D1::RectF(delBtn.left + 14.0f, delBtn.top, delBtn.left + 40.0f, delBtn.bottom), danger.Get());
-                    DrawText(Tr(L"Delete"), bodyMid_.Get(),
+                    DrawText(L"Delete", bodyMid_.Get(),
                         D2D1::RectF(delBtn.left + 44.0f, delBtn.top, delBtn.right - 8.0f, delBtn.bottom), danger.Get());
                 }
 
                 const bool gridFocus = state.modsProfileFocus == 2;
                 const float hintTop = top + btnH + 12.0f;
-                std::wstring profileHint = Tr(L"B  Back");
+                std::wstring profileHint = L"B  Back";
                 if (state.modsRenaming) {
-                    profileHint = Tr(L"Type a name, then close the keyboard to save");
+                    profileHint = L"Type a name, then close the keyboard to save";
                 } else if (!state.modsProfileBuiltin) {
-                    if (gridFocus) profileHint = Tr(L"B  Back      X  Remove mod      Y  Rename");
-                    else if (state.modsProfileFocus == 4) profileHint = Tr(L"B  Back      A  Export .mrpack for PC");
-                    else if (state.modsProfileFocus == 5) profileHint = Tr(L"B  Back      A  Toggle Bandit controller mod      Y Rename");
-                    else profileHint = Tr(L"B  Back      A select      X Delete      Y Rename");
+                    if (gridFocus) profileHint = L"B  Back      X  Remove mod      Y  Rename";
+                    else if (state.modsProfileFocus == 4) profileHint = L"B  Back      A  Export .mrpack for PC";
+                    else if (state.modsProfileFocus == 5 && state.modsProfileControllerAvailable) profileHint = L"B  Back      A  Toggle Bandit controller mod      Y Rename";
+                    else profileHint = L"B  Back      A select      X Delete      Y Rename";
                 }
                 DrawText(profileHint.c_str(),
                     smallFormat_.Get(),
@@ -481,8 +479,8 @@ public:
 
                 if (total == 0) {
                     g_profileRowsVisible.store(1);
-                    DrawText(state.modsProfileBuiltin ? Tr(L"No mods. This is the clean vanilla game.")
-                                                      : Tr(L"No mods yet. Set this profile active, then install mods from the other tabs."),
+                    DrawText(state.modsProfileBuiltin ? L"No mods. This is the clean vanilla game."
+                                                      : L"No mods yet. Set this profile active, then install mods from the other tabs.",
                         smallFormat_.Get(), D2D1::RectF(bodyInner.left, bodyInner.top, bodyInner.right, bodyInner.top + 28.0f), muted.Get());
                 } else {
                     const float colGap = 14.0f;
@@ -519,7 +517,7 @@ public:
                     d2dContext_->PopAxisAlignedClip();
 
                     if (maxScroll > 0) {
-                        const std::wstring pos = TrFormat(L"row {0} / {1}", { std::to_wstring(scroll + 1), std::to_wstring(totalRows) });
+                        const std::wstring pos = L"row " + std::to_wstring(scroll + 1) + L" / " + std::to_wstring(totalRows);
                         DrawText(pos.c_str(), smallFormat_.Get(),
                             D2D1::RectF(bodyRect.right - 140.0f, bodyRect.top - 26.0f, bodyRect.right, bodyRect.top), muted.Get());
                     }
@@ -535,7 +533,7 @@ public:
             const float top = frame.top + 34.0f;
 
             const D2D1_RECT_F modsBack = DrawBackChip(left, top, surfaceFill.Get(), softEdge.Get(), muted.Get());
-            DrawText(Tr(L"Mods"), titleFormat_.Get(), D2D1::RectF(modsBack.right + 16.0f, top, tabsRight, top + 48.0f), white.Get());
+            DrawText(L"Mods", titleFormat_.Get(), D2D1::RectF(modsBack.right + 16.0f, top, tabsRight, top + 48.0f), white.Get());
 
             const float sourceH = 44.0f;
             const float sourceY = top + 72.0f;
@@ -576,7 +574,7 @@ public:
                 FillRound(tab, active ? accentSoft.Get() : surfaceFill.Get(), 14.0f);
                 StrokeRound(tab, (emphasized || active) ? accent.Get() : softEdge.Get(), 14.0f, emphasized ? 3.0f : (active ? 2.0f : 1.0f));
                 DrawIcon(info.icon, D2D1::RectF(tab.left + 8.0f, tab.top, tab.left + 46.0f, tab.bottom), (active || emphasized) ? accent.Get() : muted.Get());
-                DrawText(Tr(info.label), bodyMid_.Get(),
+                DrawText(info.label, bodyMid_.Get(),
                     D2D1::RectF(tab.left + 52.0f, tab.top, tab.right - 10.0f, tab.bottom),
                     (active || emphasized) ? accent.Get() : white.Get());
             }
@@ -587,9 +585,9 @@ public:
                 FillRound(infoBox, surfaceFill.Get(), 12.0f);
                 StrokeRound(infoBox, softEdge.Get(), 12.0f, 1.0f);
                 DrawIcon(L"\uE768", D2D1::RectF(infoBox.left + 8.0f, infoBox.top + 6.0f, infoBox.left + 34.0f, infoBox.top + 30.0f), muted.Get());
-                DrawText(Tr(L"INSTALLS GO TO"), captionFormat_.Get(),
+                DrawText(L"INSTALLS GO TO", captionFormat_.Get(),
                     D2D1::RectF(infoBox.left + 36.0f, infoBox.top + 9.0f, infoBox.right - 8.0f, infoBox.top + 30.0f), muted.Get());
-                const std::wstring who = state.activeProfileName.empty() ? std::wstring(Tr(L"Vanilla")) : state.activeProfileName;
+                const std::wstring who = state.activeProfileName.empty() ? std::wstring(L"Vanilla") : state.activeProfileName;
                 DrawText(who.c_str(), bodyFormat_.Get(),
                     D2D1::RectF(infoBox.left + 12.0f, infoBox.top + 32.0f, infoBox.right - 8.0f, infoBox.bottom - 6.0f), accent.Get());
             }
@@ -616,7 +614,7 @@ public:
             StrokeRound(targetBox, targetFocused ? accent.Get() : softEdge.Get(), 12.0f, targetFocused ? 3.0f : 1.0f);
             DrawIcon(L"\uE8EC", D2D1::RectF(targetBox.left + 8.0f, targetBox.top, targetBox.left + 40.0f, targetBox.bottom), targetFocused ? accent.Get() : muted.Get());
             {
-                const std::wstring targetText = TrFormat(L"Target: {0}", { TargetProfileText(CurrentModsTarget(state)) });
+                const std::wstring targetText = L"Target: " + TargetProfileText(CurrentModsTarget(state));
                 DrawText(targetText.c_str(), smallMid_.Get(),
                     D2D1::RectF(targetBox.left + 44.0f, targetBox.top, targetBox.right - 48.0f, targetBox.bottom),
                     white.Get());
@@ -634,7 +632,7 @@ public:
             DrawIcon(L"\uE721", D2D1::RectF(search.left + 8.0f, search.top, search.left + 40.0f, search.bottom), searchFocused ? accent.Get() : muted.Get());
             {
                 const bool placeholder = state.modsSearchQuery.empty() && !state.modsSearchEditing;
-                const std::wstring hint = TrFormat(L"Search {0}", { Tr(ContentNoun(ModsTabAt(state.selectedModsTab).kind, true)) });
+                const std::wstring hint = std::wstring(L"Search ") + ContentNoun(ModsTabAt(state.selectedModsTab).kind, true);
                 std::wstring shown = placeholder ? hint : state.modsSearchQuery;
                 if (state.modsSearchEditing) shown += L"_";
                 DrawText(shown.c_str(), smallMid_.Get(),
@@ -719,8 +717,8 @@ public:
 
             if (state.modsCards.empty()) {
                 const std::wstring emptyText = state.selectedModsTab == modstab::kProfiles
-                    ? std::wstring(Tr(L"No installed mods"))
-                    : TrFormat(L"No {0} found", { Tr(ContentNoun(ModsTabAt(state.selectedModsTab).kind, true)) });
+                    ? std::wstring(L"No installed mods")
+                    : std::wstring(L"No ") + ContentNoun(ModsTabAt(state.selectedModsTab).kind, true) + L" found";
                 DrawText(emptyText.c_str(), bodyFormat_.Get(),
                     D2D1::RectF(inner.left + 8.0f, gridTop + 8.0f, inner.right - 8.0f, gridTop + 70.0f),
                     muted.Get());
@@ -802,7 +800,7 @@ public:
             const bool haveBody = !state.changelogBody.empty();
             const std::wstring bodyText = haveBody
                 ? state.changelogBody
-                : std::wstring(Tr(L"The changelog is not available right now."));
+                : std::wstring(L"The changelog is not available right now.");
             ComPtr<IDWriteTextLayout> layout;
             if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
                     bodyText.c_str(), static_cast<UINT32>(bodyText.size()), smallFormat_.Get(),
@@ -833,7 +831,7 @@ public:
                 const float side = (std::min)(qrColumn, bodyBottom - bodyTop - 96.0f);
                 const D2D1_RECT_F qrRect = D2D1::RectF(right - qrColumn, bodyTop, right - qrColumn + side, bodyTop + side);
                 DrawQr(state.qr, qrRect, white.Get(), black.Get(), muted.Get());
-                DrawText(Tr(L"Scan to open the release page"), smallFormat_.Get(),
+                DrawText(L"Scan to open the release page", smallFormat_.Get(),
                     D2D1::RectF(qrRect.left, qrRect.bottom + 12.0f, right, qrRect.bottom + 40.0f), muted.Get());
                 DrawText(state.changelogUrl.c_str(), smallFormat_.Get(),
                     D2D1::RectF(qrRect.left, qrRect.bottom + 40.0f, right, qrRect.bottom + 100.0f), accent.Get());
@@ -841,7 +839,7 @@ public:
                 const float btnH = 58.0f;
                 const float btnY = frame.bottom - 108.0f;
                 const float btnW = (right - left - 18.0f) / 2.0f;
-                const wchar_t* buttonLabels[] = { Tr(L"Skip this version"), Tr(L"Remind me next time") };
+                const wchar_t* buttonLabels[] = { L"Skip this version", L"Remind me next time" };
                 for (int i = 0; i < 2; ++i) {
                     const float x = left + i * (btnW + 18.0f);
                     const D2D1_RECT_F button = D2D1::RectF(x, btnY, x + btnW, btnY + btnH);
@@ -858,8 +856,8 @@ public:
 
             DrawText(
                 offer
-                    ? Tr(L"Install the new package from a PC. Skipping hides this notice until a newer version is out.")
-                    : Tr(L"Use up and down to scroll. Press B or select Back to return to the launcher."),
+                    ? L"Install the new package from a PC. Skipping hides this notice until a newer version is out."
+                    : L"Use up and down to scroll. Press B or select Back to return to the launcher.",
                 smallFormat_.Get(), D2D1::RectF(left, frame.bottom - 40.0f, right, frame.bottom - 8.0f), muted.Get());
 
             finishDraw();
@@ -872,29 +870,29 @@ public:
             const float top = frame.top + 58.0f;
 
             const D2D1_RECT_F back = DrawBackChip(left, top + 6.0f, surfaceFill.Get(), softEdge.Get(), muted.Get());
-            DrawText(Tr(L"Settings"), titleFormat_.Get(),
+            DrawText(L"Settings", titleFormat_.Get(),
                 D2D1::RectF(back.right + 16.0f, top, right, top + 58.0f), white.Get());
 
             const float rowH = 64.0f;
             float rowY = top + 96.0f;
-            auto drawSettingsRow = [&](int index, const wchar_t* title, const wchar_t* detail, const wchar_t* value, float valueWidth = 140.0f) {
+            auto drawSettingsRow = [&](int index, const wchar_t* title, const wchar_t* detail, const wchar_t* value) {
                 const D2D1_RECT_F row = D2D1::RectF(left, rowY, right, rowY + rowH);
                 const bool selected = state.settingsSelected == index;
                 if (selected) GlowSelect(row, 12.0f);
                 FillRound(row, selected ? accentSoft.Get() : surfaceFill.Get(), 12.0f);
                 StrokeRound(row, selected ? accent.Get() : softEdge.Get(), 12.0f, selected ? 3.0f : 1.0f);
-                const float textRight = value ? right - (valueWidth + 50.0f) : right - 22.0f;
-                DrawText(Tr(title), bodyMid_.Get(),
+                const float textRight = value ? right - 190.0f : right - 22.0f;
+                DrawText(title, bodyMid_.Get(),
                     D2D1::RectF(row.left + 22.0f, row.top + 4.0f, textRight, row.top + 35.0f),
                     selected ? accent.Get() : white.Get());
-                DrawText(Tr(detail), smallFormat_.Get(),
+                DrawText(detail, smallFormat_.Get(),
                     D2D1::RectF(row.left + 22.0f, row.top + 34.0f, textRight, row.bottom - 4.0f),
                     muted.Get());
                 if (value) {
-                    const D2D1_RECT_F pill = D2D1::RectF(right - (valueWidth + 22.0f), row.top + 10.0f, right - 22.0f, row.bottom - 10.0f);
+                    const D2D1_RECT_F pill = D2D1::RectF(right - 162.0f, row.top + 10.0f, right - 22.0f, row.bottom - 10.0f);
                     FillRound(pill, selected ? accent.Get() : panel.Get(), 10.0f);
                     StrokeRound(pill, selected ? accent.Get() : softEdge.Get(), 10.0f, 1.5f);
-                    DrawText(Tr(value), pillFormat_.Get(), pill, selected ? black.Get() : muted.Get());
+                    DrawText(value, pillFormat_.Get(), pill, selected ? black.Get() : muted.Get());
                 }
                 RegisterHit(launchhit::kSettingsRowBase + index, row);
                 rowY = row.bottom + 10.0f;
@@ -902,37 +900,35 @@ public:
 
             const std::wstring menuSpeed = std::to_wstring(state.settingsMenuMouseSpeed) + L"%";
             const std::wstring gameSpeed = std::to_wstring(state.settingsGameMouseSpeed) + L"%";
-            drawSettingsRow(0, TR_NOOP(L"Menu mouse sensitivity"), TR_NOOP(L"Launcher and Minecraft menus. Left/right to adjust."), menuSpeed.c_str());
-            drawSettingsRow(1, TR_NOOP(L"Game mouse sensitivity"), TR_NOOP(L"Mouse look in game. Minecraft sensitivity still applies."), gameSpeed.c_str());
-            drawSettingsRow(2, TR_NOOP(L"Send crash reports and usage stats"),
-                TR_NOOP(L"Crash reports and basic launch counts use the same setting."),
-                state.settingsReportingOn ? TR_NOOP(L"On") : TR_NOOP(L"Off"));
-            drawSettingsRow(3, TR_NOOP(L"Reset the reporting id"), state.settingsInstallId.c_str(), nullptr);
+            drawSettingsRow(0, L"Menu mouse sensitivity", L"Launcher and Minecraft menus. Left/right to adjust.", menuSpeed.c_str());
+            drawSettingsRow(1, L"Game mouse sensitivity", L"Mouse look in game. Minecraft sensitivity still applies.", gameSpeed.c_str());
+            drawSettingsRow(2, L"Send crash reports and usage stats",
+                L"Crash reports and basic launch counts use the same setting.",
+                state.settingsReportingOn ? L"On" : L"Off");
+            drawSettingsRow(3, L"Reset the reporting id", state.settingsInstallId.c_str(), nullptr);
             const bool curseForge = state.settingsModSource == ModSource::CurseForge;
             const std::wstring sourceDetail = curseForge
                 ? (state.settingsCurseForgeKeyHint.empty()
-                    ? std::wstring(Tr(L"No API key set. Add one in Remote Files or CurseForge stays empty."))
-                    : TrFormat(L"API key saved ({0}).", { state.settingsCurseForgeKeyHint }))
-                : std::wstring(Tr(L"Modrinth needs no key. Switch to CurseForge to browse there instead."));
-            drawSettingsRow(4, TR_NOOP(L"Mod download source"), sourceDetail.c_str(), curseForge ? L"CurseForge" : L"Modrinth");
+                    ? std::wstring(L"No API key set. Add one in Remote Files or CurseForge stays empty.")
+                    : L"API key saved (" + state.settingsCurseForgeKeyHint + L").")
+                : std::wstring(L"Modrinth needs no key. Switch to CurseForge to browse there instead.");
+            drawSettingsRow(4, L"Mod download source", sourceDetail.c_str(), curseForge ? L"CurseForge" : L"Modrinth");
 
-            drawSettingsRow(5, TR_NOOP(L"Check for new versions"),
-                TR_NOOP(L"Asks GitHub which version is newest when the launcher opens. Nothing about you is sent."),
-                state.settingsUpdateCheckOn ? TR_NOOP(L"On") : TR_NOOP(L"Off"));
-            drawSettingsRow(6, TR_NOOP(L"Language"), TR_NOOP(L"Anything that is not translated yet stays in English."),
-                state.settingsLanguageName.c_str(), 240.0f);
+            drawSettingsRow(5, L"Check for new versions",
+                L"Asks GitHub which version is newest when the launcher opens. Nothing about you is sent.",
+                state.settingsUpdateCheckOn ? L"On" : L"Off");
 
             DrawText(
                 state.settingsConfigured
-                    ? Tr(L"Reports use a random id and include launcher and Minecraft versions, loader details, launch stage, memory totals and a mod list hash. Mod jar names and project ids can be sent when a crash needs them. A crash trace can include exception text and Java class names. The launcher does not add your account, gamertag, worlds or access token. Common user and app storage paths are scrubbed. The id stays the same until it is reset.")
-                    : Tr(L"No reporting server is configured on this install, so nothing can be sent either way."),
+                    ? L"Reports use a random id and include launcher and Minecraft versions, loader details, launch stage, memory totals and a mod list hash. Mod jar names and project ids can be sent when a crash needs them. A crash trace can include exception text and Java class names. The launcher does not add your account, gamertag, worlds or access token. Common user and app storage paths are scrubbed. The id stays the same until it is reset."
+                    : L"No reporting server is configured on this install, so nothing can be sent either way.",
                 smallFormat_.Get(), D2D1::RectF(left, rowY + 2.0f, right, frame.bottom - 96.0f), muted.Get());
 
             if (!state.settingsNote.empty()) {
                 DrawText(state.settingsNote.c_str(), smallFormat_.Get(),
                     D2D1::RectF(left, frame.bottom - 92.0f, right, frame.bottom - 56.0f), accent.Get());
             }
-            DrawText(Tr(L"Left/right adjusts sensitivity. B returns to the launcher."), smallFormat_.Get(),
+            DrawText(L"Left/right adjusts sensitivity. B returns to the launcher.", smallFormat_.Get(),
                 D2D1::RectF(left, frame.bottom - 50.0f, right, frame.bottom - 18.0f), muted.Get());
 
             finishDraw();
@@ -965,10 +961,10 @@ public:
             }
 
             if (state.crashAskConsent) {
-                DrawText(Tr(L"Send this crash report"), bodyMid_.Get(),
+                DrawText(L"Send this crash report", bodyMid_.Get(),
                     D2D1::RectF(left, y, right, y + 30.0f), accent.Get());
                 DrawText(
-                    Tr(L"Reporting is off. Send this crash once, turn reporting on, or keep it off. The preview includes the crash summary and trace that may be sent. The launcher does not add your account, gamertag or access token. Common user and app storage paths are scrubbed."),
+                    L"Reporting is off. Send this crash once, turn reporting on, or keep it off. The preview includes the crash summary and trace that may be sent. The launcher does not add your account, gamertag or access token. Common user and app storage paths are scrubbed.",
                     smallFormat_.Get(), D2D1::RectF(left, y + 32.0f, right, y + 96.0f), muted.Get());
                 y += 104.0f;
             }
@@ -1023,9 +1019,9 @@ public:
             const float buttonH = 56.0f;
             const float buttonGap = 14.0f;
             const wchar_t* labels[] = {
-                Tr(L"Play"), Tr(L"Mods"), Tr(L"Remote Files"), Tr(L"Settings"),
-                state.updateAvailable ? Tr(L"Update available") : Tr(L"What's new"),
-                Tr(L"Repair downloads"), Tr(L"Sign out") };
+                L"Play", L"Mods", L"Remote Files", L"Settings",
+                state.updateAvailable ? L"Update available" : L"What's new",
+                L"Repair downloads", L"Reset session" };
 
             DrawText(title.c_str(), titleFormat_.Get(), D2D1::RectF(left, top, menuRight, top + 48.0f), white.Get());
 
@@ -1049,7 +1045,31 @@ public:
                 DrawText(state.status.c_str(), smallFormat_.Get(), statusRect, state.isError ? danger.Get() : muted.Get());
             }
 
-            const D2D1_RECT_F preview = D2D1::RectF(previewLeft, top, previewRight, frame.bottom - 34.0f);
+            if (state.localNameVisible) {
+                const D2D1_RECT_F card = D2D1::RectF(previewLeft, top, previewRight, top + 194.0f);
+                FillRound(card, surfaceFill.Get(), 16.0f);
+                StrokeRound(card, softEdge.Get(), 16.0f, 1.0f);
+                DrawText(L"Player name", bodyMid_.Get(),
+                    D2D1::RectF(card.left + 22.0f, card.top + 10.0f, card.right - 22.0f, card.top + 48.0f), white.Get());
+                const D2D1_RECT_F input = D2D1::RectF(card.left + 22.0f, card.top + 54.0f, card.right - 22.0f, card.top + 110.0f);
+                const bool focused = state.selectedMenuIndex == kMainMenuItems || state.localNameEditing;
+                if (focused) GlowSelect(input, 12.0f);
+                FillRound(input, focused ? accentSoft.Get() : panel.Get(), 12.0f);
+                StrokeRound(input, state.localNameError ? danger.Get() : (focused ? accent.Get() : softEdge.Get()), 12.0f, focused ? 3.0f : 1.0f);
+                const std::wstring value = state.localName + (state.localNameEditing ? L" |" : L"");
+                const D2D1_RECT_F text = D2D1::RectF(input.left + 16.0f, input.top, input.right - 48.0f, input.bottom);
+                d2dContext_->PushAxisAlignedClip(text, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                DrawText(value.c_str(), bodyMid_.Get(), text, white.Get());
+                d2dContext_->PopAxisAlignedClip();
+                DrawIcon(L"\uE70F", D2D1::RectF(input.right - 42.0f, input.top, input.right - 10.0f, input.bottom), focused ? accent.Get() : muted.Get());
+                RegisterHit(launchhit::kLocalName, input);
+                DrawText(state.localNameNote.c_str(), smallFormat_.Get(),
+                    D2D1::RectF(card.left + 22.0f, card.top + 118.0f, card.right - 22.0f, card.top + 152.0f),
+                    state.localNameError ? danger.Get() : muted.Get());
+                DrawText(L"A different name uses separate local player data.", smallFormat_.Get(),
+                    D2D1::RectF(card.left + 22.0f, card.top + 152.0f, card.right - 22.0f, card.bottom - 10.0f), muted.Get());
+            }
+            const D2D1_RECT_F preview = D2D1::RectF(previewLeft, top + (state.localNameVisible ? 212.0f : 0.0f), previewRight, frame.bottom - 34.0f);
             FillRound(preview, black.Get(), 16.0f);
             DrawScreenshots(preview, 16.0f);
             StrokeRound(preview, softEdge.Get(), 16.0f, 1.0f);
@@ -1068,7 +1088,7 @@ public:
             const float right = frame.right - 54.0f;
             const float top = frame.top + 58.0f;
             const D2D1_RECT_F rfBack = DrawBackChip(left, top + 6.0f, surfaceFill.Get(), softEdge.Get(), muted.Get());
-            DrawText(Tr(L"Remote Files"), titleFormat_.Get(), D2D1::RectF(rfBack.right + 16.0f, top, right, top + 58.0f), white.Get());
+            DrawText(L"Remote Files", titleFormat_.Get(), D2D1::RectF(rfBack.right + 16.0f, top, right, top + 58.0f), white.Get());
             DrawText(state.status.c_str(), bodyFormat_.Get(), D2D1::RectF(left, top + 86.0f, right, top + 128.0f), accent.Get());
 
             const D2D1_RECT_F box = D2D1::RectF(left, top + 152.0f, right, top + 336.0f);
@@ -1076,13 +1096,13 @@ public:
             StrokeRound(box, softEdge.Get(), 14.0f, 1.0f);
             DrawText(state.detail.c_str(), bodyMid_.Get(), D2D1::RectF(box.left + 24.0f, box.top + 20.0f, box.right - 24.0f, box.top + 92.0f), white.Get());
             DrawText(
-                Tr(L"Open the URL and PIN in a browser on your PC or phone.\nImport and export worlds, mods, resource packs, and Modrinth .mrpack files for the active profile."),
+                L"Open the URL and PIN in a browser on your PC or phone.\nImport and export worlds, mods, resource packs, and Modrinth .mrpack files for the active profile.",
                 smallFormat_.Get(),
                 D2D1::RectF(box.left + 24.0f, box.top + 104.0f, box.right - 24.0f, box.bottom - 22.0f),
                 muted.Get());
 
             const D2D1_RECT_F hint = D2D1::RectF(left, frame.bottom - 92.0f, right, frame.bottom - 36.0f);
-            DrawText(Tr(L"Select Back, or press B or Escape, to stop sharing and return to the launcher."), smallFormat_.Get(), hint, muted.Get());
+            DrawText(L"Select Back, or press B or Escape, to stop sharing and return to the launcher.", smallFormat_.Get(), hint, muted.Get());
             finishDraw();
             return;
         }
@@ -1107,12 +1127,12 @@ public:
                 const D2D1_RECT_F logBox = D2D1::RectF(left, logTop, right, logBottom);
                 FillRound(logBox, surfaceFill.Get(), 14.0f);
                 StrokeRound(logBox, softEdge.Get(), 14.0f, 1.0f);
-                DrawText(Tr(L"Live launch log"), captionFormat_.Get(),
+                DrawText(L"Live launch log", captionFormat_.Get(),
                     D2D1::RectF(logBox.left + 18.0f, logBox.top + 12.0f, logBox.right - 18.0f, logBox.top + 40.0f),
                     accent.Get());
                 const D2D1_RECT_F logTextRect = D2D1::RectF(logBox.left + 18.0f, logBox.top + 46.0f, logBox.right - 18.0f, logBox.bottom - 16.0f);
                 d2dContext_->PushAxisAlignedClip(logTextRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                DrawText(state.launchLogText.empty() ? Tr(L"Waiting for pre-launch log output...") : state.launchLogText.c_str(),
+                DrawText(state.launchLogText.empty() ? L"Waiting for pre-launch log output..." : state.launchLogText.c_str(),
                     smallFormat_.Get(), logTextRect, muted.Get());
                 d2dContext_->PopAxisAlignedClip();
             }
@@ -1143,7 +1163,7 @@ public:
                     FillRound(fill, state.isError ? danger.Get() : accent.Get(), 9.0f);
 
                     const D2D1_RECT_F percentRect = D2D1::RectF(left, barTop + 28.0f, left + 180.0f, barTop + 68.0f);
-                    DrawText(Tr(L"Loading..."), smallFormat_.Get(), percentRect, muted.Get());
+                    DrawText(L"Loading...", smallFormat_.Get(), percentRect, muted.Get());
                 }
             }
 
@@ -1168,14 +1188,14 @@ public:
             DrawText(state.userCode.c_str(), codeFormat_.Get(), codeBox, white.Get());
         }
 
-        std::wstring instruction = Tr(L"Enter this code at");
+        std::wstring instruction = L"Enter this code at";
         std::wstring url = state.verificationUri.empty() ? L"microsoft.com/link" : state.verificationUri;
         const D2D1_RECT_F bodyRect = D2D1::RectF(frame.left + 46.0f, frame.top + 218.0f, dividerX - 48.0f, frame.top + 326.0f);
         DrawText((instruction + L"\n" + url).c_str(), bodyFormat_.Get(), bodyRect, white.Get());
 
         std::wstring status = state.status;
         if (state.secondsRemaining > 0) {
-            status += L"\n" + TrFormat(L"Code expires in {0} seconds", { std::to_wstring(state.secondsRemaining) });
+            status += L"\nCode expires in " + std::to_wstring(state.secondsRemaining) + L" seconds";
         }
         const D2D1_RECT_F statusRect = D2D1::RectF(frame.left + 46.0f, frame.bottom - 116.0f, dividerX - 48.0f, frame.bottom - 38.0f);
         DrawText(status.c_str(), smallFormat_.Get(), statusRect, state.isError ? danger.Get() : muted.Get());
@@ -1192,7 +1212,7 @@ public:
         DrawQr(state.qr, qrRect, white.Get(), black.Get(), muted.Get());
 
         const D2D1_RECT_F qrLabel = D2D1::RectF(qrLeft, qrRect.bottom + 18.0f, qrLeft + qrSide, qrRect.bottom + 54.0f);
-        DrawText(Tr(L"Scan QR"), smallFormat_.Get(), qrLabel, muted.Get());
+        DrawText(L"Scan QR", smallFormat_.Get(), qrLabel, muted.Get());
 
         finishDraw();
     }
@@ -1201,14 +1221,14 @@ private:
     static const wchar_t* CrashButtonLabel(const AuthUiState& state, int index) {
         if (state.crashAskConsent) {
             switch (index) {
-                case 0: return Tr(L"Send once");
-                case 1: return Tr(L"Always send");
-                case 2: return Tr(L"Never send");
+                case 0: return L"Send once";
+                case 1: return L"Always send";
+                case 2: return L"Never send";
                 default: return L"";
             }
         }
-        if (index == 0) return state.crashDetailsOpen ? Tr(L"Hide details") : Tr(L"View details");
-        if (index == 1) return Tr(L"Dismiss");
+        if (index == 0) return state.crashDetailsOpen ? L"Hide details" : L"View details";
+        if (index == 1) return L"Dismiss";
         return L"";
     }
 
@@ -1316,7 +1336,7 @@ private:
         if (len > 0 && len < ARRAYSIZE(value)) {
             wchar_t* end = nullptr;
             const double parsed = wcstod(value, &end);
-            if (parsed >= 0.25 && parsed <= 8.0) {
+            if (parsed >= 0.5 && parsed <= 8.0) {
                 return static_cast<float>(parsed);
             }
         }
@@ -1612,7 +1632,7 @@ private:
         FillRound(rect, fill, 12.0f);
         StrokeRound(rect, warn, 12.0f, 2.0f);
         DrawIcon(L"\uE7BA", D2D1::RectF(rect.left + 16.0f, rect.top, rect.left + 48.0f, rect.bottom), warn);
-        DrawText(state.modsCompatAcked ? Tr(L"Install it anyway") : Tr(L"Known not to work on this console"),
+        DrawText(state.modsCompatAcked ? L"Install it anyway" : L"Known not to work on this console",
             bodyMid_.Get(), D2D1::RectF(rect.left + 58.0f, rect.top + 8.0f, right - 14.0f, rect.top + 38.0f), warn);
         DrawText(state.modsCompatNote.c_str(), smallFormat_.Get(),
             D2D1::RectF(rect.left + 58.0f, rect.top + 38.0f, right - 14.0f, rect.bottom - 6.0f), body);

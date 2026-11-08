@@ -1,70 +1,99 @@
+## V17 - Xbox pointer ownership and 26.3 input-mode HUD
+
+- Hardware report: V16 26.3 runs at ~200 FPS, joins multiplayer, and both physical mouse/keyboard and controller work. Keep V12 Mesa/SDL rendering, V14 WGI and V15 key/button fixes untouched.
+- Stop replacing the oversized Xbox/CoreWindow OS pointer with CoreCursor resource 5001. Hide that pointer as the known-good GLFW path does, and synthesize SDL menu absolute coordinates from MouseDevice deltas. Relative gameplay remains raw.
+- 26.3 Fabric draws a small GUI/inventory/controller-screen cursor on-screen; no software cursor is drawn in grabbed gameplay.
+- Port the 1.21.11 gameplay HUD ownership transition to 26.3: physical mouse or SDL keyboard input hides controller prompts until controller activity resumes.
+- Retain all 59 catalog entries and 57 implemented targets. Microsoft sign-in remains intentionally off.
+
+## V16 - Launcher cursor parity
+
+- 26.3 SDL3 menus now use the same Bandit-style white crosshair cursor as the native launcher via WinRT custom cursor resource 5001.
+- Gameplay still switches to SDL's transparent cursor resource 5000 so relative mouse movement remains visible to CoreWindow while the pointer is hidden.
+- V15 SDL3 keyboard/mouse contract fixes, V14 WGI controller support, V12 graphics contract, and the full multi-version catalog are unchanged.
+
+## V15 - SDL3 WinRT input contract repair
+
+- Preserves the hardware-proven V12 Mesa/WGL rendering contract and V14 full multi-version catalog/WGI controller path.
+- Marks 1.21.11 Fabric as hardware-tested after confirming the GLFW/UWP path works with controller plus native mouse/keyboard on Series S.
+- Repairs pinned SDL-UWP SDL2-to-SDL3 input API drift: WinRT key down/up now maps to SDL3 `bool down` correctly, mouse buttons use `(button, down)` order, and synthetic Back emits a real press/release pair.
+- Uses CoreWindow `KeyDown`/`KeyUp`, matching the hardware-proven GLFW path used by 1.21.x.
+- Guards invalid mouse button 0 before SDL's 1-based button bitmask path, removing a native undefined-behavior/crash candidate.
+- Resets mouse buttons and keyboard state on capture/focus loss to prevent sticky click/movement/jump state.
+- Packages SDL's official transparent WinRT cursor resource (ID 5000) into `MC.Xbox.exe` and logs whether it resolved, so relative gameplay input can hide the OS pointer without suppressing motion.
+- Mirrors the working GLFW pointer-capture transition for relative gameplay mode while retaining raw `MouseDevice::MouseMoved` and V14 CoreWindow fallback motion.
+- Local package default advances to `1.0.0.15`; Microsoft authentication remains disabled in local builds.
+
+## V14 — Xbox input fix + full launcher catalog by default
+- Keep the hardware-proven V12 Mesa/WGL graphics path unchanged.
+- Fix the dead 26.3 Xbox controller path at the root: SDL's UWP backend uses Windows.Gaming.Input (WGI), and upstream WGI defaults off. V14 forces `SDL_JOYSTICK_WGI=1` in the launcher and 26.3 Fabric controller, defaults WGI on inside the patched WinRT SDL runtime, and validates that SDL was compiled with `SDL_JOYSTICK_WGI`.
+- Add WGI runtime diagnostics for initialization, enumerated controller count, and successful joystick open.
+- Add a physical-mouse fallback: when WinRT exposes CoreWindow pointer events but no raw `MouseDevice::MouseMoved` source, SDL converts pointer movement into relative deltas instead of dropping all motion in relative mode.
+- Make `scripts/build-local-263.ps1` a compatibility alias for the full multi-version launcher build. The normal package now stages `config/versions.tsv`, not the 26.3-only catalog.
+- Add a post-build catalog assertion so an incomplete/one-version `runtime/version_catalog.tsv` fails the build. The old one-version flow is retained only as explicit developer script `scripts/build-regression-263.ps1`.
+- Local package default advances to `1.0.0.14`. Microsoft authentication remains disabled in the local build.
+
+## V13 — launcher compatibility profiles + WinRT input bridge
+
+- Keep the hardware-proven V12 Mesa/RenderPearl graphics path unchanged for SDL3 targets.
+- Resolve the game's window backend from its own download manifest (`lwjgl-sdl` vs `lwjgl-glfw`) instead of assuming every version at or above a numeric threshold uses SDL3.
+- Pass the resolved backend through native staging and JVM launch so older 1.21.x/1.20.x targets continue using the UWP GLFW shim while 26.3 uses the patched SDL3 runtime.
+- Add a full multi-version local build entry point (`scripts/build-local-multiversion.ps1`) while retaining the focused 26.3 regression build.
+- Add the `BanditSDL_WinRTInputBridgeV13` SDL marker and harden WinRT mouse input. If SDL's optional transparent cursor resource is unavailable, never fall back to `PointerCursor=nullptr`, because that suppresses CoreWindow pointer-motion events.
+- Keep raw `Windows.Devices.Input.MouseDevice::MouseMoved` deltas for relative first-person input, make MouseDevice subscription null-safe, and add one-time absolute/relative input diagnostics.
+- When a profile enables Bandit's controller support, verify its exact version-specific controller jar before launch instead of silently entering Minecraft without a usable controller cursor.
+- Use Java 17 for the pre-1.20.5 compatibility targets that were previously pointed at Java 21; keep 1.21.x on Java 21 and 26.x on the current runtime profile.
+- Surface Testing/Experimental labels in profile target text. 26.3 Fabric moves to Testing after V12 graphics was confirmed on Xbox hardware.
+- Local package default advances to `1.0.0.13`.
+
+## V12 — RenderPearl/Mesa framebuffer contract correction
+
+- Remove V10 from the active SDL patch chain. Minecraft 26.3 creates one OpenGL context and rebinds it from its hidden utility window to the final game window; the single-HGLRC wrapper experiment was based on the wrong startup model.
+- Mirror the project's Series-S-proven MesaTestApp/GLFW pixel-format contract: `wglChoosePixelFormat` followed by `libgallium_wgl.dll!SetPixelFormat`.
+- Never call Mesa `wglGetPixelFormat` before pixel-format installation. In the bundled Mesa WGL runtime that query enters `stw_pixelformat_get` and can instantiate framebuffer state before the requested format is configured.
+- Refuse SDL's legacy-context fallback when Minecraft requests OpenGL 3.3 core. Query and log the actual active GL version/profile/renderer instead of trusting SDL's requested attributes.
+- Unbind the temporary WGL context with `wglMakeCurrent(NULL, NULL)` before deleting it, matching the known-good Xbox Mesa sequence.
+- Preserve Minecraft's logical hidden/utility/high-DPI window flags and implement synchronous Xbox-safe position/size/sync callbacks for RenderPearl's final-window setup.
+- Keep the Mesa support stack preloaded before JVM/LWJGL startup and keep `mesa_glthread=false` while the Xbox path is being stabilized.
+- Add first/60th-present breadcrumbs and a `BanditSDL_WinRTRenderPearlV12` runtime marker. Package build default is `1.0.0.12`.
+
 # Changelog
-
-Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
-
-## 2026-11-03
-
-### Fixed
-
-**The mouse cursor in Minecraft should reach the whole screen again.** Since the 1440p and 4K update, the game was given mouse positions for an 854 by 480 window, the size Minecraft asks for before the launcher resizes it. The cursor could only reach the top left part of the screen, and clicks landed up and to the left of where it was drawn.
-
-**Fixes from the main channel that this channel had missed are back in.** Closing Minecraft should shut its graphics down cleanly, so the launcher is in a good state if the game is started again. Minecraft is told the real screen size after it starts and when fullscreen is toggled. The mouse cursor no longer changes what the game has set up for drawing, and copying and pasting text no longer leaks memory.
-
-## 2026-11-02
-
-### Fixed
-
-**A mouse plugged into the console should click where the cursor is on the title screen and other menus.** Until a world was joined, the launcher treated menus as gameplay unless the controller mod was installed, so the mouse cursor was not drawn or kept on screen and clicks drifted away from it. Menus are now treated as menus from the start. A change earlier today that stopped the mouse moving in menus has also been undone.
-
-## 2026-11-01
-
-### Fixed
-
-**1.12.2 no longer tries to download Linux libraries.** Preparing Minecraft 1.12.2 with Forge could stop with a download failure on a Linux only netty file the console never uses. Those files are no longer in the download list. If a download still fails on 1.12.2, send the `mc_launch.log` from the launcher's log folder.
-
-## 2026-10-31
-
-### Added
-
-**Minecraft 1.12.2 with Forge.** 1.12.2 is in the version list as an experimental target. It runs through Cleanroom, a version of Forge 1.12.2 that works on newer Java, so most Forge 1.12.2 mods load as they are. The controller has the same features as on newer versions: button guides, menu snapping, the radial menu, the controller settings on Back, and the console keyboard for chat and signs.
-
-**Recommended mods for 1.12.2.** The Recommended tab now lists mods that were tested on Xbox with 1.12.2: Nothirium for faster chunk rendering, VintageFix, Universal Tweaks, Entity Culling, Had Enough Items, Xaero's Minimap and LemonSkin. OptiFine does not work on 1.12.2 in the launcher yet. It shows up in the mod list but does not change anything.
-
-### Fixed
-
-**The game fills the screen at 1440p and 4K.** The console used to report the same scale whatever the TV was set to, so a 1440p or 4K output showed a 1080p picture in one corner unless the scale was set by hand in `mesa_env.txt`. The launcher now reads the TV's output mode and sizes the game to match. A value set in `mesa_env.txt` still takes priority.
-
-## 2026-10-30
-
-### Fixed
-
-**The controller cursor no longer hides behind modded menus.** Mods such as Essential draw their windows and popups after the game draws the menu, and the cursor used to be drawn before them, so it disappeared underneath. It is now drawn last, above the menu, any mod overlays and toasts. This applies to Fabric, Forge and NeoForge on every supported version.
-
-## 2026-10-29
-
-### Added
-
-**Walking is analogue on Forge and NeoForge.** Push the left stick a little to walk slowly and all the way to run, the same as on Fabric.
-
-**Keyboard Like Movement.** A new option in the controller settings makes the stick walk at full speed in set directions, like the keyboard. It is meant for servers that reject analogue movement, and it is available on Fabric, Forge and NeoForge for every Minecraft version.
-
-**Show Button Guides.** A new option in the controller settings hides the button hints in menus and on the HUD.
-
-**Latin American Spanish is included.** Choose Español (Latinoamérica) under Language in Settings. Thanks to Sumer Double P for the translation.
 
 ## 2026-10-25
 
-### Added
+### Minecraft 26.3 / SDL3
 
-**Latin American Spanish is picked automatically.** A Spanish console set to Mexico, Argentina, Colombia or another Latin American country uses a language file named `es-419` if there is one, and plain `es` otherwise.
+**V9 hardens the post-provider Mesa/WGL handoff after Xbox hardware reached a black screen and one native hard exit.** Mesa threaded GL is disabled by default during bring-up, `wglGetProcAddress` is now protected against driver SEH faults, the nonessential `wglGetExtensionsStringARB` probe is removed from the first-context path, and the critical context/make-current/swap stages are flushed to `logs/current/sdl_wgl_stage.log`. If the process is killed before Java can write a crash file, the next launcher start includes the last native SDL/WGL stage in the crash message instead of only `unknown_hard_crash`.
 
-**Translation files are checked when they are sent in.** A file that is not valid, has no name, or changes a `{0}` is flagged on the pull request. The same check runs locally with `scripts/update-translations.ps1 -Check`.
+**V8 fixes the hardware-proven `glGetError mismatch` regression.** Minecraft 26.3 compares the exact function address returned by LWJGL with `SDL_GL_GetProcAddress("glGetError")`. LWJGL on Windows resolves through `wglGetProcAddress` first and falls back to the OpenGL DLL export; V7 accidentally reversed that order. V8 restores the LWJGL order, adds a dedicated provider-parity marker/log line, and makes the SDL cache/build validation reject any older runtime.
 
-## 2026-10-24
+**Minecraft 26.3 now has a direct SDL3 UWP path instead of a GLFW compatibility wrapper.** The launcher points LWJGL's SDL binding at a patched x64 SDL3-UWP runtime, forces the WinRT video driver and packaged Mesa OpenGL runtime, and keeps the GLFW shim only for 26.2 and older.
 
-### Added
+**WinRT now forces Mesa through SDL's WGL backend.** The previous SDL3-UWP build enabled both WGL and EGL/OpenGL ES, and the WinRT driver prefers EGL when both are present. On Xbox this caused Minecraft 26.3 to stop at backend discovery with `Could not load EGL library`. V5 disables SDL OpenGL ES/EGL, includes the WinRT WGL implementation in the WindowsStore CMake build, and makes WGL win if both backends are ever enabled accidentally.
 
-**The launcher can be translated.** Settings has a new Language option, and each language is a plain text file in the `lang` folder. Anything a file does not translate stays in English. Every screen and message is covered, from sign in errors to pack imports, and the Remote Files page follows the chosen language too. The first time it runs, the launcher picks a language that matches the console's setting if one is available. No translations ship yet. See `docs/TRANSLATING.md` for how to add one, including how to try a file from Remote Files, which has a new Languages folder.
+**Minecraft's absolute OpenGL provider path is normalized inside SDL on WinRT.** Minecraft 26.3 passes `((SharedLibrary) GL.getFunctionProvider()).getPath()` directly to `SDL_GL_LoadLibrary()`, which overrides `SDL_OPENGL_LIBRARY`. On Xbox that is an absolute `S:\Program Files\WindowsApps\...\graphics\mesa\opengl32.dll` path, and `LoadPackagedLibrary` rejects absolute paths with `ERROR_INVALID_PARAMETER`. V6 converts Bandit's packaged Mesa path back to `graphics\mesa\opengl32.dll` before calling `LoadPackagedLibrary`, while LWJGL continues using the absolute path it needs.
+
+**The WinRT/WGL lifecycle was rebuilt for Minecraft 26.3 after the first native Mesa crash.** V7 no longer creates SDL's temporary WGL extension-probe context during `SDL_GL_LoadLibrary`, before any SDL window exists. It sets the pixel format on the real CoreWindow with `WIN_GL_SetupWindow`, initializes WGL capabilities only after the real OpenGL context is current, originally preferred the DLL export for core GL symbols; hardware testing proved that ordering does not match LWJGL and V8 corrects it. V7 also converts MSVC structured exceptions from critical WGL calls into SDL diagnostics instead of opaque `EXCEPTION_ACCESS_VIOLATION` crashes. The fork's stale `int WIN_SetError` declaration is corrected to `bool`, so failures cannot be misread as success.
+
+**Minecraft 26.3's multiple startup windows now work on one Xbox CoreWindow.** RenderPearl creates an OpenGL utility window, a second hidden test window, and then the real game window. The upstream WinRT backend rejected the second SDL window outright. V7 virtualizes these logical SDL windows over the single physical CoreWindow, reuses the one WGL pixel format, restores the previous logical event target when a temporary window is destroyed, and keeps one CoreWindow event sink.
+
+**The SDL build cache is content-addressed.** The pinned SDL commit, external-CoreWindow patch contents, build script, architecture/configuration, and CMake options are part of the cache key, so editing the patch cannot silently reuse a stale DLL. Developer-supplied SDL overrides must be x64 and carry the Bandit patch marker plus the required 26.3 SDL exports.
+
+**SDL can now actually load Mesa in a WindowsStore build.** The upstream CMake path otherwise selected SDL's dummy shared-object loader for UWP even though the WinRT WGL backend calls `SDL_LoadObject`. The V4 patch compiles SDL's WinRT-safe Windows loader (`LoadPackagedLibrary`) and passes SDL the package-relative `graphics\mesa\opengl32.dll` path; absolute paths are not valid for `LoadPackagedLibrary`. Older CoreWindow-only patched SDL binaries are rejected by the V4 marker export.
+
+**The embedded UWP host now satisfies SDL's `SDL_main` readiness gate.** Minecraft 26.3 reached `SDL_Init` through LWJGL, but Bandit's already-running `IFrameworkView` means SDL's own WinRT bootstrap never calls `SDL_SetMainReady()`. The V4 runtime primes that state on the first WinRT subsystem initialization, eliminating the early `Application didn't initialize properly, did you include SDL_main.h...` crash without reintroducing a GLFW wrapper.
+
+**Fabric controller support was ported to SDL3 for 26.3.** Gamepads and mouse state use LWJGL SDL, key and mouse codes use 26.3 `InputConstants`, and controller text entry uses Minecraft's SDL text-input focus path. The 26.3 render injection and recipe-book accessors were updated for the new client API. Forge and NeoForge controller providers remain disabled until their mappings are separately validated.
+
+**26.3 compatibility code has its own overlay.** It no longer silently reuses the 26.2 source directory. The vanilla mixin targets used by the overlay were checked against 26.3.
+
+**Build/package verification is stricter.** `scripts\verify-26.3-build.ps1` builds and validates SDL, compiles the 26.3 Fabric compatibility/controller mods, generates loader manifests, and can drive the signed APPX build. Package validation checks 26.3's LWJGL 3.4.3 native set and SDL runtime, and the build verifies the APPX signature after signing.
+
+**Launcher input is gated while Minecraft runs.** Persistent launcher pointer/mouse handlers no longer process gameplay input at the same time as SDL, reducing duplicate events when SDL attaches to the existing CoreWindow.
+
+The 26.3 target remains experimental until the Windows/UWP acceptance build and Xbox runtime checklist complete successfully.
+
+Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
 ## 2026-10-23
 

@@ -1,5 +1,4 @@
 #include "modpack_io.h"
-#include "i18n.h"
 
 #include "launcher_common.h"
 #include "curseforge.h"
@@ -19,9 +18,6 @@
 #include <fstream>
 #include <vector>
 #include <memory>
-
-using i18n::Tr;
-using i18n::TrFormat;
 
 using namespace winrt::Windows::Data::Json;
 
@@ -60,7 +56,7 @@ static std::wstring ModrinthDependencyLoaderKey(const std::wstring& loader) {
     if (l == L"fabric") return L"fabric-loader";
     if (l == L"quilt") return L"quilt-loader";
     if (l == L"neoforge") return L"neoforge";
-    if (l == L"forge" || l == L"cleanroom") return L"forge";
+    if (l == L"forge") return L"forge";
     return L"";
 }
 
@@ -84,31 +80,31 @@ bool InstallModpackFromFile(
     error.clear();
     if (skippedNote) skippedNote->clear();
     if (profileId == kVanillaProfileId) {
-        error = Tr(L"Vanilla is read-only. Pick or create a profile first.");
+        error = L"Vanilla is read-only. Pick or create a profile first.";
         return false;
     }
     if (GetFileAttributesW(mrpackPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        error = Tr(L"Pack file not found");
+        error = L"Pack file not found";
         return false;
     }
 
     FILE* inputFile = nullptr;
     if (_wfopen_s(&inputFile, mrpackPath.c_str(), L"rb") != 0 || !inputFile) {
-        error = Tr(L"Could not open pack");
+        error = L"Could not open pack";
         return false;
     }
     std::unique_ptr<FILE, decltype(&fclose)> input(inputFile, fclose);
-    if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = Tr(L"Could not read archive size"); return false; }
+    if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = L"Could not read archive size"; return false; }
     const __int64 archiveSize = _ftelli64(input.get());
     if (archiveSize <= 0 || archiveSize > 128ll * 1024ll * 1024ll) {
-        error = Tr(L"Pack is empty or exceeds the 128 MB input limit");
+        error = L"Pack is empty or exceeds the 128 MB input limit";
         return false;
     }
     mz_zip_archive zip{};
     zip.m_pRead = ZipReadFileCallback;
     zip.m_pIO_opaque = input.get();
     if (!mz_zip_reader_init(&zip, static_cast<mz_uint64>(archiveSize), 0)) {
-        error = Tr(L"Pack is not a valid ZIP archive");
+        error = L"Pack is not a valid ZIP archive";
         return false;
     }
 
@@ -119,12 +115,12 @@ bool InstallModpackFromFile(
     int missingCount = 0;
     unsigned long long expanded = 0;
     const mz_uint archiveCount = mz_zip_reader_get_num_files(&zip);
-    if (archiveCount > 20000) { mz_zip_reader_end(&zip); error = Tr(L"Too many pack entries"); return false; }
+    if (archiveCount > 20000) { mz_zip_reader_end(&zip); error = L"Too many pack entries"; return false; }
     for (mz_uint i = 0; i < archiveCount; ++i) {
         mz_zip_archive_file_stat stat{};
         if (!mz_zip_reader_file_stat(&zip, i, &stat) || stat.m_uncomp_size > 64ull * 1024ull * 1024ull ||
             stat.m_uncomp_size > 512ull * 1024ull * 1024ull - expanded) {
-            mz_zip_reader_end(&zip); error = Tr(L"Pack exceeds extraction limits"); return false;
+            mz_zip_reader_end(&zip); error = L"Pack exceeds extraction limits"; return false;
         }
         expanded += stat.m_uncomp_size;
     }
@@ -146,7 +142,7 @@ bool InstallModpackFromFile(
     std::string manifestJson;
     if (!readZipText("modrinth.index.json", indexJson) && !readZipText("manifest.json", manifestJson)) {
         mz_zip_reader_end(&zip);
-        error = Tr(L"Pack has no modrinth.index.json or manifest.json");
+        error = L"Pack has no modrinth.index.json or manifest.json";
         return false;
     }
 
@@ -169,8 +165,8 @@ bool InstallModpackFromFile(
             }
             matches = matches && mc.GetNamedString(L"version", L"") == profile.minecraftVersion;
         }
-        if (!matches) { mz_zip_reader_end(&zip); error = Tr(L"Pack target does not match the selected profile"); return false; }
-    } catch (...) { mz_zip_reader_end(&zip); error = Tr(L"Pack target metadata missing or invalid"); return false; }
+        if (!matches) { mz_zip_reader_end(&zip); error = L"Pack target does not match the selected profile"; return false; }
+    } catch (...) { mz_zip_reader_end(&zip); error = L"Pack target metadata missing or invalid"; return false; }
     EnsureProfileGameDataInitialized(runtimeRoot, profileId);
     const std::wstring gameDir = ProfileGameDir(runtimeRoot, profileId);
     const std::wstring userModsDir = ProfileModsDir(runtimeRoot, profileId);
@@ -223,7 +219,7 @@ bool InstallModpackFromFile(
         }
     } catch (const winrt::hresult_error&) {
         mz_zip_reader_end(&zip);
-        error = Tr(L"Could not parse pack index");
+        error = L"Could not parse pack index";
         return false;
     }
     }
@@ -244,7 +240,7 @@ bool InstallModpackFromFile(
             }
         } catch (const winrt::hresult_error&) {
             mz_zip_reader_end(&zip);
-            error = Tr(L"Could not parse pack manifest");
+            error = L"Could not parse pack manifest";
             return false;
         }
 
@@ -252,12 +248,12 @@ bool InstallModpackFromFile(
         std::vector<curseforge::FileRef> refs;
         std::wstring resolveError;
         if (progressFor) {
-            const auto lookup = progressFor(TrFormat(L"Looking up {0} files on CurseForge", { std::to_wstring(fileIds.size()) }), 0);
+            const auto lookup = progressFor(L"Looking up " + std::to_wstring(fileIds.size()) + L" files on CurseForge", 0);
             if (lookup) lookup(0);
         }
         if (!curseforge::ResolveFilesById(fileIds, refs, resolveError)) {
             mz_zip_reader_end(&zip);
-            error = resolveError.empty() ? Tr(L"Could not resolve this pack on CurseForge") : resolveError;
+            error = resolveError.empty() ? L"Could not resolve this pack on CurseForge" : resolveError;
             return false;
         }
 
@@ -381,11 +377,11 @@ bool InstallModpackFromFile(
         if (fileOk) {
             if (!MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING)) {
                 DeleteFileW(tmp.c_str());
-                if (firstError.empty()) firstError = Tr(L"Some pack files could not be saved");
+                if (firstError.empty()) firstError = L"Some pack files could not be saved";
             }
         } else {
             DeleteFileW(tmp.c_str());
-            if (firstError.empty()) firstError = Tr(L"Some pack files failed to install");
+            if (firstError.empty()) firstError = L"Some pack files failed to install";
         }
         ++done;
     }
@@ -420,9 +416,9 @@ bool InstallModpackFromFile(
         }
         size_t outSize = 0;
         void* p = mz_zip_reader_extract_to_heap(&zip, i, &outSize, 0);
-        if (!p) { if (firstError.empty()) firstError = TrFormat(L"Could not extract pack override {0}", { rel }); continue; }
+        if (!p) { if (firstError.empty()) firstError = L"Could not extract pack override " + rel; continue; }
         if (!WriteAllBytes(dest, p, outSize)) {
-            if (firstError.empty()) firstError = TrFormat(L"Could not save pack override {0}", { rel });
+            if (firstError.empty()) firstError = L"Could not save pack override " + rel;
         } else {
             ++installedOverrides;
         }
@@ -437,26 +433,26 @@ bool InstallModpackFromFile(
 
     std::wstring note;
     if (blockedCount > 0) {
-        note = blockedCount == 1
-            ? TrFormat(L"{0} file could not be downloaded because its author blocks third party launchers. Open Remote Files, the Manual downloads panel has a link for it.", { std::to_wstring(blockedCount) })
-            : TrFormat(L"{0} files could not be downloaded because their authors block third party launchers. Open Remote Files, the Manual downloads panel has a link for each one.", { std::to_wstring(blockedCount) });
+        note = std::to_wstring(blockedCount) +
+            (blockedCount == 1 ? L" file could not be downloaded" : L" files could not be downloaded") +
+            L" because their authors block third party launchers. Open Remote Files, the Manual downloads panel has a link for each one.";
         WriteLogF(L"Modpack skipped %d blocked files", blockedCount);
     }
     if (missingCount > 0) {
         if (!note.empty()) note += L" ";
-        note += missingCount == 1
-            ? TrFormat(L"{0} file in the pack no longer exists on CurseForge, so the pack may not start.", { std::to_wstring(missingCount) })
-            : TrFormat(L"{0} files in the pack no longer exist on CurseForge, so the pack may not start.", { std::to_wstring(missingCount) });
+        note += std::to_wstring(missingCount) +
+            (missingCount == 1 ? L" file in the pack no longer exists" : L" files in the pack no longer exist") +
+            L" on CurseForge, so the pack may not start.";
     }
     if (unsupportedCount > 0) {
         if (!note.empty()) note += L" ";
-        note += unsupportedCount == 1
-            ? TrFormat(L"{0} file is content the launcher does not install, like worlds or data packs.", { std::to_wstring(unsupportedCount) })
-            : TrFormat(L"{0} files are content the launcher does not install, like worlds or data packs.", { std::to_wstring(unsupportedCount) });
+        note += std::to_wstring(unsupportedCount) +
+            (unsupportedCount == 1 ? L" file is" : L" files are") +
+            L" content the launcher does not install, like worlds or data packs.";
     }
     if (skippedNote) *skippedNote = note;
     if (jobs.empty() && installedOverrides == 0 && firstError.empty()) {
-        error = note.empty() ? Tr(L"Pack had no installable client files") : note;
+        error = note.empty() ? L"Pack had no installable client files" : note;
         return false;
     }
     if (!firstError.empty()) {
@@ -630,7 +626,7 @@ bool ExportProfileMrpack(
     std::wstring& error) {
     error.clear();
     if (profileId == kVanillaProfileId) {
-        error = Tr(L"Vanilla cannot be exported as a modpack");
+        error = L"Vanilla cannot be exported as a modpack";
         return false;
     }
 
@@ -689,7 +685,7 @@ bool ExportProfileMrpack(
 
     const bool hasConfigOverrides = ConfigDirHasFiles(gameDir + L"\\config");
     if (files.Size() == 0 && overrideFiles.empty() && !hasConfigOverrides) {
-        error = Tr(L"This profile has no mods or resource packs to export");
+        error = L"This profile has no mods or resource packs to export";
         return false;
     }
     root.SetNamedValue(L"files", files);
@@ -705,11 +701,11 @@ bool ExportProfileMrpack(
     const std::wstring indexText = std::wstring(root.Stringify().c_str());
     const std::string indexUtf8 = w2a(indexText.c_str());
 
-    if (!EnsureDirectoryTree(GetParentDir(outputPath))) { error = Tr(L"Could not create export directory"); return false; }
+    if (!EnsureDirectoryTree(GetParentDir(outputPath))) { error = L"Could not create export directory"; return false; }
     const std::wstring temporary = outputPath + L".exporting";
     FILE* outFile = nullptr;
     if (_wfopen_s(&outFile, temporary.c_str(), L"wb") != 0 || !outFile) {
-        error = Tr(L"Could not create export archive");
+        error = L"Could not create export archive";
         return false;
     }
     ZipFileWriterState writerState{ outFile };
@@ -719,7 +715,7 @@ bool ExportProfileMrpack(
     if (!mz_zip_writer_init(&zip, 0)) {
         fclose(outFile);
         DeleteFileW(temporary.c_str());
-        error = Tr(L"Could not start export archive");
+        error = L"Could not start export archive";
         return false;
     }
 
@@ -727,7 +723,7 @@ bool ExportProfileMrpack(
         mz_zip_writer_end(&zip);
         fclose(outFile);
         DeleteFileW(temporary.c_str());
-        error = Tr(L"Could not write pack index");
+        error = L"Could not write pack index";
         return false;
     }
 
@@ -736,7 +732,7 @@ bool ExportProfileMrpack(
             mz_zip_writer_end(&zip);
             fclose(outFile);
             DeleteFileW(temporary.c_str());
-            error = TrFormat(L"Could not export {0}", { a2w(overrideFile.first.c_str()) });
+            error = L"Could not export " + a2w(overrideFile.first.c_str());
             return false;
         }
     }
@@ -745,7 +741,7 @@ bool ExportProfileMrpack(
         mz_zip_writer_end(&zip);
         fclose(outFile);
         DeleteFileW(temporary.c_str());
-        error = Tr(L"Could not export all config files");
+        error = L"Could not export all config files";
         return false;
     }
 
@@ -755,7 +751,7 @@ bool ExportProfileMrpack(
     if (!finalized || !ended || !closed ||
         !MoveFileExW(temporary.c_str(), outputPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         DeleteFileW(temporary.c_str());
-        error = Tr(L"Could not finish export archive. Previous export kept");
+        error = L"Could not finish export archive. Previous export kept";
         return false;
     }
 

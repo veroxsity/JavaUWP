@@ -9,7 +9,6 @@
     "ForgeControllerGameRendererMixin",
     "ForgeControllerHandledScreenMixin",
     "ForgeControllerInventoryScreenMixin",
-    "ForgeControllerKeyboardInputMixin",
     "ForgeControllerRecipeBookAccessor",
     "ForgeControllerRecipeBookPageAccessor",
     "ForgeControllerRecipeOverlayAccessor",

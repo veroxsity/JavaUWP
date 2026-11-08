@@ -1,0 +1,2 @@
+minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	controllerProvider	notes
+26.3	26.3 Fabric	fabric	0.19.5	current	testing	fabric	V12 graphics confirmed on Xbox; V13 SDL3 input bridge; Fabric controller uses LWJGL SDL gamepad/input APIs

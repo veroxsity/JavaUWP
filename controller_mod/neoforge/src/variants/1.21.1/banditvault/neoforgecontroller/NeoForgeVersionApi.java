@@ -41,9 +41,6 @@ final class NeoForgeVersionApi {
         graphics.pose().popPose();
     }
 
-    static void beginCursorLayer(Object target) {
-    }
-
     static int guiWidth(Object target) {
         return ((GuiGraphics)target).guiWidth();
     }

@@ -226,6 +226,18 @@ $script:MutableMetadataUrls = @(
 )
 $script:MutableMetadataTtlHours = 24
 
+function Get-RemoteText {
+    param([string]$Uri, [int]$TimeoutSec = 60)
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        $body = & curl.exe --fail --silent --show-error --location --connect-timeout 15 --max-time $TimeoutSec $Uri
+        if ($LASTEXITCODE -ne 0) { throw "Download failed: $Uri" }
+        return ($body -join "`n")
+    }
+    $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $Uri
+    if ($response.Content -is [byte[]]) { return [Text.Encoding]::UTF8.GetString($response.Content) }
+    return [string]$response.Content
+}
+
 function Get-CachedRemoteJson {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
@@ -264,8 +276,7 @@ function Get-CachedRemoteJson {
     }
 
     Write-Host "Fetch $Uri"
-    $raw = Invoke-WebRequest -UseBasicParsing -TimeoutSec $TimeoutSec -Uri $Uri
-    $text = if ($raw.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($raw.Content) } else { [string]$raw.Content }
+    $text = Get-RemoteText -Uri $Uri -TimeoutSec $TimeoutSec
     $parsed = $text | ConvertFrom-Json
 
     Ensure-Dir $cacheDir
@@ -667,22 +678,6 @@ function Ensure-Dir {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
 }
 
-function Get-JarClassRelease {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::OpenRead($Path)
-    try {
-        $entry = $zip.Entries | Where-Object { $_.FullName -like "*.class" } | Select-Object -First 1
-        if (-not $entry) { throw "No class files in $Path" }
-        $stream = $entry.Open()
-        try {
-            $header = New-Object byte[] 8
-            [void]$stream.Read($header, 0, 8)
-        } finally { $stream.Dispose() }
-        return (($header[6] -shl 8) -bor $header[7]) - 44
-    } finally { $zip.Dispose() }
-}
-
 function Test-JarComplete {
     param([string]$Path, [string]$RequiredEntry)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
@@ -729,7 +724,12 @@ function Save-RemoteFile {
     try {
         for ($attempt = 1; ; $attempt++) {
             try {
-                Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $temp -TimeoutSec 180
+                if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                    & curl.exe --fail --silent --show-error --location --connect-timeout 15 --max-time 180 --output $temp $Uri
+                    if ($LASTEXITCODE -ne 0) { throw "Download failed: $Uri" }
+                } else {
+                    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $temp -TimeoutSec 180
+                }
                 if (-not (Valid-Download $temp)) { throw "Invalid download from $Uri" }
                 break
             } catch {

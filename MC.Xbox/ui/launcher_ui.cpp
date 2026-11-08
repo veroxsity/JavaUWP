@@ -6,9 +6,9 @@
 #include "mods_ui_globals.h"
 #include "auth_screen.h"
 #include "launcher_mouse.h"
-#include "i18n.h"
 #include "launcher_common.h"
 #include "minecraft_auth.h"
+#include "local_identity.h"
 #include "minecraft_launch.h"
 #include "profiles.h"
 #include "remote_file_server.h"
@@ -22,8 +22,6 @@
 #include <wrl.h>
 
 using Microsoft::WRL::ComPtr;
-using i18n::Tr;
-using i18n::TrFormat;
 using namespace ABI::Windows::UI::Core;
 
 extern ComPtr<ICoreWindow> g_authWindow;
@@ -91,7 +89,7 @@ void RenderAuth(AuthScreenRenderer* renderer, const AuthUiState& state) {
         renderer->SetCursor(mouse.X(), mouse.Y(), mouse.Visible());
         if (renderer->NeedsRecovery()) {
             AuthUiState recovery = state;
-            recovery.status = Tr(L"Display interrupted. Retrying");
+            recovery.status = L"Display interrupted. Retrying";
             recovery.isError = true;
             renderer->Render(recovery);
         } else {
@@ -118,9 +116,9 @@ void RenderPreparationProgress(
     const wchar_t* status,
     const wchar_t* detail,
     float progress) {
-    state.title = Tr(L"Preparing Minecraft");
+    state.title = L"Preparing Minecraft";
     state.showDeviceCode = false;
-    state.status = status ? status : Tr(L"Preparing runtime");
+    state.status = status ? status : L"Preparing runtime";
     state.detail = detail ? detail : L"";
     state.progress = progress;
     state.secondsRemaining = 0;
@@ -134,21 +132,21 @@ bool RunLaunchTaskWithLiveUi(
     const std::vector<std::wstring>& launchLogPaths,
     const std::wstring& loaderLabel,
     const std::function<bool(LaunchProgressCallback progress)>& launchTask) {
-    state.title = Tr(L"Preparing Minecraft");
+    state.title = L"Preparing Minecraft";
     state.showDeviceCode = false;
     state.showLaunchLog = true;
     state.isError = false;
     state.secondsRemaining = 0;
-    state.status = Tr(L"Starting Minecraft");
+    state.status = L"Starting Minecraft";
     state.detail = loaderLabel.empty()
-        ? Tr(L"Preparing launch files.")
-        : TrFormat(L"Preparing {0} and launch files.", { loaderLabel });
+        ? L"Preparing launch files."
+        : (L"Preparing " + loaderLabel + L" and launch files.");
     state.progress = 0.12f;
     state.launchLogText = ReadLaunchLogTailForUi(launchLogPaths);
     RenderAuth(renderer, state);
 
     LaunchProgressCallback progress = [&](const wchar_t* status, const wchar_t* detail, float value) {
-        state.status = status ? status : Tr(L"Starting Minecraft");
+        state.status = status ? status : L"Starting Minecraft";
         state.detail = detail ? detail : L"";
         state.progress = value;
         state.launchLogText = ReadLaunchLogTailForUi(launchLogPaths);
@@ -174,14 +172,14 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
         if (RemoteFileServerRunning()) {
             const std::wstring url = RemoteFileServerUrl();
             state.isError = url.empty();
-            state.status = url.empty() ? Tr(L"Remote Files has no LAN address") : Tr(L"Remote file manager is running");
+            state.status = url.empty() ? L"Remote Files has no LAN address" : L"Remote file manager is running";
             state.detail = url.empty()
-                ? Tr(L"Could not find a connected IPv4 LAN address. Connect to the local network and try again.")
-                : TrFormat(L"Open {0}\nPIN: {1}", { url, a2w(RemoteFileServerPin().c_str()) });
-            if (RemoteFileImportRunning()) state.detail += L"\n" + std::wstring(Tr(L"Import in progress. Wait for it to finish before leaving."));
+                ? L"Could not find a connected IPv4 LAN address. Connect to the local network and try again."
+                : L"Open " + url + L"\nPIN: " + a2w(RemoteFileServerPin().c_str());
+            if (RemoteFileImportRunning()) state.detail += L"\nImport in progress. Wait for it to finish before leaving.";
         } else {
-            state.status = Tr(L"Remote file manager is not running");
-            state.detail = Tr(L"Could not start the LAN server on port 27632. Check that another copy is not already running.");
+            state.status = L"Remote file manager is not running";
+            state.detail = L"Could not start the LAN server on port 27632. Check that another copy is not already running.";
             state.isError = true;
         }
 
@@ -201,7 +199,7 @@ static void ShowRemoteFilesPage(ICoreWindow* window, AuthScreenRenderer* rendere
             state.showRemoteFiles = false;
             state.showMainMenu = true;
             state.isError = false;
-            state.status = Tr(L"Remote file manager stopped");
+            state.status = L"Remote file manager stopped";
             state.detail = L"";
             WriteLog(L"Remote files page closed");
             return;
@@ -228,41 +226,40 @@ static void WaitForMenuKeysReleased(ICoreWindow* window, AuthScreenRenderer* ren
 
 static std::wstring CrashHeadline(const telemetry::CrashRecord& record) {
     if (record.repeatCount >= 3) {
-        return TrFormat(L"Minecraft has crashed {0} launches in a row", { std::to_wstring(record.repeatCount) });
+        return L"Minecraft has crashed " + std::to_wstring(record.repeatCount) + L" launches in a row";
     }
     if (record.exception.find(L"unknown_") != std::wstring::npos) {
-        return Tr(L"Minecraft closed unexpectedly");
+        return L"Minecraft closed unexpectedly";
     }
-    if (record.phase == L"mod_load") return Tr(L"Minecraft crashed while loading mods");
-    if (record.phase == L"jvm_init") return Tr(L"Minecraft crashed while starting up");
-    if (record.phase == L"ingame") return Tr(L"Minecraft crashed while playing");
-    return Tr(L"Minecraft closed unexpectedly");
+    if (record.phase == L"mod_load") return L"Minecraft crashed while loading mods";
+    if (record.phase == L"jvm_init") return L"Minecraft crashed while starting up";
+    if (record.phase == L"ingame") return L"Minecraft crashed while playing";
+    return L"Minecraft closed unexpectedly";
 }
 
 static std::wstring CrashSuspectLine(const telemetry::CrashRecord& record) {
     if (!record.suspectedMod.empty()) {
-        std::wstring line = TrFormat(L"Suspected: {0}", { record.suspectedMod });
+        std::wstring line = L"Suspected: " + record.suspectedMod;
         if (!record.detail.targetMethod.empty()) {
-            line += L"\n" + std::wstring(Tr(L"It asked for something this version of Minecraft does not have."));
+            line += L"\nIt asked for something this version of Minecraft does not have.";
         }
         return line;
     }
     if (!record.detail.symbol.empty()) {
         // ole32 is com, and jna cannot LoadLibrary a system dll from a uwp package
         if (record.detail.symbol.find("Ole32") != std::string::npos) {
-            return Tr(L"A mod asked Windows for hardware details, which this console blocks.\n"
-                   L"Mods that probe the GPU this way cannot run here yet.");
+            return L"A mod asked Windows for hardware details, which this console blocks.\n"
+                   L"Mods that probe the GPU this way cannot run here yet.";
         }
-        return TrFormat(L"A mod asked for {0}, which this console does not provide.",
-            { a2w(record.detail.symbol.c_str()) });
+        return L"A mod asked for " + a2w(record.detail.symbol.c_str()) +
+            L", which this console does not provide.";
     }
     if (record.exception.find(L"heap_exhausted") != std::wstring::npos) {
-        return TrFormat(L"This pack ran out of memory ({0}).\n"
-                        L"The console has about 5 GB for everything, so very large packs cannot load.",
-            { record.message });
+        return L"This pack ran out of memory (" + record.message + L").\n"
+               L"The console has about 5 GB for everything, so very large packs cannot load.";
     }
     if (record.exception.find(L"unknown_") != std::wstring::npos) {
-        return Tr(L"Nothing readable was left behind, so there is no diagnosis for this one.");
+        return L"Nothing readable was left behind, so there is no diagnosis for this one.";
     }
     if (!record.message.empty()) return record.message;
     return record.exception;
@@ -275,12 +272,12 @@ static std::wstring CrashTraceText(const telemetry::CrashRecord& record) {
     for (const std::wstring& frame : record.frames) {
         text += L"\n  at " + frame;
     }
-    if (record.frames.empty()) text += L"\n" + std::wstring(Tr(L"No stack trace was recovered."));
+    if (record.frames.empty()) text += L"\nNo stack trace was recovered.";
     text += L"\n\nfingerprint " + record.fingerprint;
     text += L"\nbuild " + record.launcherBuild + L", " + record.mcVersion + L" " + record.loader;
     if (!record.zip.empty()) {
-        text += L"\n\n" + std::wstring(Tr(L"The full logs are zipped at:")) + L"\n" + record.zip +
-            L"\n" + Tr(L"Open Remote Files on the main menu to read it on a phone or PC.");
+        text += L"\n\nThe full logs are zipped at:\n" + record.zip +
+            L"\nOpen Remote Files on the main menu to read it on a phone or PC.";
     }
     return text;
 }
@@ -311,8 +308,8 @@ static void ShowCrashScreen(ICoreWindow* window, AuthScreenRenderer* renderer, A
     state.crashSelected = 0;
     state.crashButtonCount = showConsent ? 3 : 2;
     state.crashFootnote = showConsent
-        ? Tr(L"You can change this later, and reading the crash never sends anything.")
-        : Tr(L"Press B or select Dismiss to carry on.");
+        ? L"You can change this later, and reading the crash never sends anything."
+        : L"Press B or select Dismiss to carry on.";
 
     bool leftWas = false;
     bool rightWas = false;
@@ -399,21 +396,21 @@ static void ShowCrashScreen(ICoreWindow* window, AuthScreenRenderer* renderer, A
         if (state.crashAskConsent) {
             if (pressed == 0) {
                 telemetry::SendLastCrashOnce(record);
-                state.crashFootnote = Tr(L"Sending this one report. Reporting stays off.");
+                state.crashFootnote = L"Sending this one report. Reporting stays off.";
             } else if (pressed == 1) {
                 if (telemetry::SetConsent(telemetry::ConsentState::Always)) {
                     telemetry::SendLastCrashOnce(record);
                     telemetry::FlushQueueAsync();
-                    state.crashFootnote = Tr(L"Reporting is on. Turn it off any time from Settings.");
+                    state.crashFootnote = L"Reporting is on. Turn it off any time from Settings.";
                 } else {
-                    state.crashFootnote = Tr(L"Reporting could not be turned on. Nothing was sent.");
+                    state.crashFootnote = L"Reporting could not be turned on. Nothing was sent.";
                 }
             } else {
                 if (telemetry::SetConsent(telemetry::ConsentState::Never)) {
                     telemetry::ClearQueue();
-                    state.crashFootnote = Tr(L"Nothing will be sent. Crashes are still explained here.");
+                    state.crashFootnote = L"Nothing will be sent. Crashes are still explained here.";
                 } else {
-                    state.crashFootnote = Tr(L"Reporting could not be turned off.");
+                    state.crashFootnote = L"Reporting could not be turned off.";
                 }
             }
             state.crashAskConsent = false;
@@ -476,18 +473,18 @@ static void ShowChangelogScreen(
     state.changelogSelected = 0;
     state.isError = false;
     if (offer) {
-        state.changelogHeadline = TrFormat(L"Version {0} is available", { offer->latest });
-        state.changelogSub = TrFormat(L"You are running {0}. Updating is up to you.", { offer->current });
+        state.changelogHeadline = L"Version " + offer->latest + L" is available";
+        state.changelogSub = L"You are running " + offer->current + L". Updating is up to you.";
         state.changelogUrl = updates::ReleasesUrl();
         state.qr = GenerateLoginQrMatrix(w2a(state.changelogUrl));
     } else {
-        state.changelogHeadline = Tr(L"What's new");
+        state.changelogHeadline = L"What's new";
         state.changelogSub = fromGitHub
-            ? std::wstring(Tr(L"The latest changes, fetched from GitHub."))
-            : TrFormat(L"The changes that came with this version ({0}).", { telemetry::LauncherBuild() });
+            ? std::wstring(L"The latest changes, fetched from GitHub.")
+            : L"The changes that came with this version (" + telemetry::LauncherBuild() + L").";
         std::wstring newest;
         if (updates::NewerAvailable(newest)) {
-            state.changelogSub += L" " + TrFormat(L"Version {0} is out. Get it from {1}.", { newest, updates::ReleasesUrl() });
+            state.changelogSub += L" Version " + newest + L" is out. Get it from " + updates::ReleasesUrl() + L".";
         }
     }
 
@@ -601,7 +598,7 @@ static void ShowChangelogScreen(
 }
 
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 7;
+    constexpr int kSettingsRows = 6;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -620,9 +617,6 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     state.settingsModSource = modsource::Current();
     state.settingsCurseForgeKeyHint = modsource::CurseForgeKeyHint();
     state.settingsUpdateCheckOn = updates::Enabled();
-    for (const i18n::Language& language : i18n::Languages()) {
-        if (language.code == i18n::CurrentCode()) state.settingsLanguageName = language.name;
-    }
 
     bool upWas = false;
     bool downWas = false;
@@ -699,9 +693,9 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                 state.settingsMenuMouseSpeed = next.menu;
                 state.settingsGameMouseSpeed = next.game;
                 ApplyMouseSensitivity(next);
-                state.settingsNote = Tr(L"Mouse sensitivity saved.");
+                state.settingsNote = L"Mouse sensitivity saved.";
             } else {
-                state.settingsNote = Tr(L"Mouse sensitivity could not be saved.");
+                state.settingsNote = L"Mouse sensitivity could not be saved.";
             }
         } else if (pressed == 2) {
             const bool turnOn = !state.settingsReportingOn;
@@ -709,22 +703,22 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                 state.settingsReportingOn = turnOn;
                 if (turnOn) {
                     telemetry::FlushQueueAsync();
-                    state.settingsNote = Tr(L"Reporting is on. Anything waiting will be retried.");
+                    state.settingsNote = L"Reporting is on. Anything waiting will be retried.";
                 } else {
                     telemetry::ClearQueue();
-                    state.settingsNote = Tr(L"Reporting is off. Pending reports were deleted.");
+                    state.settingsNote = L"Reporting is off. Pending reports were deleted.";
                 }
             } else {
                 state.settingsNote = turnOn
-                    ? Tr(L"Reporting could not be turned on.")
-                    : Tr(L"Reporting could not be turned off.");
+                    ? L"Reporting could not be turned on."
+                    : L"Reporting could not be turned off.";
             }
         } else if (pressed == 3) {
             if (telemetry::ResetInstallId()) {
                 state.settingsInstallId = telemetry::InstallIdText();
-                state.settingsNote = Tr(L"A new reporting id was created.");
+                state.settingsNote = L"A new reporting id was created.";
             } else {
-                state.settingsNote = Tr(L"The reporting id could not be reset.");
+                state.settingsNote = L"The reporting id could not be reset.";
             }
         } else if (pressed == 4) {
             const ModSource next = state.settingsModSource == ModSource::CurseForge
@@ -734,39 +728,29 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                 state.settingsModSource = next;
                 state.settingsCurseForgeKeyHint = modsource::CurseForgeKeyHint();
                 if (next == ModSource::CurseForge && state.settingsCurseForgeKeyHint.empty()) {
-                    state.settingsNote = Tr(L"CurseForge selected, but no API key is set. Add one in Remote Files.");
+                    state.settingsNote = L"CurseForge selected, but no API key is set. Add one in Remote Files.";
                 } else {
-                    state.settingsNote = TrFormat(L"Mods will come from {0}.", { modsource::DisplayName(next) });
+                    state.settingsNote = std::wstring(L"Mods will come from ") +
+                        modsource::DisplayName(next) + L".";
                 }
             } else {
-                state.settingsNote = Tr(L"The mod source could not be changed.");
+                state.settingsNote = L"The mod source could not be changed.";
             }
         } else if (pressed == 5) {
             const bool turnOn = !state.settingsUpdateCheckOn;
             if (!updates::HasReleaseChannel()) {
-                state.settingsNote = Tr(L"This build is not published anywhere, so there is nothing to check.");
+                state.settingsNote = L"This build is not published anywhere, so there is nothing to check.";
             } else if (updates::SetEnabled(turnOn)) {
                 state.settingsUpdateCheckOn = turnOn;
                 if (turnOn) {
                     updates::StartCheckAsync();
-                    state.settingsNote = Tr(L"The launcher will check for new versions when it opens.");
+                    state.settingsNote = L"The launcher will check for new versions when it opens.";
                 } else {
-                    state.settingsNote = Tr(L"The launcher will not look for new versions.");
+                    state.settingsNote = L"The launcher will not look for new versions.";
                 }
             } else {
-                state.settingsNote = Tr(L"The update setting could not be saved.");
+                state.settingsNote = L"The update setting could not be saved.";
             }
-        } else if (pressed == 6) {
-            const std::vector<i18n::Language> languages = i18n::Languages();
-            size_t next = 0;
-            for (size_t i = 0; i < languages.size(); ++i) {
-                if (languages[i].code == i18n::CurrentCode()) next = (i + 1) % languages.size();
-            }
-            const bool saved = i18n::SetLanguage(languages[next].code);
-            state.settingsLanguageName = languages[next].name;
-            state.settingsNote = languages.size() == 1
-                ? Tr(L"No other languages are installed yet.")
-                : (saved ? Tr(L"Language changed.") : Tr(L"The language was changed but could not be saved."));
         }
 
         upWas = upDown;
@@ -781,13 +765,49 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     state.showSettings = false;
     state.showMainMenu = true;
     state.status = telemetry::ConsentGranted()
-        ? Tr(L"Crash reporting is on")
-        : Tr(L"Crash reporting is off");
+        ? L"Crash reporting is on"
+        : L"Crash reporting is off";
     state.detail = L"";
     WriteLog(L"Settings page closed");
 }
 
-MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authConfig, const std::wstring& runtimeRoot) {
+static void EditLocalName(ICoreWindow* window, AuthScreenRenderer* renderer,
+                          AuthUiState& state, LaunchAuthConfig& authConfig) {
+    WaitForMenuKeysReleased(window, renderer, state);
+    state.localNameEditing = true;
+    state.localNameError = false;
+    state.localNameNote = L"Enter or close keyboard to save. B / Escape cancels.";
+    BeginLauncherTextInput(window, a2w(authConfig.username.c_str()));
+    bool cancelled = false;
+    while (true) {
+        RenderAuth(renderer, state);
+        bool finished = false;
+        state.localName = PollLauncherTextInput(finished);
+        cancelled = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Escape,
+            ABI::Windows::System::VirtualKey_GamepadB });
+        if (cancelled || finished || AnyVirtualKeyDown(window, { ABI::Windows::System::VirtualKey_Enter })) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    EndLauncherTextInput();
+    state.localNameEditing = false;
+    if (cancelled) {
+        state.localNameNote = L"Cancelled - your name has not changed";
+    } else if (!IsValidLocalName(state.localName)) {
+        state.localNameError = true;
+        state.localNameNote = L"Use 3-16 letters, numbers or underscores. Name kept.";
+    } else if (!SaveLocalTrialName(state.localName, authConfig)) {
+        state.localNameError = true;
+        state.localNameNote = L"Could not save your name. Try again.";
+    } else {
+        state.localNameNote = L"Saved - ready for your next launch";
+        state.status = L"Local trial - " + a2w(authConfig.username.c_str());
+    }
+    state.localName = a2w(authConfig.username.c_str());
+    WaitForMenuKeysReleased(window, renderer, state);
+}
+
+MainMenuAction ShowMainMenu(ICoreWindow* window, LaunchAuthConfig& authConfig, const std::wstring& runtimeRoot) {
     AuthScreenRenderer rendererInstance;
     AuthScreenRenderer* renderer = nullptr;
     if (rendererInstance.Initialize(window)) {
@@ -801,16 +821,21 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
     state.title = L"Bandit Launcher";
     state.showDeviceCode = false;
     state.showMainMenu = true;
-    state.status = TrFormat(L"Signed in as {0}", { a2w(authConfig.username.c_str()) });
+    state.localNameVisible = authConfig.isLocalTrial;
+    state.localName = a2w(authConfig.username.c_str());
+    state.localNameNote = L"Select to edit - 3-16 letters, numbers or underscores";
+    state.status = (authConfig.isLocalTrial ? L"Local trial - " : L"Signed in as ") +
+        a2w(authConfig.username.c_str());
     EnsureProfilesInitialized(runtimeRoot);
     {
         const std::wstring activeId = GetActiveProfileId(runtimeRoot);
         const Profile activeProfile = GetProfileById(runtimeRoot, activeId);
         const LaunchTarget activeTarget = ResolveProfileTarget(runtimeRoot, activeProfile);
-        state.detail = TrFormat(L"Active profile: {0} - {1}", { activeProfile.name, TargetProfileText(activeTarget) });
+        state.detail = L"Active profile: " + activeProfile.name + L" - " + TargetProfileText(activeTarget);
     }
 
     int selected = 0;
+    const int focusCount = kMainMenuItems + (authConfig.isLocalTrial ? 1 : 0);
     bool upWasDown = false;
     bool downWasDown = false;
     bool selectWasDown = false;
@@ -836,6 +861,9 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
                     mouse.Y() >= r.top && mouse.Y() <= r.bottom) {
                     hovered = i;
                 }
+            }
+            if (authConfig.isLocalTrial && renderer->HitTest(mouse.X(), mouse.Y()) == launchhit::kLocalName) {
+                hovered = kMainMenuItems;
             }
             if (hovered >= 0 && (mouseMoved || mouseClicked)) {
                 selected = hovered;
@@ -871,14 +899,19 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
         });
 
         if (upDown && !upWasDown) {
-            selected = (selected + kMainMenuItems - 1) % kMainMenuItems;
+            selected = (selected + focusCount - 1) % focusCount;
             state.detail = L"";
         }
         if (downDown && !downWasDown) {
-            selected = (selected + 1) % kMainMenuItems;
+            selected = (selected + 1) % focusCount;
             state.detail = L"";
         }
         if ((selectDown && !selectWasDown) || (mouseClicked && hovered >= 0)) {
+            if (selected == kMainMenuItems && authConfig.isLocalTrial) {
+                EditLocalName(window, renderer, state, authConfig);
+                upWasDown = downWasDown = selectWasDown = false;
+                continue;
+            }
             if (selected == 0) {
                 WriteLog(L"Main menu: Play selected");
                 StopRemoteFileServer();
@@ -887,7 +920,7 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
             if (selected == 1) {
                 WriteLog(L"Main menu: Mods selected");
                 ShowModsPage(window, renderer, state, runtimeRoot);
-                state.detail = Tr(L"Browse installed, popular, and latest Fabric mods.");
+                state.detail = L"Browse installed, popular, and latest Fabric mods.";
             } else if (selected == 2) {
                 WriteLog(L"Main menu: Remote files selected");
                 ShowRemoteFilesPage(window, renderer, state, runtimeRoot);
@@ -900,16 +933,16 @@ MainMenuAction ShowMainMenu(ICoreWindow* window, const LaunchAuthConfig& authCon
             } else if (selected == 5) {
                 WriteLog(L"Main menu: Repair downloads selected");
                 StopRemoteFileServer();
-                state.status = Tr(L"Repairing downloaded files");
-                state.detail = Tr(L"Downloaded Minecraft files will be rechecked");
+                state.status = L"Repairing downloaded files";
+                state.detail = L"Downloaded Minecraft files will be rechecked";
                 RenderAuth(renderer, state);
                 SleepWithAuthUi(renderer, state, 350);
                 return MainMenuAction::RepairDownloads;
             } else {
-                WriteLog(L"Main menu: Sign out selected");
+                WriteLog(L"Main menu: Reset session selected");
                 StopRemoteFileServer();
-                state.status = Tr(L"Signing out");
-                state.detail = Tr(L"Clearing saved Microsoft session");
+                state.status = authConfig.isLocalTrial ? L"Restarting local session" : L"Signing out";
+                state.detail = authConfig.isLocalTrial ? L"No Microsoft account is connected" : L"Clearing saved Microsoft session";
                 RenderAuth(renderer, state);
                 SleepWithAuthUi(renderer, state, 350);
                 return MainMenuAction::SignOut;
@@ -931,11 +964,11 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
     }
 
     AuthUiState state;
-    state.title = Tr(L"Signing in");
+    state.title = L"Signing in";
     state.showDeviceCode = false;
     state.progress = 0.12f;
     state.verificationUri = L"microsoft.com/link";
-    state.status = Tr(L"Checking saved Microsoft session");
+    state.status = L"Checking saved Microsoft session";
     RenderAuth(renderer, state);
 
     const std::string savedRefreshToken = LoadRefreshToken();
@@ -947,12 +980,12 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
             if (!refreshed.refreshToken.empty()) {
                 SaveRefreshToken(refreshed.refreshToken);
             }
-            state.status = Tr(L"Verifying Minecraft ownership");
-            state.detail = Tr(L"Using saved Microsoft session");
+            state.status = L"Verifying Minecraft ownership";
+            state.detail = L"Using saved Microsoft session";
             state.progress = 0.58f;
             RenderAuth(renderer, state);
             if (BuildMinecraftAuth(refreshed.accessToken, out, error)) {
-                state.status = TrFormat(L"Signed in as {0}", { a2w(out.username.c_str()) });
+                state.status = L"Signed in as " + a2w(out.username.c_str());
                 state.detail = L"";
                 state.progress = 1.0f;
                 RenderAuth(renderer, state);
@@ -965,7 +998,7 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
         if (invalidGrant) {
             ClearRefreshToken();
         } else {
-            state.status = Tr(L"Saved sign-in could not be verified");
+            state.status = L"Saved sign-in could not be verified";
             state.detail = a2w(error.c_str());
             state.isError = true;
             RenderAuth(renderer, state);
@@ -976,7 +1009,7 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
     DeviceCodeResponse device;
     std::string error;
     if (!RequestDeviceCode(device, error)) {
-        state.status = Tr(L"Microsoft sign-in failed");
+        state.status = L"Microsoft sign-in failed";
         state.detail = a2w(error.c_str());
         state.isError = true;
         RenderAuth(renderer, state);
@@ -987,11 +1020,11 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
     state.userCode = a2w(device.userCode.c_str());
     state.verificationUri = a2w(device.verificationUri.c_str());
     state.qr = GenerateLoginQrMatrix("https://www.microsoft.com/link?otc=" + device.userCode);
-    state.title = Tr(L"Microsoft sign-in");
+    state.title = L"Microsoft sign-in";
     state.showDeviceCode = true;
     state.progress = -1.0f;
-    state.status = Tr(L"Waiting for Microsoft sign-in");
-    state.detail = Tr(L"Use the account that owns Minecraft Java Edition.");
+    state.status = L"Waiting for Microsoft sign-in";
+    state.detail = L"Use the account that owns Minecraft Java Edition.";
     state.secondsRemaining = device.expiresIn;
     RenderAuth(renderer, state);
 
@@ -1000,11 +1033,11 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
     while (std::chrono::steady_clock::now() < expiresAt) {
         state.secondsRemaining = static_cast<int>(
             std::chrono::duration_cast<std::chrono::seconds>(expiresAt - std::chrono::steady_clock::now()).count());
-        state.status = Tr(L"Waiting for Microsoft sign-in");
-        state.detail = Tr(L"Use the account that owns Minecraft Java Edition.");
+        state.status = L"Waiting for Microsoft sign-in";
+        state.detail = L"Use the account that owns Minecraft Java Edition.";
         SleepWithAuthUi(renderer, state, interval * 1000);
 
-        state.status = Tr(L"Checking sign-in");
+        state.status = L"Checking sign-in";
         state.detail.clear();
         RenderAuth(renderer, state);
 
@@ -1017,7 +1050,7 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
             continue;
         }
         if (poll.status == DevicePollStatus::Failed) {
-            state.status = Tr(L"Microsoft sign-in failed");
+            state.status = L"Microsoft sign-in failed";
             state.detail = a2w(poll.error.c_str());
             state.isError = true;
             RenderAuth(renderer, state);
@@ -1029,12 +1062,12 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
             SaveRefreshToken(poll.token.refreshToken);
         }
 
-        state.status = Tr(L"Verifying Minecraft ownership");
+        state.status = L"Verifying Minecraft ownership";
         state.detail.clear();
         RenderAuth(renderer, state);
 
         if (BuildMinecraftAuth(poll.token.accessToken, out, error)) {
-            state.status = TrFormat(L"Signed in as {0}", { a2w(out.username.c_str()) });
+            state.status = L"Signed in as " + a2w(out.username.c_str());
             state.secondsRemaining = 0;
             state.detail.clear();
             RenderAuth(renderer, state);
@@ -1042,7 +1075,7 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
             return true;
         }
 
-        state.status = Tr(L"Minecraft sign-in failed");
+        state.status = L"Minecraft sign-in failed";
         state.detail = a2w(error.c_str());
         state.isError = true;
         RenderAuth(renderer, state);
@@ -1050,8 +1083,8 @@ bool ResolveLaunchAuthConfig(ICoreWindow* window, LaunchAuthConfig& out) {
         return false;
     }
 
-    state.status = Tr(L"Microsoft sign-in expired");
-    state.detail = Tr(L"Restart the app to request a new code.");
+    state.status = L"Microsoft sign-in expired";
+    state.detail = L"Restart the app to request a new code.";
     state.isError = true;
     state.secondsRemaining = 0;
     RenderAuth(renderer, state);

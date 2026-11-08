@@ -60,8 +60,6 @@ public final class BanditControllerCompat {
     private static double lastGameplayMouseY = Double.NaN;
     private static final double GAMEPLAY_MOUSE_MOVE_EPSILON = 0.5;
     private static final float GAMEPLAY_STICK_INTENT = 0.35f;
-    private static class_437 queuedCursorScreen;
-    private static class_332 queuedCursorContext;
     private static boolean snapStickLatched;
     private static class_304 radialPressedKey;
     private static boolean radialPressedAsKeyboard;
@@ -157,18 +155,7 @@ public final class BanditControllerCompat {
         applyLook(client.field_1724, axis(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_X), y, seconds, settings);
     }
 
-    // Screens only queue the cursor. It is drawn from GameRenderer once the screen,
-    // anything mods draw over it and the toasts are done, so it always ends up on top.
     public static void renderCursor(class_437 screen, class_332 context) {
-        queuedCursorScreen = screen;
-        queuedCursorContext = context;
-    }
-
-    public static void renderQueuedCursor() {
-        class_437 screen = queuedCursorScreen;
-        class_332 context = queuedCursorContext;
-        queuedCursorScreen = null;
-        queuedCursorContext = null;
         class_310 client = class_310.method_1551();
         if (screen instanceof BanditControllerSettingsScreen || screen instanceof BanditControllerRadialScreen) {
             return;
@@ -176,16 +163,15 @@ public final class BanditControllerCompat {
         if (!active || screen == null || context == null || client == null || client.field_1755 != screen) {
             return;
         }
-        FabricScreenApi.beginCursorLayer(context);
         if (!mouseOwnsCursor) renderControllerGuide(screen, context, client);
-        if (!mouseOwnsCursor && cursorX >= 0.0 && cursorY >= 0.0) {
-            FabricScreenApi.drawCursor(context, (int)Math.round(cursorX), (int)Math.round(cursorY));
-        }
-        FabricScreenApi.endCursorLayer(context);
+        if (mouseOwnsCursor || cursorX < 0.0 || cursorY < 0.0) return;
+
+        int x = (int)Math.round(cursorX);
+        int y = (int)Math.round(cursorY);
+        FabricScreenApi.drawCursor(context, x, y);
     }
 
     private static void renderControllerGuide(class_437 screen, class_332 context, class_310 client) {
-        if (!BanditControllerSettings.get().showGuides) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
         boolean container = screen instanceof class_465;
         BanditControllerGuide.drawVerticalLeft(context, client.field_1772, 8, 8,
@@ -266,7 +252,6 @@ public final class BanditControllerCompat {
     }
 
     public static void renderGameplayGuide(class_332 context) {
-        if (!BanditControllerSettings.get().showGuides) return;
         class_310 client = class_310.method_1551();
         if (!active || mouseOwnsGameplay || context == null || client == null || client.field_1755 != null || client.field_1724 == null || client.field_1690.field_1842) return;
         BanditControllerSettings settings = BanditControllerSettings.get();
@@ -317,12 +302,10 @@ public final class BanditControllerCompat {
         if (client == null || client.field_1755 != null || !poll()) {
             return null;
         }
-        BanditControllerSettings settings = BanditControllerSettings.get();
-        float x = -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X);
-        float y = -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y);
-        return settings.keyboardMovement
-            ? ControllerRuntime.keyboardMovement(x, y, settings.moveDeadzone)
-            : ControllerRuntime.shapedMovement(x, y, settings.moveDeadzone);
+        return ControllerRuntime.shapedMovement(
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
+            -axis(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y),
+            BanditControllerSettings.get().moveDeadzone);
     }
 
     private static boolean poll() {

@@ -1,5 +1,4 @@
 #include "minecraft_launch.h"
-#include "i18n.h"
 
 #include "app_globals.h"
 #include "crash_report.h"
@@ -42,9 +41,6 @@
 #include <windows.ui.core.h>
 
 #include "third_party/miniz/miniz.h"
-
-using i18n::Tr;
-using i18n::TrFormat;
 
 using namespace Microsoft::WRL;
 using Microsoft::WRL::Wrappers::HStringReference;
@@ -104,7 +100,7 @@ struct LogTailerConfig {
     std::wstring label;
 };
 static std::wstring TailTextForUi(const std::wstring& text, size_t maxLines = 14, size_t maxChars = 4200) {
-    if (text.empty()) return Tr(L"Waiting for pre-launch log output...");
+    if (text.empty()) return L"Waiting for pre-launch log output...";
 
     size_t end = text.size();
     while (end > 0 && (text[end - 1] == L'\r' || text[end - 1] == L'\n')) {
@@ -136,7 +132,7 @@ static std::wstring TailTextForUi(const std::wstring& text, size_t maxLines = 14
     for (wchar_t& ch : tail) {
         if (ch == L'\t') ch = L' ';
     }
-    if (tail.empty()) return Tr(L"Waiting for pre-launch log output...");
+    if (tail.empty()) return L"Waiting for pre-launch log output...";
 
     // The launch panel is not interactive, so keep each logical log line to one
     // visual row. Very long paths otherwise wrap and hide the newest entries.
@@ -157,7 +153,7 @@ static std::wstring TailTextForUi(const std::wstring& text, size_t maxLines = 14
         if (lineEnd >= tail.size()) break;
         lineStart = lineEnd + 1;
     }
-    return compact.empty() ? Tr(L"Waiting for pre-launch log output...") : compact;
+    return compact.empty() ? L"Waiting for pre-launch log output..." : compact;
 }
 
 std::wstring ReadLaunchLogTailForUi(const std::vector<std::wstring>& paths, size_t maxLines) {
@@ -167,7 +163,7 @@ std::wstring ReadLaunchLogTailForUi(const std::vector<std::wstring>& paths, size
             return TailTextForUi(text, maxLines);
         }
     }
-    return Tr(L"Waiting for pre-launch log output...");
+    return L"Waiting for pre-launch log output...";
 }
 
 static void LogTextFileTail(const std::wstring& path, const wchar_t* label, DWORD maxBytes = 16384) {
@@ -566,6 +562,56 @@ bool PublishCoreWindowProperty(ICoreWindow* window) {
     return true;
 }
 
+static std::vector<HMODULE> g_sdlMesaPreloadModules;
+
+static bool PreloadMesaGraphicsStackForSdl() {
+    if (!g_sdlMesaPreloadModules.empty()) {
+        WriteLog(L"SDL3 Mesa support stack already preloaded");
+        return true;
+    }
+
+    struct MesaModule {
+        const wchar_t* relativePath;
+        const wchar_t* label;
+        bool required;
+    };
+
+    // Keep this order synchronized with glfw_shim/wgl_backend.h. That path is
+    // proven on Series S. Load the exact graphics\mesa OpenGL provider last
+    // so LWJGL and SDL later receive the same module/function addresses.
+    const MesaModule modules[] = {
+        { L"dxil.dll", L"dxil.dll", true },
+        { L"z-1.dll", L"z-1.dll", true },
+        { L"spirv_to_dxil.dll", L"spirv_to_dxil.dll", true },
+        { L"vulkan_dzn.dll", L"vulkan_dzn.dll", false },
+        { L"libgallium_wgl.dll", L"libgallium_wgl.dll", true },
+        { L"graphics\\mesa\\opengl32.dll", L"opengl32.dll", true },
+    };
+
+    for (const MesaModule& module : modules) {
+        HMODULE handle = LoadPackagedLibrary(module.relativePath, 0);
+        if (!handle) {
+            const DWORD err = GetLastError();
+            WriteLogF(L"SDL3 Mesa preload %s failed path=%s err=%u%s",
+                      module.label, module.relativePath, err,
+                      module.required ? L" [required]" : L" [optional]");
+            if (module.required) {
+                for (auto it = g_sdlMesaPreloadModules.rbegin(); it != g_sdlMesaPreloadModules.rend(); ++it) {
+                    FreeLibrary(*it);
+                }
+                g_sdlMesaPreloadModules.clear();
+                return false;
+            }
+            continue;
+        }
+        g_sdlMesaPreloadModules.push_back(handle);
+        WriteLogF(L"SDL3 Mesa preload %s => %p", module.label, (void*)handle);
+    }
+
+    WriteLog(L"SDL3 Mesa preload complete before JVM/LWJGL");
+    return true;
+}
+
 static bool PreloadJvm(
     const std::wstring& exeDir,
     const std::wstring& jreDir,
@@ -814,6 +860,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const std::wstring& neoFormVersion,
     const std::wstring& neoForgeInstallToolsVersion,
     const std::wstring& neoForgeBinaryPatcherVersion,
+    WindowBackend windowBackend,
     const LaunchAuthConfig& authConfig,
     LaunchProgressCallback progress)
 {
@@ -826,8 +873,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     if (g_embeddedJvmUsed) {
         WriteLog(L"Refusing launch: this process has already run a JVM, it cannot start another");
         reportProgress(
-            Tr(L"Restart the launcher"),
-            Tr(L"A previous launch already used this session's Java runtime. Close the launcher and open it again."),
+            L"Restart the launcher",
+            L"A previous launch already used this session's Java runtime. Close the launcher and open it again.",
             1.0f);
         return false;
     }
@@ -838,12 +885,12 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         loaderLabel = L"Fabric";
     } else if (loaderId == LoaderId::NeoForge) {
         loaderLabel = L"NeoForge";
-    } else if (loaderId == LoaderId::Forge || loaderId == LoaderId::Cleanroom) {
+    } else if (loaderId == LoaderId::Forge) {
         loaderLabel = L"Forge";
     }
     reportProgress(
-        Tr(L"Starting Minecraft"),
-        (TrFormat(L"Preparing {0} and launch files.", { loaderLabel })).c_str(),
+        L"Starting Minecraft",
+        (L"Preparing " + loaderLabel + L" and launch files.").c_str(),
         0.12f);
     const std::wstring effectiveMainClass = LoaderDefaultMainClass(loaderId, mainClassName);
     std::wstring mainClassPath = effectiveMainClass;
@@ -888,16 +935,29 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const std::wstring lwjglTmpDir = exeDir + L"\\tmp";
     const std::wstring launcherOverrideDir = gameDir + L"\\launcher-overrides";
     const std::wstring packagedNativesDir = packageDir + L"\\natives";
+    // The launcher resolves this from the target manifest's LWJGL modules.
+    // This keeps the graphics/input compatibility profile tied to capabilities
+    // rather than a hardcoded Minecraft version threshold.
+    const bool usesSdlWindowBackend = windowBackend == WindowBackend::Sdl3;
+    WriteLogF(L"Launch window backend=%s version=%s", WindowBackendName(windowBackend), minecraftVersion.c_str());
+    const std::wstring windowRuntimeName = usesSdlWindowBackend ? L"SDL3.dll" : L"glfw.dll";
     const bool suppliedNativesReady =
         GetFileAttributesW((nativesDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((nativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        GetFileAttributesW((nativesDir + L"\\" + windowRuntimeName).c_str()) != INVALID_FILE_ATTRIBUTES;
     const bool packagedNativesReady =
         GetFileAttributesW((packagedNativesDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((packagedNativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        GetFileAttributesW((packagedNativesDir + L"\\" + windowRuntimeName).c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (usesSdlWindowBackend && !suppliedNativesReady) {
+        WriteLogF(
+            L"SDL3 target requires target-specific LWJGL/SDL3 natives; incomplete directory: %s",
+            nativesDir.c_str());
+        return false;
+    }
     const std::wstring lwjglNativeDir =
         suppliedNativesReady ? nativesDir :
         (packagedNativesReady ? packagedNativesDir : nativesDir);
     const std::wstring lwjglGlfwDll = lwjglNativeDir + L"\\glfw.dll";
+    const std::wstring lwjglSdlDll = lwjglNativeDir + L"\\SDL3.dll";
     const std::wstring logConfigPath = exeDir + L"\\game\\log_configs\\client-uwp.xml";
     const std::wstring fabricLogPath = gameDir + L"\\logs\\fabric-loader.log";
     const std::wstring forgeLogPath = gameDir + L"\\logs\\forge-loader.log";
@@ -920,7 +980,7 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     EnsureDirectoryTree(gameDir + L"\\showdown");
     EnsureDirectoryTree(exeDir + L"\\showdown");
     EnsureDirectoryTree(userModsDir);
-    if ((loaderId == LoaderId::Forge || loaderId == LoaderId::NeoForge || loaderId == LoaderId::Cleanroom) &&
+    if ((loaderId == LoaderId::Forge || loaderId == LoaderId::NeoForge) &&
         !bundledModsDir.empty() &&
         DirectoryExists(bundledModsDir)) {
         CopyDirectoryContentsAlways(bundledModsDir, userModsDir);
@@ -1094,9 +1154,20 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         vmOptionStorage.push_back("-Djna.debug_load.jna=true");
     }
     vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractDirectory=" + w2a(fwd(lwjglTmpDir)));
-    vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(lwjglGlfwDll)));
+    vmOptionStorage.push_back("-Dorg.lwjgl.system.SharedLibraryExtractPath=" + w2a(fwd(lwjglTmpDir)));
     WriteLogF(L"LWJGL native directory: %s", lwjglNativeDir.c_str());
-    WriteLogF(L"LWJGL GLFW library forced: %s", lwjglGlfwDll.c_str());
+    if (usesSdlWindowBackend) {
+        WriteLogF(L"SDL3 runtime stamp: %s", FileStamp(lwjglSdlDll).c_str());
+        WriteLogF(L"SDL3 launch thread id=%lu (Minecraft main runs synchronously on the UWP IFrameworkView::Run thread)", (unsigned long)GetCurrentThreadId());
+        // org.lwjgl.sdl.SDL reads Configuration.SDL_LIBRARY_NAME. Point it at
+        // the packaged UWP/WinRT SDL3 runtime so LWJGL never loads Mojang's
+        // desktop Win32 SDL3.dll on Xbox.
+        vmOptionStorage.push_back("-Dorg.lwjgl.sdl.libname=" + w2a(fwd(lwjglSdlDll)));
+        WriteLogF(L"LWJGL SDL3 library forced: %s", lwjglSdlDll.c_str());
+    } else {
+        vmOptionStorage.push_back("-Dorg.lwjgl.glfw.libname=" + w2a(fwd(lwjglGlfwDll)));
+        WriteLogF(L"LWJGL GLFW library forced: %s", lwjglGlfwDll.c_str());
+    }
     std::wstring graphicsRuntime = GetEnvVarString(L"MC_GRAPHICS_RUNTIME");
     if (graphicsRuntime.empty()) {
         graphicsRuntime = L"mesa";
@@ -1107,11 +1178,40 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         GetFileAttributesW(packagedOpenGl.c_str()) != INVALID_FILE_ATTRIBUTES
             ? packagedOpenGl
             : localOpenGl;
+    if (usesSdlWindowBackend) {
+        // Force SDL onto the WinRT video driver before the Java side can load
+        // org.lwjgl.sdl. SDL 3 prefers SDL_VIDEO_DRIVER; SDL_VIDEODRIVER is
+        // retained as a fallback alias by SDL and helps older UWP forks.
+        SetEnvironmentVariableW(L"SDL_VIDEO_DRIVER", L"winrt");
+        SetEnvironmentVariableW(L"SDL_VIDEODRIVER", L"winrt");
+        SetEnvironmentVariableW(L"SDL_JOYSTICK_WGI", L"1");
+        SetEnvironmentVariableW(L"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", L"1");
+        // SDL normally keeps its internal video/input diagnostics quiet. 26.3 is
+        // still experimental on UWP, so keep enough detail in redirected stderr to
+        // distinguish native load, WinRT window, input and GL-context failures.
+        SetEnvironmentVariableW(L"SDL_LOGGING", L"video=debug,input=info,error=debug");
+        WriteLog(L"SDL3 diagnostics enabled: video=debug,input=info,error=debug; Xbox WGI gamepad backend forced on");
+    }
     if (GetFileAttributesW(selectedOpenGl.c_str()) != INVALID_FILE_ATTRIBUTES) {
         vmOptionStorage.push_back("-Dorg.lwjgl.opengl.libname=" + w2a(fwd(selectedOpenGl)));
+        if (usesSdlWindowBackend) {
+            // SDL's WinRT/WGL backend loads OpenGL independently from LWJGL.
+            // Force it to the same Mesa opengl32.dll used by LWJGL so SDL does
+            // not try the unavailable desktop system OpenGL runtime on UWP.
+            // SDL's WinRT loader ultimately calls LoadPackagedLibrary, which
+            // rejects absolute paths. build.ps1 stages Mesa under graphics\mesa
+            // inside the package, so use that package-relative path for SDL
+            // while LWJGL keeps its existing absolute-path override above.
+            SetEnvironmentVariableW(L"SDL_OPENGL_LIBRARY", L"graphics\\mesa\\opengl32.dll");
+            WriteLogF(L"SDL3 WinRT/OpenGL environment: driver=winrt OpenGL=graphics\\mesa\\opengl32.dll (LWJGL=%s)", selectedOpenGl.c_str());
+        }
         WriteLogF(L"LWJGL OpenGL library forced: %s", selectedOpenGl.c_str());
     } else {
         WriteLogF(L"LWJGL OpenGL library override missing: %s", selectedOpenGl.c_str());
+        if (usesSdlWindowBackend) {
+            WriteLog(L"SDL3 target launch aborted: packaged Mesa OpenGL runtime is required for SDL WinRT context creation");
+            return false;
+        }
     }
     WriteLogF(L"Log4j configuration: %s", FileUriFromPath(logConfigPath).c_str());
     vmOptionStorage.push_back("-Djava.class.path=" + w2a(effectiveClassPath));
@@ -1235,9 +1335,19 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     }
     fclose(af);
     WriteLog(L"Embedded JVM options written");
+    if (usesSdlWindowBackend) {
+        reportProgress(
+            L"Starting graphics runtime",
+            L"Preloading the Xbox Mesa/D3D12 support stack.",
+            0.22f);
+        if (!PreloadMesaGraphicsStackForSdl()) {
+            WriteLog(L"SDL3 target launch aborted: Mesa support stack preload failed");
+            return false;
+        }
+    }
     reportProgress(
-        Tr(L"Starting Java runtime"),
-        Tr(L"Loading the embedded JVM."),
+        L"Starting Java runtime",
+        L"Loading the embedded JVM.",
         0.24f);
 
     HMODULE jvmModule = nullptr;
@@ -1280,8 +1390,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         }
     }
     reportProgress(
-        Tr(L"Starting Java runtime"),
-        Tr(L"Java is online. Preparing loader startup next."),
+        L"Starting Java runtime",
+        L"Java is online. Preparing loader startup next.",
         0.38f);
 
     if (!LoaderPrepareArtifactsAfterJvm(env, loaderCtx, effectiveClassPath, neoForgeStartedWithGameClassPath)) {
@@ -1289,8 +1399,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         return false;
     }
     reportProgress(
-        (TrFormat(L"Loading {0}", { loaderLabel })).c_str(),
-        Tr(L"Loader artifacts are ready. Minecraft main is starting next."),
+        (L"Loading " + loaderLabel).c_str(),
+        L"Loader artifacts are ready. Minecraft main is starting next.",
         0.52f);
 
     jclass mainClass = env->FindClass(w2a(mainClassPath).c_str());
@@ -1333,8 +1443,8 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
 
     WriteLogF(L"Invoking %s.main via embedded JVM", effectiveMainClass.c_str());
     reportProgress(
-        (TrFormat(L"Loading {0}", { loaderLabel })).c_str(),
-        Tr(L"Mods and libraries are starting. The Mojang loading screen appears once graphics initialize."),
+        (L"Loading " + loaderLabel).c_str(),
+        L"Mods and libraries are starting. The Mojang loading screen appears once graphics initialize.",
         0.64f);
     const std::wstring modsetHash = telemetry::ComputeModsetHash(userModsDir);
     WriteTextFile(CrashLaunchMarkerPath(exeDir),

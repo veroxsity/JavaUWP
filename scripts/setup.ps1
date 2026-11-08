@@ -247,7 +247,7 @@ if (-not $nativeDlls) {
 }
 
 Write-Host "=== Downloading Fabric installer ==="
-$fabricMetadata = [xml](Invoke-WebRequest -UseBasicParsing -Uri "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml").Content
+$fabricMetadata = [xml](Get-RemoteText -Uri "https://maven.fabricmc.net/net/fabricmc/fabric-installer/maven-metadata.xml")
 $installerVersion = $fabricMetadata.metadata.versioning.release
 if (-not $installerVersion) {
     $installerVersion = $fabricMetadata.metadata.versioning.latest

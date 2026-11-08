@@ -45,7 +45,7 @@ bool RunLaunchTaskWithLiveUi(
 
 MainMenuAction ShowMainMenu(
     ABI::Windows::UI::Core::ICoreWindow* window,
-    const LaunchAuthConfig& authConfig,
+    LaunchAuthConfig& authConfig,
     const std::wstring& runtimeRoot);
 
 bool ResolveLaunchAuthConfig(

@@ -13,7 +13,9 @@ param(
     [switch]$SkipVersionManifests,
     [switch]$SkipVersionCompat,
     [switch]$IncludePrebuiltNeoForgeArtifacts,
-    [switch]$StrictTargets
+    [switch]$StrictTargets,
+    [switch]$LocalSigning,
+    [switch]$StageOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,8 +81,24 @@ $tools = Resolve-VSTools
 $sdk = Resolve-WindowsSdk
 $sdkRoot = $sdk.Root
 $sdkVer = $sdk.Version
-# some sdk installs ship makeappx and signtool only under an older bin version
+# Some SDK installs ship packaging/resource tools only under another installed
+# SDK bin version. Resolve rc.exe as defensively as makeappx/signtool below.
 $sdkToolsFallbackVer = "10.0.26100.0"
+$rcCandidates = @(
+    (Join-Path $sdkRoot "Bin\$sdkVer\x64\rc.exe")
+    (Join-Path $sdkRoot "Bin\$sdkVer\x86\rc.exe")
+    (Join-Path $sdkRoot "Bin\$sdkToolsFallbackVer\x64\rc.exe")
+    (Join-Path $sdkRoot "Bin\$sdkToolsFallbackVer\x86\rc.exe")
+)
+$rcExe = Get-ChildItem -LiteralPath $rcCandidates -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty FullName
+if (-not $rcExe) {
+    $rcCommand = Get-Command rc.exe -ErrorAction SilentlyContinue
+    if ($rcCommand) { $rcExe = $rcCommand.Source }
+}
+if (-not $rcExe) {
+    throw "Windows SDK resource compiler rc.exe was not found. Install the Windows SDK resource tools or add rc.exe to PATH."
+}
 
 function Assert-AppxVersion {
     param([Parameter(Mandatory = $true)][string]$Version)
@@ -393,10 +411,16 @@ Write-Host "runtime_config.h written for MC $($ProjectConfig.MinecraftVersion) /
 Write-Host "=== Building MC.Xbox.exe ==="
 $mcSources = Get-ChildItem (Join-Path $root "MC.Xbox") -Recurse -File -Include *.cpp, *.c, *.h, *.hpp |
     Select-Object -ExpandProperty FullName
+$mcResourceScript = Join-Path $root "MC.Xbox\SDL3-WinRTResources.rc"
+$mcResourceCursor = Join-Path $root "MC.Xbox\Assets\SDL3-WinRTResource_BlankCursor.cur"
+$mcResourceRes = Join-Path $mcBuildDir "MC.Xbox.resources.res"
+foreach ($resourceInput in @($mcResourceScript, $mcResourceCursor)) {
+    if (-not (Test-Path -LiteralPath $resourceInput)) { throw "Required WinRT cursor resource is missing: $resourceInput" }
+}
 $mcStampPath = Join-Path $mcBuildDir "MC.Xbox.stamp"
 $mcStamp = New-BuildStamp `
-    -Values @("mc_xbox_exe", $tools.ClExe, $sdkVer, $jreSrc, ($CommonClFlags -join " ")) `
-    -ContentFiles (@($PSCommandPath, $runtimeConfigOutput) + $mcSources)
+    -Values @("mc_xbox_exe", $tools.ClExe, $rcExe, $sdkVer, $jreSrc, ($CommonClFlags -join " ")) `
+    -ContentFiles (@($PSCommandPath, $runtimeConfigOutput, $mcResourceScript, $mcResourceCursor) + $mcSources)
 $mcNeedsBuild = -not (Test-BuildStampCurrent -StampPath $mcStampPath -Stamp $mcStamp -RequiredOutputs @($mcExe))
 
 if ($mcNeedsBuild) {
@@ -405,10 +429,18 @@ if ($mcNeedsBuild) {
     $env:INCLUDE = "$mcBuildDir;$($tools.MsvcRoot)\include;${sdkRoot}Include\$sdkVer\ucrt;${sdkRoot}Include\$sdkVer\shared;${sdkRoot}Include\$sdkVer\um;${sdkRoot}Include\$sdkVer\winrt;${sdkRoot}Include\$sdkVer\cppwinrt;$jreSrc\include;$jreSrc\include\win32"
     $env:LIB = "$($tools.MsvcRoot)\lib\x64;${sdkRoot}Lib\$sdkVer\ucrt\x64;${sdkRoot}Lib\$sdkVer\um\x64"
 
-    & $tools.ClExe App.cpp launch\app_globals.cpp common\launcher_common.cpp common\i18n.cpp common\crash_report.cpp mods\mod_defaults.cpp mods\mod_source.cpp mods\curseforge.cpp mods\manual_downloads.cpp mods\modpack_io.cpp mods\world_io.cpp net\http_client.cpp net\update_check.cpp profiles\profiles.cpp net\html_translate.cpp net\remote_file_server.cpp auth\minecraft_auth.cpp ui\launcher_ui.cpp ui\launcher_mouse.cpp ui\mods_ui_globals.cpp mods\mods_browser.cpp launch\runtime_manager.cpp launch\minecraft_launch.cpp launch\launch_internal.cpp launch\loaders\loader_common.cpp launch\loaders\loader.cpp launch\loaders\fabric.cpp launch\loaders\neoforge.cpp launch\loaders\forge.cpp launch\loaders\cleanroom.cpp telemetry\telemetry.cpp telemetry\crash_fingerprint.cpp telemetry\crash_parse.cpp telemetry\compat_feed.cpp third_party\miniz\miniz.c /std:c++17 /EHsc $CommonClFlags /O2 /GL /Gw /MP /arch:AVX2 /DNDEBUG /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry /Fo"$mcBuildDir\" `
+    Push-Location (Join-Path $root "MC.Xbox")
+    try {
+        & $rcExe /nologo "/fo$mcResourceRes" "SDL3-WinRTResources.rc"
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $mcResourceRes)) { throw "WinRT cursor resource compile failed" }
+    } finally {
+        Pop-Location
+    }
+
+    & $tools.ClExe App.cpp launch\app_globals.cpp common\launcher_common.cpp common\crash_report.cpp mods\mod_defaults.cpp mods\mod_source.cpp mods\curseforge.cpp mods\manual_downloads.cpp mods\modpack_io.cpp mods\world_io.cpp net\http_client.cpp net\update_check.cpp profiles\profiles.cpp net\remote_file_server.cpp auth\minecraft_auth.cpp ui\launcher_ui.cpp ui\launcher_mouse.cpp ui\mods_ui_globals.cpp mods\mods_browser.cpp launch\runtime_manager.cpp launch\minecraft_launch.cpp launch\launch_internal.cpp launch\loaders\loader_common.cpp launch\loaders\loader.cpp launch\loaders\fabric.cpp launch\loaders\neoforge.cpp launch\loaders\forge.cpp telemetry\telemetry.cpp telemetry\crash_fingerprint.cpp telemetry\crash_parse.cpp telemetry\compat_feed.cpp third_party\miniz\miniz.c /std:c++17 /EHsc $CommonClFlags /O2 /GL /Gw /MP /arch:AVX2 /DNDEBUG /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry /Fo"$mcBuildDir\" `
         /DWINAPI_FAMILY=WINAPI_FAMILY_APP `
         /link /LTCG /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /MACHINE:X64 `
-        /OUT:"$mcExe" kernel32.lib shell32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib d2d1.lib dwrite.lib d3d11.lib dxgi.lib windowscodecs.lib winhttp.lib bcrypt.lib ws2_32.lib
+        /OUT:"$mcExe" "$mcResourceRes" kernel32.lib shell32.lib runtimeobject.lib windowsapp.lib ole32.lib oleaut32.lib d2d1.lib dwrite.lib d3d11.lib dxgi.lib windowscodecs.lib winhttp.lib bcrypt.lib ws2_32.lib
     if ($LASTEXITCODE -ne 0) { throw "Compile failed" }
     Pop-Location
     Set-BuildStamp -StampPath $mcStampPath -Stamp $mcStamp
@@ -472,10 +504,6 @@ if (-not (Test-Path $changelogSource)) {
     throw "Changelog not found at $changelogSource"
 }
 Copy-Item $changelogSource (Join-Path $pkg "CHANGELOG.md") -Force
-
-$languageSource = Join-Path $root "MC.Xbox\lang"
-Ensure-Dir (Join-Path $pkg "lang")
-Copy-Item (Join-Path $languageSource "*.json") (Join-Path $pkg "lang") -Force
 
 # NeoForge client jars are derived from the Minecraft client. Keep them out of normal and
 # nightly builds; opt in only for private diagnostics while on-device generation is being fixed.
@@ -600,7 +628,6 @@ $manifestTargets = @(
 $fabricTargets = @($manifestTargets | Where-Object { $_.loader -eq "fabric" })
 $forgeTargets = @($manifestTargets | Where-Object { $_.loader -eq "forge" })
 $neoForgeTargets = @($manifestTargets | Where-Object { $_.loader -eq "neoforge" })
-$cleanroomTargets = @($manifestTargets | Where-Object { $_.loader -eq "cleanroom" })
 function Test-ForgeControllerTarget {
     param([Parameter(Mandatory = $true)]$Target)
 
@@ -645,6 +672,17 @@ foreach ($name in @("banditvault-xbox-compat-1.0.0.jar", "banditvault-fabric-con
 
 Write-Host "Copying natives..."
 Copy-Item (Join-Path $nativesSourceDir "*.dll") (Join-Path $pkg "natives\")
+
+# Minecraft 26.3+ uses LWJGL's SDL binding directly. The SDL3.dll shipped in
+# Mojang's Windows native JAR is a desktop Win32 build, so Xbox/UWP needs a
+# WinRT-capable SDL3 runtime. Keep the runtime pinned and package it app-local;
+# minecraft_launch.cpp selects it only for SDL-era Minecraft versions.
+Write-Host "Preparing SDL3 UWP runtime..."
+$packagedSdl3Dll = Join-Path $pkg "natives\SDL3.dll"
+& (Join-Path $root "scripts\prepare-sdl3-uwp.ps1") -OutputPath $packagedSdl3Dll
+if (-not (Test-Path -LiteralPath $packagedSdl3Dll)) {
+    throw "SDL3 UWP runtime missing after preparation: $packagedSdl3Dll"
+}
 
 Write-Host "Extracting JNA native..."
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -803,32 +841,6 @@ if (-not $SkipVersionCompat) {
                 -OutputDir $outDir
         } catch {
             Add-BuildFailure -Stage "Forge controller mod" -Target $targetId -Reason $_.Exception.Message
-            if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
-        }
-    }
-    foreach ($row in $cleanroomTargets) {
-        $lv = $row.loaderVersion
-        $targetId = "$($row.minecraftVersion)-cleanroom-$lv"
-        try {
-            & (Join-Path $root "patch\cleanroom\build_cleanroom_patch.ps1") `
-                -CleanroomVersion $lv `
-                -OutputJar (Join-Path $pkg "cleanroom-uwp-patch.jar")
-        } catch {
-            Add-BuildFailure -Stage "Cleanroom UWP patch" -Target $targetId -Reason $_.Exception.Message
-        }
-        if ($row.controllerProvider -ne "cleanroom") {
-            Write-Host "Skipping per-version Cleanroom controller mod for ${targetId}: no bundled controller provider for this target"
-            continue
-        }
-        $outDir = Join-Path $versionModsRoot $targetId
-        Write-Host "Building per-version Cleanroom controller mod: $targetId"
-        try {
-            & (Join-Path $root "controller_mod\cleanroom\build_cleanroom_controller_mod.ps1") `
-                -MinecraftVersion $row.minecraftVersion `
-                -CleanroomVersion $lv `
-                -OutputDir $outDir
-        } catch {
-            Add-BuildFailure -Stage "Cleanroom controller mod" -Target $targetId -Reason $_.Exception.Message
             if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
         }
     }
@@ -1232,7 +1244,7 @@ $xboxSecurityProperties = Join-Path $root "xbox_security.properties"
 Copy-Item $xboxSecurityProperties (Join-Path $pkg "xbox_security.properties") -Force
 Copy-PackagedJre -JavaHome $jreSrc -PackageRelativeDir "jre" -SecurityPropertiesPath $xboxSecurityProperties
 Copy-PackagedJre -JavaHome $jre21Src -PackageRelativeDir "jre21" -SecurityPropertiesPath $xboxSecurityProperties
-try {
+if (@($catalog | Where-Object { $_.javaRuntime -eq 'java17' }).Count -gt 0) { try {
     $jre17Src = Resolve-JavaHomeExact -MajorVersion 17
     Copy-PackagedJre -JavaHome $jre17Src -PackageRelativeDir "jre17" -SecurityPropertiesPath $xboxSecurityProperties
     Build-JavaBaseUwpFilesystemPatch -JavaHome $jre17Src -OutputJar (Join-Path $pkg "java-base-uwp-filesystem-17.jar") -WorkName "java_base_uwp_filesystem_patch_17"
@@ -1241,7 +1253,7 @@ try {
     Write-Host "Packaged Java 17 runtime for 1.18.x / 1.20.2-1.20.4 targets"
 } catch {
     Add-BuildFailure -Stage "Java 17 JRE" -Target "javaRuntime=java17 targets" -Reason "$($_.Exception.Message). Needs JDK 17 on the build machine."
-}
+} }
 Build-JavaBaseUwpFilesystemPatch -JavaHome $jreSrc -OutputJar (Join-Path $pkg "java-base-uwp-filesystem.jar") -WorkName "java_base_uwp_filesystem_patch_current"
 Build-JavaBaseUwpFilesystemPatch -JavaHome $jre21Src -OutputJar (Join-Path $pkg "java-base-uwp-filesystem-21.jar") -WorkName "java_base_uwp_filesystem_patch_21"
 Build-JavaZipfsRealpathPatch -JavaHome $jreSrc -OutputJar (Join-Path $pkg "java-zipfs-realpath.jar") -WorkName "java_zipfs_realpath_patch_current"
@@ -1260,6 +1272,12 @@ foreach ($name in $appxAssetNames) {
 }
 
 Write-Host "=== Packaging ==="
+if ($StageOnly) {
+    if ($script:BuildFailures.Count -gt 0) { throw 'Staging has failed targets' }
+    & (Join-Path $root 'scripts\validate-modern-version-matrix.ps1') -PackagePath $pkg
+    Write-Host "Validated package staging ready: $pkg"
+    return
+}
 $cert = Join-Path $certDir $ProjectConfig.CertificateFileName
 $certName = [string]$sourceManifest.Package.Identity.Publisher
 
@@ -1341,6 +1359,22 @@ if (-not $signingSucceeded) {
     throw "Appx signing failed with every certificate matching '$certName'. The certificate is present but signtool rejected it, so check that it has not expired and that its private key is readable. Nothing was deleted."
 }
 if (-not (Test-Path $appx)) { throw "Appx package was not created" }
+
+Write-Host "Verifying APPX signature..."
+if ($LocalSigning) {
+    & (Join-Path $root 'scripts\verify-local-appx.ps1') -Path $appx -ExpectedThumbprint $signingCert.Thumbprint
+} else {
+& $signtool verify /pa /v $appx | Write-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "Signed APPX verification failed: $appx"
+}
+}
+
+# Verify the final signed bytes, not only the staging directory. This catches
+# accidental omissions between staging, MakeAppx and signing.
+if (-not $SkipVersionManifests -and -not $SkipVersionCompat) {
+    & (Join-Path $root "scripts\validate-modern-version-matrix.ps1") -AppxPath $appx
+}
 
 if (-not $KeepStaging) {
     Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue

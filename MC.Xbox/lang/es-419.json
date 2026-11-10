@@ -112,7 +112,7 @@
   "Pack file not found": "Archivo del pack no encontrado",
   "Could not open pack": "No se pudo abrir el pack",
   "Could not read archive size": "No se pudo leer el tamaño del archivo",
-  "Pack is empty or exceeds the 128 MB input limit": "El pack está vacío o excede el limte de subida de 128 MB",
+  "Pack is empty or exceeds the 2 GB input limit": "El pack está vacío o excede el límite de 2 GB",
   "Pack is not a valid ZIP archive": "El pack no es un archivo zip valido",
   "Too many pack entries": "Too many pack entries",
   "Pack exceeds extraction limits": "El pack excede los límites de extracción",

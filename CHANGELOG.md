@@ -2,6 +2,18 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-10
+
+### Added
+
+**Polish is included.** Choose Polski under Language in Settings. A console set to Polish picks it automatically. Thanks to Edek_z_krainy_kredek for the translation.
+
+### Fixed
+
+**Modpacks should install on profiles with a different loader version.** A pack was refused with "Pack target does not match the selected profile" unless the profile had the exact Fabric, Quilt, Forge or NeoForge version the pack was made with, and most packs list an older one. Packs now only need the same Minecraft version and loader. Forge packs for 1.12.2 also install on Cleanroom profiles.
+
+**Larger modpacks should install.** Packs over 128 MB were refused, which ruled out many packs that bundle resource packs, shaders or worlds. The limit is now 2 GB, and pack files are written straight to storage while they install, so a large pack needs no more memory than a small one. Packs imported through Remote Files are still limited to 128 MB per upload.
+
 ## 2026-11-02
 
 ### Fixed

@@ -66,6 +66,25 @@ static std::wstring ModrinthDependencyLoaderKey(const std::wstring& loader) {
 
 static size_t ZipReadFileCallback(void* opaque, mz_uint64 offset, void* data, size_t size);
 
+static size_t ZipEntryToFileCallback(void* opaque, mz_uint64 offset, const void* data, size_t size) {
+    FILE* file = static_cast<FILE*>(opaque);
+    if (_fseeki64(file, static_cast<__int64>(offset), SEEK_SET) != 0) return 0;
+    return fwrite(data, 1, size, file) == size ? size : 0;
+}
+
+// streamed so a large pack file never has to fit in memory
+static bool ExtractZipEntryToFile(mz_zip_archive* zip, mz_uint index, const std::wstring& path) {
+    if (!EnsureDirectoryTree(GetParentDir(path))) return false;
+    const std::wstring temporary = path + L".extracting";
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, temporary.c_str(), L"wb") != 0 || !file) return false;
+    bool ok = mz_zip_reader_extract_to_callback(zip, index, ZipEntryToFileCallback, file, 0) != MZ_FALSE;
+    if (fclose(file) != 0) ok = false;
+    if (ok) ok = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+    if (!ok) DeleteFileW(temporary.c_str());
+    return ok;
+}
+
 std::wstring ProfileExportsDir(const std::wstring& runtimeRoot) {
     return runtimeRoot + L"\\exports";
 }
@@ -100,8 +119,8 @@ bool InstallModpackFromFile(
     std::unique_ptr<FILE, decltype(&fclose)> input(inputFile, fclose);
     if (_fseeki64(input.get(), 0, SEEK_END) != 0) { error = Tr(L"Could not read archive size"); return false; }
     const __int64 archiveSize = _ftelli64(input.get());
-    if (archiveSize <= 0 || archiveSize > 128ll * 1024ll * 1024ll) {
-        error = Tr(L"Pack is empty or exceeds the 128 MB input limit");
+    if (archiveSize <= 0 || archiveSize > 2ll * 1024ll * 1024ll * 1024ll) {
+        error = Tr(L"Pack is empty or exceeds the 2 GB input limit");
         return false;
     }
     mz_zip_archive zip{};
@@ -122,8 +141,7 @@ bool InstallModpackFromFile(
     if (archiveCount > 20000) { mz_zip_reader_end(&zip); error = Tr(L"Too many pack entries"); return false; }
     for (mz_uint i = 0; i < archiveCount; ++i) {
         mz_zip_archive_file_stat stat{};
-        if (!mz_zip_reader_file_stat(&zip, i, &stat) || stat.m_uncomp_size > 64ull * 1024ull * 1024ull ||
-            stat.m_uncomp_size > 512ull * 1024ull * 1024ull - expanded) {
+        if (!mz_zip_reader_file_stat(&zip, i, &stat) || stat.m_uncomp_size > 4ull * 1024ull * 1024ull * 1024ull - expanded) {
             mz_zip_reader_end(&zip); error = Tr(L"Pack exceeds extraction limits"); return false;
         }
         expanded += stat.m_uncomp_size;
@@ -134,6 +152,8 @@ bool InstallModpackFromFile(
     auto readZipText = [&](const char* entry, std::string& out) {
         const int idx = mz_zip_reader_locate_file(&zip, entry, nullptr, 0);
         if (idx < 0) return false;
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, static_cast<mz_uint>(idx), &stat) || stat.m_uncomp_size > 64ull * 1024ull * 1024ull) return false;
         size_t outSize = 0;
         void* p = mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(idx), &outSize, 0);
         if (!p) return false;
@@ -152,24 +172,33 @@ bool InstallModpackFromFile(
 
     const Profile profile = GetProfileById(runtimeRoot, profileId);
     try {
+        // packs name the loader build they were made with, and a different build of the same loader runs them
+        const std::wstring loaderKey = ModrinthDependencyLoaderKey(profile.loader);
+        std::wstring packLoaderVersion;
         bool matches = false;
         if (!indexJson.empty()) {
             const JsonObject pack = JsonObject::Parse(winrt::to_hstring(indexJson));
             const JsonObject deps = pack.GetNamedObject(L"dependencies");
-            const std::wstring loaderKey = ModrinthDependencyLoaderKey(profile.loader);
-            matches = deps.GetNamedString(L"minecraft", L"") == profile.minecraftVersion &&
-                !loaderKey.empty() && deps.GetNamedString(loaderKey, L"") == profile.loaderVersion;
+            if (!loaderKey.empty()) packLoaderVersion = std::wstring(deps.GetNamedString(loaderKey, L""));
+            matches = deps.GetNamedString(L"minecraft", L"") == profile.minecraftVersion && !packLoaderVersion.empty();
         } else {
             const JsonObject pack = JsonObject::Parse(winrt::to_hstring(manifestJson));
             const JsonObject mc = pack.GetNamedObject(L"minecraft");
             const JsonArray loaders = mc.GetNamedArray(L"modLoaders");
-            const std::wstring loaderId = profile.loader + L"-" + profile.loaderVersion;
+            const std::wstring loaderPrefix = loaderKey.substr(0, loaderKey.find(L'-')) + L"-";
             for (uint32_t i = 0; i < loaders.Size(); ++i) {
-                if (loaders.GetAt(i).GetObject().GetNamedString(L"id", L"") == loaderId) matches = true;
+                const std::wstring id(loaders.GetAt(i).GetObject().GetNamedString(L"id", L""));
+                if (!loaderKey.empty() && id.size() > loaderPrefix.size() && id.compare(0, loaderPrefix.size(), loaderPrefix) == 0) {
+                    packLoaderVersion = id.substr(loaderPrefix.size());
+                    matches = true;
+                }
             }
             matches = matches && mc.GetNamedString(L"version", L"") == profile.minecraftVersion;
         }
         if (!matches) { mz_zip_reader_end(&zip); error = Tr(L"Pack target does not match the selected profile"); return false; }
+        if (packLoaderVersion != profile.loaderVersion) {
+            WriteLogF(L"Pack was made with %s %s, profile has %s", profile.loader.c_str(), packLoaderVersion.c_str(), profile.loaderVersion.c_str());
+        }
     } catch (...) { mz_zip_reader_end(&zip); error = Tr(L"Pack target metadata missing or invalid"); return false; }
     EnsureProfileGameDataInitialized(runtimeRoot, profileId);
     const std::wstring gameDir = ProfileGameDir(runtimeRoot, profileId);
@@ -367,14 +396,9 @@ bool InstallModpackFromFile(
             std::replace(relA.begin(), relA.end(), '\\', '/');
             const int embedded = mz_zip_reader_locate_file(&zip, relA.c_str(), nullptr, 0);
             if (embedded >= 0) {
-                size_t outSize = 0;
-                void* p = mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(embedded), &outSize, 0);
-                if (p && outSize > 0) {
-                    fileOk = WriteAllBytes(tmp, p, outSize);
-                    if (fileOk && !job.sha1.empty()) {
-                        fileOk = FileMatchesSha1(tmp, job.sha1);
-                    }
-                    mz_free(p);
+                fileOk = ExtractZipEntryToFile(&zip, static_cast<mz_uint>(embedded), tmp);
+                if (fileOk && !job.sha1.empty()) {
+                    fileOk = FileMatchesSha1(tmp, job.sha1);
                 }
             }
         }
@@ -418,15 +442,11 @@ bool InstallModpackFromFile(
             ++skipped;
             continue;
         }
-        size_t outSize = 0;
-        void* p = mz_zip_reader_extract_to_heap(&zip, i, &outSize, 0);
-        if (!p) { if (firstError.empty()) firstError = TrFormat(L"Could not extract pack override {0}", { rel }); continue; }
-        if (!WriteAllBytes(dest, p, outSize)) {
-            if (firstError.empty()) firstError = TrFormat(L"Could not save pack override {0}", { rel });
-        } else {
-            ++installedOverrides;
+        if (!ExtractZipEntryToFile(&zip, i, dest)) {
+            if (firstError.empty()) firstError = TrFormat(L"Could not extract pack override {0}", { rel });
+            continue;
         }
-        mz_free(p);
+        ++installedOverrides;
     }
 
     mz_zip_reader_end(&zip);

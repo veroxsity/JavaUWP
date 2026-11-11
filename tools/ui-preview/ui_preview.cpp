@@ -256,8 +256,17 @@ std::vector<Scene> Scenes() {
     scenes.push_back({ L"remote-files", [] {
         AuthUiState state = Screen();
         state.showRemoteFiles = true;
-        state.status = L"http://192.168.1.50:8080";
-        state.detail = L"PIN 705143";
+        // shaped like what the remote files loop in launcher_ui.cpp sets
+        state.status = L"Remote file manager is running";
+        state.detail = L"Open http://192.168.1.50:27632\nPIN: 705143";
+        return state;
+    } });
+    scenes.push_back({ L"remote-files-error", [] {
+        AuthUiState state = Screen();
+        state.showRemoteFiles = true;
+        state.isError = true;
+        state.status = L"Remote Files has no LAN address";
+        state.detail = L"Could not find a connected IPv4 LAN address. Connect to the local network and try again.";
         return state;
     } });
 
@@ -320,6 +329,87 @@ std::vector<Scene> Scenes() {
         state.modsFocus = 1;
         state.modsSearchEditing = true;
         state.modsSearchQuery = L"fresh anim";
+        return state;
+    } });
+
+    // focus somewhere other than the first control, where a weak focus style would hide
+    scenes.push_back({ L"focus-main-menu-settings", [] {
+        AuthUiState state = Screen();
+        state.showMainMenu = true;
+        state.updateAvailable = true;
+        state.selectedMenuIndex = 3;
+        state.title = L"Steve";
+        state.status = L"Ready to play 1.21.11 Fabric";
+        state.detail = L"Profile Survival, 12 mods";
+        return state;
+    } });
+    scenes.push_back({ L"focus-mods-grid", [] {
+        AuthUiState state = ModsPage(modstab::kPopular);
+        state.modsFocus = 2;
+        state.selectedModIndex = 1;
+        state.modsCards[0].installed = true;
+        state.modsCards[0].status = L"Installed";
+        return state;
+    } });
+    scenes.push_back({ L"focus-mods-source", [] {
+        AuthUiState state = ModsPage(modstab::kLatest);
+        state.modsFocus = 4;
+        return state;
+    } });
+    scenes.push_back({ L"focus-settings-source", [] {
+        AuthUiState state = Settings(true, ModSource::Modrinth, L"", L"", true);
+        state.settingsSelected = 4;
+        return state;
+    } });
+    scenes.push_back({ L"focus-profile-grid", [] {
+        AuthUiState state = ModsPage(modstab::kProfiles);
+        state.status.clear();
+        state.modsProfileOpen = true;
+        state.modsProfileId = L"survival";
+        state.activeProfileId = L"survival";
+        state.modsProfileName = L"Survival";
+        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.5";
+        state.modsProfileFocus = 2;
+        state.modsProfileSel = 3;
+        state.modsProfileMods = {
+            L"sodium-fabric-0.6.13+mc1.21.11.jar", L"iris-fabric-1.8.12+mc1.21.11.jar", L"modmenu-15.0.0.jar",
+            L"fabric-api-0.130.0+1.21.11.jar", L"lithium-fabric-0.15.1+mc1.21.11.jar",
+        };
+        return state;
+    } });
+    scenes.push_back({ L"focus-profile-delete", [] {
+        AuthUiState state = ModsPage(modstab::kProfiles);
+        state.modsProfileOpen = true;
+        state.modsProfileId = L"survival";
+        state.modsProfileName = L"Survival";
+        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.5";
+        state.modsProfileFocus = 1;
+        state.modsProfileControllerModEnabled = false;
+        state.status = L"Backup saved";
+        return state;
+    } });
+    scenes.push_back({ L"mods-profile-vanilla", [] {
+        AuthUiState state = ModsPage(modstab::kProfiles);
+        state.status.clear();
+        state.modsProfileOpen = true;
+        state.modsProfileBuiltin = true;
+        state.modsProfileId = L"vanilla";
+        state.modsProfileName = L"Vanilla";
+        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.5";
+        return state;
+    } });
+    scenes.push_back({ L"mods-detail-warning", [] {
+        AuthUiState state = Detail(modstab::kPopular);
+        state.modsCompatWarn = true;
+        state.modsCompatNote = L"Crashes on start because it needs a graphics feature the console does not have.";
+        return state;
+    } });
+    scenes.push_back({ L"signin-error", [] {
+        AuthUiState state = Screen();
+        state.isError = true;
+        state.status = L"This Microsoft account does not own Minecraft Java Edition";
+        state.detail = L"Sign in with the account that bought the game, then try again.";
+        state.progress = 1.0f;
         return state;
     } });
 

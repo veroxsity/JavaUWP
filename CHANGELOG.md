@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-11
+
+### Changed
+
+**The launcher has a new look.** Every screen has been redrawn. The main menu, sign-in and loading screens have a full screen picture behind them. The selected item is solid white. The green highlights are now tan, the colour of the crate on the app icon. The sign-in code is shown one character per tile, and Remote Files shows a QR code for its address. Long names end in an ellipsis. Menus and buttons are where they were and work the same way.
+
 ## 2026-11-10
 
 ### Added

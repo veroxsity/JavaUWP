@@ -51,6 +51,8 @@ finally {
 $screenshotTarget = Join-Path $work "Assets\screenshots"
 Ensure-Dir $screenshotTarget
 Copy-Item -Force (Join-Path $root "MC.Xbox\Assets\screenshots\*.png") $screenshotTarget
+# the launcher draws its logo from the tile image the package ships in Assets
+Copy-Item -Force (Join-Path $root "MC.Xbox\Assets\appx\Square150x150Logo.png") (Join-Path $work "Assets")
 
 # the preview reads languages from a lang folder next to the exe, the same as the package
 Ensure-Dir (Join-Path $work "lang")

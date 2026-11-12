@@ -478,6 +478,19 @@ static void DetectDisplayScale(ICoreWindow* window) {
     }
 }
 
+void ShowUnsupportedConsole() {
+    AuthScreenRenderer rendererInstance;
+    AuthScreenRenderer* renderer = rendererInstance.Initialize(g_authWindow.Get()) ? &rendererInstance : nullptr;
+    AuthUiState state;
+    state.showDeviceCode = false;
+    state.title = L"Bandit Launcher";
+    state.status = Tr(L"Xbox One is not supported");
+    state.detail = Tr(L"Bandit Launcher needs an Xbox Series X or Xbox Series S.");
+    state.progress = 1.0f;
+    state.isError = true;
+    for (;;) SleepWithAuthUi(renderer, state, 1000);
+}
+
 class App : public RuntimeClass<RuntimeClassFlags<WinRtClassicComMix>, IFrameworkView>
 {
 public:
@@ -589,6 +602,11 @@ public:
         SetEnvironmentVariableW(L"MC_RUNTIME_DIR", exeDir.c_str());
         SetEnvironmentVariableW(L"MC_LOG_DIR", g_logDir.c_str());
         i18n::Init();
+        if (!IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE)) {
+            WriteLog(L"No AVX2, this is an Xbox One. Showing the unsupported console screen");
+            ShowUnsupportedConsole();
+            return S_OK;
+        }
         ApplyMouseSensitivity(LoadMouseSensitivity());
         telemetry::ReportHardCrash(exeDir);
         telemetry::FlushQueueAsync();

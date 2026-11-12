@@ -404,6 +404,14 @@ std::vector<Scene> Scenes() {
         state.modsCompatNote = L"Crashes on start because it needs a graphics feature the console does not have.";
         return state;
     } });
+    scenes.push_back({ L"unsupported-console", [] {
+        AuthUiState state = Screen();
+        state.status = L"Xbox One is not supported";
+        state.detail = L"Bandit Launcher needs an Xbox Series X or Xbox Series S.";
+        state.progress = 1.0f;
+        state.isError = true;
+        return state;
+    } });
     scenes.push_back({ L"signin-error", [] {
         AuthUiState state = Screen();
         state.isError = true;

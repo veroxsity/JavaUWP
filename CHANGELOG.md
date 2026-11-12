@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-12
+
+### Fixed
+
+**Opening the launcher on an Xbox One shows a message instead of going straight back to Home.** The screen says Xbox One is not supported and that the launcher needs an Xbox Series X or Xbox Series S.
+
 ## 2026-11-11
 
 ### Changed

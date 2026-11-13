@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-13
+
+### Added
+
+**Themes.** Settings has a new Theme option with seven colour themes: Bandit, Midnight, Moss, Ocean, Berry, Ember and Daylight, which is a light one. Each press moves to the next and the screen changes straight away. You can also make your own: upload a small theme file to the new Themes folder in Remote Files and it shows up in Settings after the built in ones. A theme file only needs the colours it changes. See docs/THEMES.md for how to write one.
+
 ## 2026-11-12
 
 ### Fixed

@@ -1,0 +1,9 @@
+{
+  "name": "Cherry",
+  "base": "midnight",
+  "background": "#140C10",
+  "surface": "#22161C",
+  "raised": "#36242D",
+  "accent": "#FF6F91",
+  "mutedText": "#B59CA6"
+}

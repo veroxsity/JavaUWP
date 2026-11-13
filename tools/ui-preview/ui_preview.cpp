@@ -110,6 +110,7 @@ AuthUiState Settings(bool reporting, ModSource source, const wchar_t* keyHint, c
     AuthUiState state = Screen();
     state.showSettings = true;
     state.settingsLanguageName = L"English";
+    state.settingsThemeName = themes::CurrentName();
     state.settingsReportingOn = reporting;
     state.settingsConfigured = configured;
     state.settingsInstallId = L"Reporting id 7f3c9a12-4be0-4c51-9d2e-0a61b5e8c3f4";
@@ -421,6 +422,52 @@ std::vector<Scene> Scenes() {
         return state;
     } });
 
+    for (const themes::Theme& theme : themes::Themes()) {
+        std::wstring slug = theme.id;
+        for (wchar_t& c : slug) c = c == L':' ? L'-' : static_cast<wchar_t>(towlower(c));
+        const std::wstring id = theme.id;
+        scenes.push_back({ L"theme-" + slug + L"-main-menu", [id] {
+            themes::SetTheme(id);
+            AuthUiState state = Screen();
+            state.showMainMenu = true;
+            state.updateAvailable = true;
+            state.selectedMenuIndex = 1;
+            state.title = L"Steve";
+            state.status = L"Ready to play 1.21.11 Fabric";
+            state.detail = L"Profile Survival, 12 mods";
+            return state;
+        } });
+        scenes.push_back({ L"theme-" + slug + L"-settings", [id] {
+            themes::SetTheme(id);
+            AuthUiState state = Settings(true, ModSource::Modrinth, L"", L"Theme set to this one.", true);
+            state.settingsSelected = 5;
+            return state;
+        } });
+        scenes.push_back({ L"theme-" + slug + L"-mods", [id] {
+            themes::SetTheme(id);
+            AuthUiState state = ModsPage(modstab::kPopular);
+            state.modsFocus = 2;
+            state.selectedModIndex = 1;
+            state.modsCards[0].installed = true;
+            state.modsCards[0].status = L"Installed";
+            return state;
+        } });
+        scenes.push_back({ L"theme-" + slug + L"-launch-log", [id] {
+            themes::SetTheme(id);
+            AuthUiState state = Screen();
+            state.status = L"Starting Minecraft";
+            state.detail = L"1.21.11 Fabric 0.19.5, profile Survival";
+            state.showLaunchLog = true;
+            state.animation = 0.3f;
+            state.launchLogText = L"[19:47:13] JNI_CreateJavaVM ok\n[19:47:16] Loading 14 mods\n[19:47:21] Mixins applied";
+            return state;
+        } });
+        scenes.push_back({ L"theme-" + slug + L"-crash", [id] {
+            themes::SetTheme(id);
+            return Crash(false, true);
+        } });
+    }
+
     return scenes;
 }
 
@@ -435,6 +482,7 @@ int RenderAll(const std::wstring& outDir) {
 
     int failures = 0;
     for (const Scene& scene : Scenes()) {
+        themes::SetTheme(L"bandit");
         renderer.Render(scene.build());
         const std::wstring path = outDir + L"\\" + scene.name + L".png";
         if (renderer.SaveFramePng(path)) {
@@ -454,6 +502,11 @@ int wmain(int argc, wchar_t** argv) {
     const std::wstring outDir = argc > 1 ? argv[1] : L"ui-preview-out";
     i18n::Init();
     if (argc > 2 && argv[2][0] != L'\0') i18n::SetLanguage(argv[2]);
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring exeDir = exe;
+    exeDir.resize(exeDir.find_last_of(L'\\'));
+    themes::Reload(exeDir + L"\\themes");
     CreateDirectoryW(outDir.c_str(), nullptr);
     const int failures = RenderAll(outDir);
     CoUninitialize();

@@ -761,7 +761,7 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
             << "<div class=\"side-title\">Workspace</div><nav class=\"nav\" aria-label=\"Workspace\">"
             << "<a class=\"active\" aria-current=\"page\" href=\"" << UrlWithPinProfile("/", profileId) << "\">Overview</a>"
             << nav("profile", Tr(L"Game files")) << nav("saves", Tr(L"Worlds"))
-            << nav("mods", Tr(L"Mods")) << nav("resourcepacks", Tr(L"Resource packs")) << nav("languages", Tr(L"Languages"))
+            << nav("mods", Tr(L"Mods")) << nav("resourcepacks", Tr(L"Resource packs")) << nav("languages", Tr(L"Languages")) << nav("themes", Tr(L"Themes"))
             << "</nav><div class=\"side-title\">Diagnostics</div><nav class=\"nav\" aria-label=\"Diagnostics\">"
             << nav("logs", Tr(L"Current logs")) << nav("previous", Tr(L"Previous logs"))
             << nav("crash", Tr(L"Crash reports")) << nav("runtime", Tr(L"Runtime cache"))
@@ -835,6 +835,11 @@ input,select{min-height:42px;min-width:0;max-width:100%;padding:8px 12px;backgro
         } else if (scope == "languages") {
             root = runtimeRoot_ + L"\\lang";
             title = Tr(L"Languages");
+            writable = true;
+        } else if (scope == "themes") {
+            root = runtimeRoot_ + L"\\themes";
+            EnsureDirectoryTree(root);
+            title = Tr(L"Themes");
             writable = true;
         } else {
             return false;
@@ -1673,7 +1678,7 @@ pollPackImport();
         return R"RFSPA(
 var cur='',edPath='',edOriginal='',canWrite=false,busy=false,saving=false,loadId=0,listing=null,editorFocus=null;
 var SCOPES=[
- {g:tr('Workspace'),items:[{s:'profile',l:tr('Game files')},{s:'saves',l:tr('Worlds')},{s:'mods',l:tr('Mods')},{s:'resourcepacks',l:tr('Resource packs')},{s:'languages',l:tr('Languages')}]},
+ {g:tr('Workspace'),items:[{s:'profile',l:tr('Game files')},{s:'saves',l:tr('Worlds')},{s:'mods',l:tr('Mods')},{s:'resourcepacks',l:tr('Resource packs')},{s:'languages',l:tr('Languages')},{s:'themes',l:tr('Themes')}]},
  {g:tr('Diagnostics'),items:[{s:'logs',l:tr('Current logs')},{s:'previous',l:tr('Previous logs')},{s:'crash',l:tr('Crash reports')},{s:'runtime',l:tr('Runtime cache')}]}
 ];
 var ICON_DIR='<svg class="ic dir" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7V5h7l2 3h9v12H3V7Z"/></svg>';

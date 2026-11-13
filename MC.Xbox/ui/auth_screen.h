@@ -6,6 +6,7 @@
 #include "launcher_mouse.h"
 #include "mods_ui_globals.h"
 #include "profiles.h"
+#include "themes.h"
 
 #include <d2d1_1.h>
 #include <dwrite.h>
@@ -31,19 +32,6 @@ using namespace ABI::Windows::UI::Core;
 #include "mods_browser.h"
 
 void ProcessAuthUiEvents();
-
-namespace theme {
-constexpr UINT32 kBg        = 0x0D0E10;
-constexpr UINT32 kSurface   = 0x1B1D21;
-constexpr UINT32 kRaised    = 0x2C2F35;
-constexpr UINT32 kText      = 0xF4F2ED;
-constexpr UINT32 kTextMuted = 0xA5A29C;
-// the tan of the crate behind the raccoon on the app icon, lifted so it reads on a dark screen
-constexpr UINT32 kAccent    = 0xE3A96B;
-constexpr UINT32 kOk        = 0x7CC48D;
-constexpr UINT32 kDanger    = 0xEC7462;
-constexpr UINT32 kOnLight   = 0x121315;
-}
 
 class AuthScreenRenderer {
 public:
@@ -204,7 +192,7 @@ public:
         BeginPaint();
 
         d2dContext_->BeginDraw();
-        d2dContext_->Clear(D2D1::ColorF(theme::kBg));
+        d2dContext_->Clear(D2D1::ColorF(pal_.bg));
 
         if (state.showModsPage) {
             if (state.modsDetailOpen) DrawModDetail(state);
@@ -233,18 +221,19 @@ private:
     // one frame's brushes. the raw pointers stay valid until the next BeginPaint or a device reset
     void BeginPaint() {
         brushPool_.clear();
-        text_ = MakeBrush(theme::kText);
-        muted_ = MakeBrush(theme::kTextMuted);
-        line_ = MakeBrush(theme::kText, 0.10f);
-        surface_ = MakeBrush(theme::kSurface, 0.94f);
-        raised_ = MakeBrush(theme::kRaised, 0.96f);
-        accent_ = MakeBrush(theme::kAccent);
-        accentSoft_ = MakeBrush(theme::kAccent, 0.16f);
-        danger_ = MakeBrush(theme::kDanger);
-        dangerSoft_ = MakeBrush(theme::kDanger, 0.16f);
-        ok_ = MakeBrush(theme::kOk);
+        pal_ = themes::Current();
+        text_ = MakeBrush(pal_.text);
+        muted_ = MakeBrush(pal_.textMuted);
+        line_ = MakeBrush(pal_.text, 0.10f);
+        surface_ = MakeBrush(pal_.surface, 0.94f);
+        raised_ = MakeBrush(pal_.raised, 0.96f);
+        accent_ = MakeBrush(pal_.accent);
+        accentSoft_ = MakeBrush(pal_.accent, 0.16f);
+        danger_ = MakeBrush(pal_.danger);
+        dangerSoft_ = MakeBrush(pal_.danger, 0.16f);
+        ok_ = MakeBrush(pal_.ok);
         black_ = MakeBrush(0x000000);
-        onLight_ = MakeBrush(theme::kOnLight);
+        onLight_ = MakeBrush(pal_.onLight);
 
         // keep inside the tv title-safe area, otherwise overscan clips the edges
         L_ = floorf(width_ * 0.05f);
@@ -270,8 +259,9 @@ private:
             black_->SetOpacity(0.4f);
             d2dContext_->FillRectangle(D2D1::RectF(cx - box, cy - box, cx + box, cy + box), black_);
             black_->SetOpacity(1.0f);
-            d2dContext_->FillRectangle(D2D1::RectF(cx - arm, cy - thick, cx + arm, cy + thick), text_);
-            d2dContext_->FillRectangle(D2D1::RectF(cx - thick, cy - arm, cx + thick, cy + arm), text_);
+            ID2D1SolidColorBrush* pointer = MakeBrush(0xFFFFFF);
+            d2dContext_->FillRectangle(D2D1::RectF(cx - arm, cy - thick, cx + arm, cy + thick), pointer);
+            d2dContext_->FillRectangle(D2D1::RectF(cx - thick, cy - arm, cx + thick, cy + arm), pointer);
         }
         HRESULT hr = d2dContext_->EndDraw();
         if (FAILED(hr)) {
@@ -298,7 +288,7 @@ private:
     void DrawBackdrop(float cover) {
         const D2D1_RECT_F full = D2D1::RectF(0.0f, 0.0f, width_, height_);
         DrawScreenshots(full);
-        d2dContext_->FillRectangle(full, MakeBrush(theme::kBg, cover));
+        d2dContext_->FillRectangle(full, MakeBrush(pal_.bg, cover));
     }
 
     void FillGradient(D2D1_RECT_F rect, UINT32 rgb, float alphaStart, float alphaEnd, bool vertical,
@@ -440,7 +430,7 @@ private:
 
     void DrawToggle(float right, float midY, bool on) {
         const D2D1_RECT_F track = D2D1::RectF(right - 64.0f, midY - 17.0f, right, midY + 17.0f);
-        FillRound(track, on ? accent_ : MakeBrush(theme::kText, 0.16f), 17.0f);
+        FillRound(track, on ? accent_ : MakeBrush(pal_.text, 0.16f), 17.0f);
         FillCircle(on ? track.right - 17.0f : track.left + 17.0f, midY, 12.0f, on ? onLight_ : muted_);
     }
 
@@ -450,7 +440,7 @@ private:
             DrawBitmapCover(icon.Get(), rect, 1.0f, 1.0f, 0.0f, 0.0f);
             StrokeRound(rect, line_, radius, 1.0f);
         } else {
-            FillRound(rect, MakeBrush(0x000000, 0.45f), radius);
+            FillRound(rect, MakeBrush(pal_.shade, 0.45f), radius);
             DrawIcon(fallbackGlyph, rect, muted_, true);
         }
     }
@@ -458,8 +448,8 @@ private:
     void DrawMainMenu(const AuthUiState& state) {
         const D2D1_RECT_F full = D2D1::RectF(0.0f, 0.0f, width_, height_);
         DrawScreenshots(full);
-        FillGradient(D2D1::RectF(0.0f, 0.0f, width_ * 0.80f, height_), theme::kBg, 0.96f, 0.0f, false, 0.42f, 0.86f);
-        FillGradient(D2D1::RectF(0.0f, height_ * 0.72f, width_, height_), theme::kBg, 0.0f, 0.55f, true);
+        FillGradient(D2D1::RectF(0.0f, 0.0f, width_ * 0.80f, height_), pal_.bg, 0.96f, 0.0f, false, 0.42f, 0.86f);
+        FillGradient(D2D1::RectF(0.0f, height_ * 0.72f, width_, height_), pal_.bg, 0.0f, 0.55f, true);
 
         const float menuRight = L_ + 520.0f;
         DrawBrand(L"BANDIT LAUNCHER", muted_);
@@ -503,8 +493,8 @@ private:
     void DrawProgress(const AuthUiState& state) {
         const D2D1_RECT_F full = D2D1::RectF(0.0f, 0.0f, width_, height_);
         DrawScreenshots(full);
-        d2dContext_->FillRectangle(full, MakeBrush(theme::kBg, state.showLaunchLog ? 0.80f : 0.50f));
-        FillGradient(D2D1::RectF(0.0f, height_ * 0.45f, width_, height_), theme::kBg, 0.0f, 0.92f, true);
+        d2dContext_->FillRectangle(full, MakeBrush(pal_.bg, state.showLaunchLog ? 0.80f : 0.50f));
+        FillGradient(D2D1::RectF(0.0f, height_ * 0.45f, width_, height_), pal_.bg, 0.0f, 0.92f, true);
 
         const std::wstring title = state.title.empty() ? std::wstring(Tr(L"Microsoft sign-in")) : state.title;
         DrawBrand(title.c_str(), text_);
@@ -525,7 +515,7 @@ private:
         if (state.showLaunchLog) {
             const D2D1_RECT_F logBox = D2D1::RectF(L_, T_ + 76.0f, R_, statusTop - 28.0f);
             if (logBox.bottom - logBox.top > 90.0f) {
-                FillRound(logBox, MakeBrush(0x000000, 0.55f), 14.0f);
+                FillRound(logBox, MakeBrush(pal_.shade, 0.55f), 14.0f);
                 DrawText(Tr(L"Live launch log"), overlineFormat_.Get(),
                     D2D1::RectF(logBox.left + 22.0f, logBox.top + 10.0f, logBox.right - 22.0f, logBox.top + 44.0f), accent_);
                 const D2D1_RECT_F logTextRect = D2D1::RectF(logBox.left + 22.0f, logBox.top + 50.0f, logBox.right - 22.0f, logBox.bottom - 16.0f);
@@ -538,7 +528,7 @@ private:
 
         const float trackW = R_ - L_;
         const D2D1_RECT_F track = D2D1::RectF(L_, barTop, R_, barTop + barH);
-        FillRound(track, MakeBrush(theme::kText, 0.16f), barH * 0.5f);
+        FillRound(track, MakeBrush(pal_.text, 0.16f), barH * 0.5f);
         ID2D1Brush* barBrush = state.isError ? danger_ : accent_;
         if (state.progress >= 0.0f) {
             const float progress = (std::max)(0.0f, (std::min)(1.0f, state.progress));
@@ -734,7 +724,7 @@ private:
             const float segW = 164.0f;
             const D2D1_RECT_F r = row(4, Tr(L"Mod download source"), sub.c_str(), segW * 2.0f + 8.0f);
             const D2D1_RECT_F box = D2D1::RectF(r.right - 26.0f - segW * 2.0f - 8.0f, r.top + 13.0f, r.right - 26.0f, r.bottom - 13.0f);
-            FillRound(box, MakeBrush(0x000000, 0.35f), 12.0f);
+            FillRound(box, MakeBrush(pal_.shade, 0.35f), 12.0f);
             for (int i = 0; i < 2; ++i) {
                 const D2D1_RECT_F seg = D2D1::RectF(box.left + 4.0f + i * segW, box.top + 4.0f, box.left + 4.0f + (i + 1) * segW, box.bottom - 4.0f);
                 const bool on = (i == 1) == curseForge;
@@ -750,6 +740,20 @@ private:
             DrawIcon(L"\uE76C", D2D1::RectF(r.right - 56.0f, r.top, r.right - 22.0f, r.bottom), muted_);
             DrawText(state.settingsLanguageName.c_str(), valueFormat_.Get(),
                 D2D1::RectF(r.right - 380.0f, r.top, r.right - 66.0f, r.bottom), text_);
+        }
+        {
+            const D2D1_RECT_F r = row(7, Tr(L"Theme"),
+                Tr(L"Make your own by adding a theme file to the themes folder in Remote Files."), 420.0f);
+            DrawIcon(L"\uE76C", D2D1::RectF(r.right - 56.0f, r.top, r.right - 22.0f, r.bottom), muted_);
+            const D2D1_RECT_F nameRect = D2D1::RectF(r.right - 380.0f, r.top, r.right - 66.0f, r.bottom);
+            DrawText(state.settingsThemeName.c_str(), valueFormat_.Get(), nameRect, text_);
+            const float nameW = (std::min)(MeasureWidth(state.settingsThemeName.c_str(), valueFormat_.Get()), 314.0f);
+            const float mid = (r.top + r.bottom) * 0.5f;
+            const float x = nameRect.right - nameW - 26.0f;
+            FillCircle(x - 32.0f, mid, 11.0f, MakeBrush(pal_.bg));
+            FillCircle(x - 16.0f, mid, 11.0f, text_);
+            FillCircle(x, mid, 11.0f, accent_);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x - 32.0f, mid), 11.0f, 11.0f), line_, 1.5f);
         }
 
         DrawFlow(
@@ -799,7 +803,7 @@ private:
         const float panelBottom = B_ - 104.0f;
         if (state.crashAskConsent || state.crashDetailsOpen) {
             const D2D1_RECT_F box = D2D1::RectF(L_, y, R_, panelBottom);
-            FillRound(box, MakeBrush(0x000000, 0.60f), 14.0f);
+            FillRound(box, MakeBrush(pal_.shade, 0.60f), 14.0f);
             const D2D1_RECT_F clip = D2D1::RectF(box.left + 22.0f, box.top + 16.0f, box.right - 22.0f, box.bottom - 16.0f);
             const D2D1_RECT_F textRect = D2D1::RectF(
                 clip.left, clip.top - state.crashDetailScroll * 22.0f, clip.right, clip.bottom + 4096.0f);
@@ -884,7 +888,7 @@ private:
             d2dContext_->PopAxisAlignedClip();
             // text running under the bottom edge fades out instead of ending in half a line
             if (state.changelogScroll < maxScroll) {
-                FillGradient(D2D1::RectF(inner.left, inner.bottom - 48.0f, inner.right, bodyRect.bottom - 4.0f), theme::kSurface, 0.0f, 1.0f, true, 0.6f, 0.9f);
+                FillGradient(D2D1::RectF(inner.left, inner.bottom - 48.0f, inner.right, bodyRect.bottom - 4.0f), pal_.surface, 0.0f, 1.0f, true, 0.6f, 0.9f);
             }
             if (maxScroll > 0) {
                 DrawScrollThumb(bodyRect.right - 12.0f, inner.top, inner.bottom, viewH / tm.height,
@@ -1005,7 +1009,7 @@ private:
             d2dContext_->DrawTextLayout(D2D1::Point2F(bodyInner.left, bodyInner.top - scrollPx), layout.Get(), muted_);
             d2dContext_->PopAxisAlignedClip();
             if (state.modsDetailScroll < maxScroll) {
-                FillGradient(D2D1::RectF(bodyInner.left, bodyInner.bottom - 48.0f, bodyInner.right, bodyRect.bottom - 4.0f), theme::kSurface, 0.0f, 1.0f, true, 0.6f, 0.9f);
+                FillGradient(D2D1::RectF(bodyInner.left, bodyInner.bottom - 48.0f, bodyInner.right, bodyRect.bottom - 4.0f), pal_.surface, 0.0f, 1.0f, true, 0.6f, 0.9f);
             }
             if (maxScroll > 0) {
                 DrawScrollThumb(bodyRect.right - 12.0f, bodyInner.top, bodyInner.bottom, viewH / tm.height,
@@ -1312,7 +1316,7 @@ private:
             const float dropTop = targetBox.bottom + 10.0f;
             const D2D1_RECT_F drop = D2D1::RectF(targetBox.left, dropTop, targetBox.right, dropTop + rowH * visible + 12.0f);
             FillRound(D2D1::RectF(drop.left - 2.0f, drop.top + 4.0f, drop.right + 2.0f, drop.bottom + 12.0f), MakeBrush(0x000000, 0.45f), 16.0f);
-            FillRound(drop, MakeBrush(theme::kRaised), 14.0f);
+            FillRound(drop, MakeBrush(pal_.raised), 14.0f);
             StrokeRound(drop, line_, 14.0f, 1.0f);
             for (int slot = 0; slot < visible; ++slot) {
                 const int i = targetScroll + slot;
@@ -1415,6 +1419,7 @@ private:
     ComPtr<IDWriteTextFormat> monoFormat_;
     ComPtr<IDWriteTextFormat> monoLargeFormat_;
     std::vector<ComPtr<ID2D1SolidColorBrush>> brushPool_;
+    themes::Palette pal_{};
     ID2D1SolidColorBrush* text_ = nullptr;
     ID2D1SolidColorBrush* muted_ = nullptr;
     ID2D1SolidColorBrush* line_ = nullptr;

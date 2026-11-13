@@ -36,7 +36,7 @@ $env:LIB = "$($tools.MsvcRoot)\lib\x64;${sdkRoot}Lib\$sdkVer\ucrt\x64;${sdkRoot}
 Push-Location (Join-Path $root "MC.Xbox")
 try {
     & $tools.ClExe /nologo `
-        ..\tools\ui-preview\ui_preview.cpp common\launcher_common.cpp common\i18n.cpp profiles\profiles.cpp ui\mods_ui_globals.cpp third_party\miniz\miniz.c `
+        ..\tools\ui-preview\ui_preview.cpp common\launcher_common.cpp common\i18n.cpp common\themes.cpp profiles\profiles.cpp ui\mods_ui_globals.cpp third_party\miniz\miniz.c `
         /std:c++17 /EHsc /W3 /D_UNICODE /DUNICODE /D_WIN32_WINNT=0x0A00 /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /DMINIZ_NO_STDIO /DMINIZ_NO_TIME `
         /I. /Icommon /Inet /Iauth /Iui /Imods /Iprofiles /Ilaunch /Ilaunch\loaders /Itelemetry `
         /Fo"$work\\" /Fe"$work\ui_preview.exe" `
@@ -57,6 +57,11 @@ Copy-Item -Force (Join-Path $root "MC.Xbox\Assets\appx\Square150x150Logo.png") (
 # the preview reads languages from a lang folder next to the exe, the same as the package
 Ensure-Dir (Join-Path $work "lang")
 Copy-Item -Force (Join-Path $root "MC.Xbox\lang\*.json") (Join-Path $work "lang")
+
+$themeTarget = Join-Path $work "themes"
+Ensure-Dir $themeTarget
+Remove-Item (Join-Path $themeTarget "*.json") -ErrorAction SilentlyContinue
+Copy-Item -Force (Join-Path $root "docs\themes\*.json") $themeTarget
 
 & (Join-Path $work "ui_preview.exe") $OutDir $Language
 if ($LASTEXITCODE -ne 0) { throw "ui preview render failed" }

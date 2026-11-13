@@ -601,7 +601,7 @@ static void ShowChangelogScreen(
 }
 
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 7;
+    constexpr int kSettingsRows = 8;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -623,6 +623,8 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     for (const i18n::Language& language : i18n::Languages()) {
         if (language.code == i18n::CurrentCode()) state.settingsLanguageName = language.name;
     }
+    themes::Reload();
+    state.settingsThemeName = themes::CurrentName();
 
     bool upWas = false;
     bool downWas = false;
@@ -767,6 +769,18 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
             state.settingsNote = languages.size() == 1
                 ? Tr(L"No other languages are installed yet.")
                 : (saved ? Tr(L"Language changed.") : Tr(L"The language was changed but could not be saved."));
+            state.settingsThemeName = themes::CurrentName();
+        } else if (pressed == 7) {
+            const std::vector<themes::Theme> all = themes::Themes();
+            const std::wstring current = themes::CurrentId();
+            size_t next = 0;
+            for (size_t i = 0; i < all.size(); ++i) {
+                if (all[i].id == current) next = (i + 1) % all.size();
+            }
+            const bool saved = themes::SetTheme(all[next].id);
+            state.settingsThemeName = themes::CurrentName();
+            state.settingsNote = saved ? TrFormat(L"Theme set to {0}.", { state.settingsThemeName })
+                                       : Tr(L"The theme was changed but could not be saved.");
         }
 
         upWas = upDown;

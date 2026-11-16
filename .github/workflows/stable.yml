@@ -158,7 +158,7 @@ jobs:
 
       - name: Build APPX
         shell: powershell
-        run: .\build.ps1 -BuildSDL3 -StrictTargets -SkipStopAppProcesses -ReleaseChannel stable -AppxVersion $env:APPX_VERSION
+        run: .\build.ps1 -StrictTargets -SkipStopAppProcesses -ReleaseChannel stable -AppxVersion $env:APPX_VERSION
 
       - name: Stage stable asset
         shell: powershell

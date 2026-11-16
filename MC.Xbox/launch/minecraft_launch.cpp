@@ -415,20 +415,36 @@ void CollectManifestLibraryJars(
     std::vector<DownloadManifestEntry> entries;
     if (!ReadDownloadManifest(manifestPath, entries)) return;
     for (const auto& e : entries) {
-        std::wstring rel = e.relativePath;
-        std::replace(rel.begin(), rel.end(), L'\\', L'/');
+        // Manifest paths may use either slash style. Normalize once before
+        // deriving the library-relative path; otherwise a forward-slash entry
+        // is sliced at the wrong offset and the packaged Xbox library path
+        // becomes invalid.
+        std::wstring normalizedRelative = e.relativePath;
+        std::replace(normalizedRelative.begin(), normalizedRelative.end(), L'/', L'\\');
+        std::wstring rel = normalizedRelative;
         for (wchar_t& c : rel) c = static_cast<wchar_t>(towlower(c));
-        if (rel.rfind(L"game/libraries/", 0) != 0) continue;
+        constexpr wchar_t kLibraryPrefix[] = L"game\\libraries\\";
+        constexpr size_t kLibraryPrefixLength = (sizeof(kLibraryPrefix) / sizeof(kLibraryPrefix[0])) - 1;
+        if (rel.rfind(kLibraryPrefix, 0) != 0) continue;
         if (rel.size() < 4 || rel.compare(rel.size() - 4, 4, L".jar") != 0) continue;
         if (rel.find(L"-natives-") != std::wstring::npos) continue;
         if (rel.find(L"-installer.jar") != std::wstring::npos) continue;
-        const std::wstring libraryRelative = e.relativePath.substr(wcslen(L"game\\libraries\\"));
-        const std::wstring packagedOverride = packageDir + L"\\runtime\\libraries\\" + libraryRelative;
+
+        const std::wstring libraryRelative = normalizedRelative.substr(kLibraryPrefixLength);
+        const std::wstring packagedOverride =
+            JoinRuntimeRelativePath(packageDir + L"\\runtime\\libraries", libraryRelative);
+        const std::wstring localLibrary =
+            JoinRuntimeRelativePath(runtimeRoot, normalizedRelative);
         const std::wstring abs =
-            GetFileAttributesW(packagedOverride.c_str()) != INVALID_FILE_ATTRIBUTES
+            !packagedOverride.empty() && GetFileAttributesW(packagedOverride.c_str()) != INVALID_FILE_ATTRIBUTES
                 ? packagedOverride
-                : JoinRuntimeRelativePath(runtimeRoot, e.relativePath);
-        if (!abs.empty()) jars.push_back(abs);
+                : localLibrary;
+        if (!abs.empty()) {
+            jars.push_back(abs);
+            WriteLogF(L"Classpath library: %s", abs.c_str());
+        } else {
+            WriteLogF(L"Skipping invalid classpath library path: %s", e.relativePath.c_str());
+        }
     }
 }
 

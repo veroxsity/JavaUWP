@@ -12,12 +12,13 @@
     "nativeDirectory": "lwjgl2/natives"
   },
   "java": {
-    "recommendedMajor": 8,
-    "modernProjectMajor": 25,
-    "java25Mode": "experimental-only",
-    "runtimeDirectory": "runtime"
+    "requiredMajor": 17,
+    "runtimeKind": "uwp-jvm",
+    "runtimeDirectory": "runtime/jre17",
+    "modernProfilesUnaffected": true
   },
   "adapters": {
+    "javaRuntime": "adapters/java17-uwp",
     "display": "adapters/corewindow",
     "input": "adapters/input",
     "opengl": "adapters/opengl"
@@ -25,9 +26,10 @@
   "status": "scaffold-only",
   "xboxTested": false,
   "notes": [
+    "Beta 1.7.3 requests Java 17 UWP only; modern Minecraft profiles retain their existing runtime selection.",
+    "The packaged runtime must be a Java 17 JVM built for and compatible with Xbox UWP.",
     "Do not use the modern GLFW/LWJGL 3 shim for this profile.",
     "Original desktop LWJGL 2 native binaries are not UWP-compatible.",
-    "Java 25 compatibility with the Beta 1.7.3 client is unverified; Java 8 is the initial legacy baseline to validate.",
-    "The native adapter and runtime packaging still need implementation."
+    "The launcher selection, Java 17 runtime packaging, native adapter and Xbox tests still need implementation."
   ]
 }

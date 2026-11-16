@@ -61,6 +61,8 @@ The default target is **1.21.11 + Fabric 0.19.5**, using Java 21. The catalog al
 
 | Minecraft version | Loaders in the catalog | Status |
 | --- | --- | --- |
+| `26.4-snapshot-8` | Fabric | Experimental snapshot target; Java 25. SDL3 runtime integration is not yet tested. |
+| `26.3` | Fabric, Forge, NeoForge | Experimental; Java 25. SDL3 runtime integration is not yet tested. |
 | `26.1`, `26.1.1`, `26.1.2`, `26.2` | Fabric, Forge, NeoForge | Experimental. Uses the Java 25 runtime. |
 | `1.21` through `1.21.11` | Fabric and NeoForge. Forge on every listed version except `1.21.2`. | Experimental. Uses Java 21. |
 | `1.20.4` | Fabric, NeoForge | Fabric is testing. NeoForge is experimental and has no bundled controller provider. |
@@ -73,6 +75,22 @@ The default target is **1.21.11 + Fabric 0.19.5**, using Java 21. The catalog al
 Fabric uses **0.19.5** on listed targets from `1.20.1` onward, and **0.14.25** on `1.19.2` and `1.16.5`. Exact Forge and NeoForge versions, runtime choices and controller providers are listed in [the version catalog](config/versions.tsv).
 
 A catalog entry is not proof that the game or every mod works on Xbox. A target needs its launch files and bundled support files in the installed package. Experimental targets still need testing, and available targets can differ between builds. Check the installed launcher's target list and the release notes.
+
+## SDL3, GLFW and graphics backends
+
+The experimental Minecraft **26.3** and **26.4 Snapshot 8** targets are being prepared for Java 25 on Xbox Series S|X. Their SDL3 integration is not complete or verified on console.
+
+- **GLFW remains the current window/input compatibility path.** The project builds its GLFW CoreWindow shim and packages it as `natives/glfw.dll`.
+- **SDL3 is an optional UWP runtime build**, based on [XboxEmulationHub/SDL3-uwp](https://github.com/XboxEmulationHub/SDL3-uwp), branch `uwp-3.4.20`. Build it from a Windows development environment with:
+
+  ```powershell
+  .\\build.ps1 -BuildSDL3
+  ```
+
+- Packaging `SDL3.dll` does **not** make Minecraft use SDL3. A compatible LWJGL SDL3 binding and working window, input and rendering integration (or a GLFW-to-SDL3 compatibility layer) are still required. Until then, Minecraft continues to use the GLFW shim.
+- The experimental Mesa Dozen Vulkan ICD targets Vulkan over Direct3D 12. Selecting the ICD does not automatically switch Minecraft to Vulkan; the Vulkan loader, UWP permissions and actual LWJGL/game startup still need Xbox testing.
+
+See [SDL3 UWP and GLFW build notes](sdl3_uwp/README.md) and [Mesa runtime notes](mesa-runtime/README.md). No claim of successful Minecraft 26.3/26.4 SDL3 or Vulkan gameplay is made until those paths are built and tested on Xbox.
 
 ## Mods, modpacks and other content
 

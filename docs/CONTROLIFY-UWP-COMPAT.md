@@ -15,10 +15,20 @@ works on Xbox.
 - Minecraft currently uses the launcher's GLFW CoreWindow shim
   (`glfw_shim/glfw_uwp.cpp`) as its LWJGL window and input path.
 - SDL3 is an optional packaged UWP runtime. Packaging SDL3 does not route
-  Minecraft or Controlify input through SDL3.
-- Therefore, first validate and repair the GLFW gamepad API exposed by the
-  shim. Treat SDL3 as a future alternative backend only after a compatible
-  LWJGL binding and end-to-end Minecraft integration exist.
+  Minecraft or mods through SDL3, and does not satisfy mods that load GLFW
+  native symbols or expect LWJGL's GLFW API.
+- The compatibility target is broader than Controlify: multiple mods may
+  depend on GLFW window, keyboard, mouse, joystick, or gamepad entry points.
+  A missing native symbol/library or incomplete shim can therefore affect
+  many mods, not just controller configuration.
+- Evaluate a GLFW-to-SDL3 backend as a shared compatibility layer: preserve
+  the GLFW/LWJGL-facing API expected by Minecraft and mods, while translating
+  supported operations to SDL3 internally. This is not simply renaming
+  `SDL3.dll` to a GLFW library; ABI, exported symbols, callbacks, handles,
+  event pumping, timing, cursor behavior, and controller semantics must match.
+- First inventory the exact missing library/symbols from logs and the current
+  `glfw_shim`. Keep the existing CoreWindow GLFW implementation as fallback
+  until the SDL3-backed path passes end-to-end tests.
 - The bundled Bandit Controller implementation lives under
   `controller_mod/`; it is not the upstream Controlify mod.
 
@@ -32,7 +42,24 @@ works on Xbox.
    - Confirm that the same Controlify build works in a desktop launcher with
      the same Minecraft version and mod set.
 
-2. **GLFW gamepad compatibility**
+2. **Shared GLFW compatibility for mods**
+   - Inventory all GLFW/LWJGL entry points used by the targeted Minecraft
+     version and common mods, not only joystick functions.
+   - Distinguish a missing native library, missing exported symbol, failed
+     native initialization, and an unsupported GLFW operation. Record the
+     exact library name, symbol, and calling mod from logs.
+   - Design a single GLFW-compatible facade that can route to the current
+     CoreWindow implementation or an SDL3-backed implementation. Keep the
+     Java/LWJGL-facing signatures and native ABI stable; do not require users
+     to install a separate adapter for every mod.
+   - Cover window/context lifecycle, event polling, keyboard, mouse, cursor,
+     clipboard, timing, callbacks, joystick, and gamepad APIs as required by
+     the actual mod inventory. Mark unsupported calls explicitly rather than
+     returning fabricated success.
+   - Add a capability report at startup so users can see which GLFW functions
+     are available and which are missing on the current backend.
+
+3. **GLFW gamepad compatibility**
    - Verify `glfwJoystickPresent`, `glfwGetJoystickAxes`,
      `glfwGetJoystickButtons`, `glfwGetJoystickHats`,
      `glfwGetGamepadState`, `glfwJoystickIsGamepad`, and
@@ -45,7 +72,7 @@ works on Xbox.
    - Add native diagnostics for device name, mapping, button count, axis
      count, and connection events.
 
-3. **Controlify integration**
+4. **Controlify integration**
    - Test Controlify's controller discovery and mapping screen against the
      GLFW shim before adding mod-specific patches.
    - If the failure is in a Controlify desktop/native assumption, isolate the
@@ -54,7 +81,7 @@ works on Xbox.
    - Keep the existing Bandit Controller and Controlify mutually exclusive
      per profile to prevent duplicate input handling.
 
-4. **Voice-chat push-to-talk**
+5. **Voice-chat push-to-talk**
    - After normal controller input works, test the Simple Voice Chat
      push-to-talk binding as an ordinary Minecraft keybinding.
    - Verify press, hold, and release transitions, including focus loss and
@@ -62,7 +89,7 @@ works on Xbox.
    - Do not couple microphone capture or audio playback changes to this
      controller-input work; those are separate audio-backend issues.
 
-5. **Minecraft asset resolution and launch failure**
+6. **Minecraft asset resolution and launch failure**
    - Track the separate launcher problem where Minecraft cannot locate the
      asset files required to start the game. This is a launcher download,
      index, path-resolution, or packaging issue until logs identify the
@@ -84,11 +111,13 @@ works on Xbox.
    - Test a clean install, a second launch using the cache, and recovery after
      deleting one cached asset object.
 
-6. **SDL3 future path**
-   - Do not switch Minecraft to SDL3 merely because `SDL3.dll` is packaged.
-   - Only add an SDL3 controller backend after the LWJGL binding, window
-     integration, event pump, and gamepad mapping are built and tested together.
-   - Keep GLFW as the fallback until the SDL3 path passes the same test matrix.
+7. **SDL3-backed GLFW implementation**
+   - Implement SDL3 behind the GLFW-compatible facade, not as a separate
+     API that individual mods must know about.
+   - Integrate the LWJGL native binding, window integration, event pump,
+     keyboard/mouse input, controller mapping, and callback translation.
+   - Keep the CoreWindow GLFW backend as fallback until the SDL3-backed
+     facade passes the same test matrix across multiple mods.
 
 ## Acceptance tests
 
@@ -103,6 +132,9 @@ works on Xbox.
 - A clean install downloads and verifies all required assets and starts.
 - A second launch reuses valid cached assets without false missing-file errors.
 - Removing one cached asset causes only that asset to be downloaded again.
+- A representative set of GLFW-dependent mods loads without missing-library
+  or missing-symbol errors, including when Controlify is absent.
+- Backend capability diagnostics identify unsupported GLFW calls clearly.
 - No regression occurs when Controlify is absent or disabled.
 - Test results include launcher build, Minecraft version, Fabric Loader,
   Java version, mod versions, asset index ID, and relevant log excerpts.

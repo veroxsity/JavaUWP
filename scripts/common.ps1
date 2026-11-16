@@ -540,6 +540,7 @@ function Get-MesaRuntimeDllNames {
         "libgallium_wgl.dll",
         "spirv_to_dxil.dll",
         "vulkan_dzn.dll",
+        "dzn_icd.x86_64.json",
         "dxil.dll",
         "z-1.dll"
     )

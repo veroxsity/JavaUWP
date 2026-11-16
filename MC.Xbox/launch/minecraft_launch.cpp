@@ -578,6 +578,19 @@ static bool PreloadJvm(
     SetEnvironmentVariableW(L"PATH", path.c_str());
     SetEnvironmentVariableW(L"JAVA_HOME", jreDir.c_str());
 
+    // Prefer the bundled Mesa Dozen ICD for Vulkan applications. This only
+    // selects the driver manifest; a Vulkan loader must still be available.
+    const std::wstring dozenIcd = exeDir + L"\\\\graphics\\\\mesa\\\\dzn_icd.x86_64.json";
+    if (GetFileAttributesW(dozenIcd.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        if (SetEnvironmentVariableW(L"VK_DRIVER_FILES", dozenIcd.c_str())) {
+            WriteLogF(L"Vulkan Dozen ICD selected: %s", dozenIcd.c_str());
+        } else {
+            WriteLogF(L"Could not set VK_DRIVER_FILES for Dozen ICD err=%u", GetLastError());
+        }
+    } else {
+        WriteLogF(L"Vulkan Dozen ICD manifest not packaged: %s", dozenIcd.c_str());
+    }
+
     const std::wstring packagedPrefix = packagedJreRelativeDir.empty() ? L"jre" : packagedJreRelativeDir;
     auto loadPackaged = [&](const std::wstring& relativePath, const wchar_t* label) -> HMODULE {
         HMODULE module = LoadPackagedLibrary(relativePath.c_str(), 0);

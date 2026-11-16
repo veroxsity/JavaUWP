@@ -62,7 +62,29 @@ works on Xbox.
    - Do not couple microphone capture or audio playback changes to this
      controller-input work; those are separate audio-backend issues.
 
-5. **SDL3 future path**
+5. **Minecraft asset resolution and launch failure**
+   - Track the separate launcher problem where Minecraft cannot locate the
+     asset files required to start the game. This is a launcher download,
+     index, path-resolution, or packaging issue until logs identify the
+     failing stage; it is not automatically a Controlify bug.
+   - Validate that the selected Minecraft version's asset index is downloaded
+     and parsed, and that every referenced object is resolved by its SHA-1
+     under the expected assets object directory.
+   - Check the launcher's effective game directory and assets directory,
+     including UWP LocalState paths, path separators, case handling, and
+     whether the process has permission to read the files.
+   - Verify downloads for missing or truncated asset objects, HTTP failures,
+     hash mismatches, and interrupted downloads. Re-download only invalid or
+     missing objects, then verify their hashes before launch.
+   - Ensure the generated launch arguments point to the same asset index and
+     asset root that the launcher populated; do not mix paths from another
+     profile, version, or install location.
+   - Log the exact missing asset path, asset index ID, expected hash, resolved
+     path, and download/verification result. Avoid logging credentials.
+   - Test a clean install, a second launch using the cache, and recovery after
+     deleting one cached asset object.
+
+6. **SDL3 future path**
    - Do not switch Minecraft to SDL3 merely because `SDL3.dll` is packaged.
    - Only add an SDL3 controller backend after the LWJGL binding, window
      integration, event pump, and gamepad mapping are built and tested together.
@@ -78,12 +100,17 @@ works on Xbox.
 - Minecraft keyboard and mouse input continue to work.
 - Simple Voice Chat PTT responds to the configured controller binding on
   press and release.
+- A clean install downloads and verifies all required assets and starts.
+- A second launch reuses valid cached assets without false missing-file errors.
+- Removing one cached asset causes only that asset to be downloaded again.
 - No regression occurs when Controlify is absent or disabled.
 - Test results include launcher build, Minecraft version, Fabric Loader,
-  Java version, mod versions, and relevant log excerpts.
+  Java version, mod versions, asset index ID, and relevant log excerpts.
 
 ## Current status
 
 **Not implemented or verified.** This plan intentionally does not add a
 placeholder native library, claim SDL3 is active, or patch Controlify without
-a reproducible failure and matching source-level diagnosis.
+a reproducible failure and matching source-level diagnosis. The asset issue
+is now tracked as a separate launcher workstream; its root cause still needs
+the exact launch error or log.

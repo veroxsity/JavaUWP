@@ -13,6 +13,7 @@ param(
     [switch]$SkipVersionManifests,
     [switch]$SkipVersionCompat,
     [switch]$IncludePrebuiltNeoForgeArtifacts,
+    [switch]$BuildSDL3,
     [switch]$StrictTargets
 )
 
@@ -430,6 +431,16 @@ Write-Host "=== Building GLFW CoreWindow shim ==="
 & (Join-Path $root "glfw_shim\build_glfw.ps1") -OutputDir $glfwBuildDir -MouseSupportLib $mouseSupportLib -MouseSupportInclude (Join-Path $root "mouse_support")
 if (-not (Test-Path $shimDll)) { throw "GLFW shim DLL missing after build: $shimDll" }
 
+if ($BuildSDL3) {
+    Write-Host "=== Building SDL3 UWP WinRT runtime ==="
+    $sdl3BuildScript = Join-Path $root "sdl3_uwp\build_sdl3.ps1"
+    $sdl3BuildDir = Join-Path $buildDir "sdl3-uwp"
+    & $sdl3BuildScript -OutputDir $sdl3BuildDir
+    if (-not (Test-Path (Join-Path $sdl3BuildDir "SDL3.dll"))) { throw "SDL3.dll missing after SDL3 UWP build." }
+} else {
+    Write-Host "SDL3 UWP build skipped. Use -BuildSDL3 to build and package it."
+}
+
 Write-Host "=== Building Xbox compatibility mod ==="
 & (Join-Path $root "compat_mod\build_compat_mod.ps1")
 
@@ -677,6 +688,13 @@ Write-Host "Copying GLFW shim..."
 Copy-Item $shimDll (Join-Path $pkg "natives\glfw.dll") -Force
 Copy-Item $mouseSupportDll (Join-Path $pkg "mouse_support.dll") -Force
 Copy-Item $mouseSupportDll (Join-Path $pkg "natives\mouse_support.dll") -Force
+
+if ($BuildSDL3) {
+    $sdl3Dll = Join-Path (Join-Path $buildDir "sdl3-uwp") "SDL3.dll"
+    Copy-Item $sdl3Dll (Join-Path $pkg "SDL3.dll") -Force
+    Copy-Item $sdl3Dll (Join-Path $pkg "natives\SDL3.dll") -Force
+    Write-Host "SDL3 UWP: SDL3.dll"
+}
 
 Write-Host "Copying Mesa runtime..."
 $mesaRuntime = Resolve-MesaRuntimeDir -MesaRuntimeDir $MesaRuntimeDir

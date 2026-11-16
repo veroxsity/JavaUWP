@@ -1332,7 +1332,22 @@ if (-not $SkipStopAppProcesses) {
 }
 
 if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat -or $script:BuildFailures.Count -gt 0)) {
-    throw "Strict build requires every configured target before packaging"
+    $strictBuildReasons = @()
+    if ($SkipVersionManifests) {
+        $strictBuildReasons += "-SkipVersionManifests was supplied; extra version manifests were not built."
+    }
+    if ($SkipVersionCompat) {
+        $strictBuildReasons += "-SkipVersionCompat was supplied; per-version compatibility/controller targets were not built."
+    }
+    if ($script:BuildFailures.Count -gt 0) {
+        $strictBuildReasons += "Build stages reported $($script:BuildFailures.Count) failure(s):"
+        $strictBuildReasons += ($script:BuildFailures |
+            Format-Table Stage, Target, Reason -AutoSize -Wrap |
+            Out-String -Width 240).TrimEnd()
+    }
+    $strictBuildDetails = $strictBuildReasons -join [Environment]::NewLine
+    throw ("Strict build requires every configured target before packaging." +
+        [Environment]::NewLine + $strictBuildDetails)
 }
 if (-not $SkipVersionManifests -and -not $SkipVersionCompat) {
     & (Join-Path $root "scripts\validate-modern-version-matrix.ps1") -PackagePath $pkg

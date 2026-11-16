@@ -40,6 +40,9 @@ $variantLayers = @{
     "26.1.1" = @("1.21.1", "1.21.9", "1.21.11", "26.1")
     "26.1.2" = @("1.21.1", "1.21.9", "1.21.11", "26.1")
     "26.2" = @("1.21.1", "1.21.9", "1.21.11", "26.1", "26.2")
+    # Reuse the latest modern source layer; compilation against the exact
+    # target Forge-patched client is the compatibility check.
+    "26.3" = @("1.21.1", "1.21.9", "1.21.11", "26.1", "26.2")
 }
 if (-not $variantLayers.ContainsKey($MinecraftVersion)) {
     throw "Forge controller sources do not have a version adapter for Minecraft $MinecraftVersion"

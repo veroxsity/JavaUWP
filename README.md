@@ -70,11 +70,14 @@ The default target is **1.21.11 + Fabric 0.19.5**, using Java 21. The catalog al
 | `1.19.2` | Fabric | Testing. |
 | `1.18.2` | Forge | Experimental. No bundled controller provider. |
 | `1.16.5` | Fabric | Testing. |
+| `b1.7.3` | Vanilla | Experimental placeholder. Legacy Java/LWJGL 2 runtime and window/input backend are not implemented or tested on Xbox. |
 | `1.12.2` | Forge | Experimental. Forge runs through Cleanroom, and the controller works the same as on newer versions. Vanilla 1.12.2 is not supported. |
 
 Fabric uses **0.19.5** on listed targets from `1.20.1` onward, and **0.14.25** on `1.19.2` and `1.16.5`. Exact Forge and NeoForge versions, runtime choices and controller providers are listed in [the version catalog](config/versions.tsv).
 
 A catalog entry is not proof that the game or every mod works on Xbox. A target needs its launch files and bundled support files in the installed package. Experimental targets still need testing, and available targets can differ between builds. Check the installed launcher's target list and the release notes.
+
+**Minecraft Beta 1.7.3 is catalogued as an experimental legacy target only.** It uses the old LWJGL 2-era client path, which is different from the current GLFW/LWJGL 3 shim. The legacy Java runtime and compatible window/input backend still need implementation; adding the catalog row does not make Beta 1.7.3 launchable yet.
 
 ## SDL3, GLFW and graphics backends
 

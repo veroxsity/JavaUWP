@@ -6,7 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "common.ps1")
+. (Join-Path $PSScriptRoot "..\scripts\common.ps1")
 
 $repoUrl = "https://github.com/XboxEmulationHub/SDL3-uwp.git"
 $repoRef = "uwp-3.4.20"

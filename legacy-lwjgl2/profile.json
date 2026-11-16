@@ -1,0 +1,33 @@
+{
+  "id": "b1.7.3",
+  "displayName": "Minecraft Beta 1.7.3",
+  "loader": "vanilla",
+  "windowBackend": "lwjgl2-corewindow-adapter",
+  "lwjgl": {
+    "major": 2,
+    "jars": [
+      "lwjgl2/lwjgl.jar",
+      "lwjgl2/lwjgl_util.jar"
+    ],
+    "nativeDirectory": "lwjgl2/natives"
+  },
+  "java": {
+    "recommendedMajor": 8,
+    "modernProjectMajor": 25,
+    "java25Mode": "experimental-only",
+    "runtimeDirectory": "runtime"
+  },
+  "adapters": {
+    "display": "adapters/corewindow",
+    "input": "adapters/input",
+    "opengl": "adapters/opengl"
+  },
+  "status": "scaffold-only",
+  "xboxTested": false,
+  "notes": [
+    "Do not use the modern GLFW/LWJGL 3 shim for this profile.",
+    "Original desktop LWJGL 2 native binaries are not UWP-compatible.",
+    "Java 25 compatibility with the Beta 1.7.3 client is unverified; Java 8 is the initial legacy baseline to validate.",
+    "The native adapter and runtime packaging still need implementation."
+  ]
+}

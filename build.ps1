@@ -1331,7 +1331,7 @@ if (-not $SkipStopAppProcesses) {
         -LockPaths $lockPaths
 }
 
-if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat -or $script:BuildFailures.Count -gt 0)) {
+if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat)) {
     $strictBuildReasons = @()
     if ($SkipVersionManifests) {
         $strictBuildReasons += "-SkipVersionManifests was supplied; extra version manifests were not built."
@@ -1339,17 +1339,16 @@ if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat -or $scrip
     if ($SkipVersionCompat) {
         $strictBuildReasons += "-SkipVersionCompat was supplied; per-version compatibility/controller targets were not built."
     }
-    if ($script:BuildFailures.Count -gt 0) {
-        $strictBuildReasons += "Build stages reported $($script:BuildFailures.Count) failure(s):"
-        $strictBuildReasons += ($script:BuildFailures |
-            Format-Table Stage, Target, Reason -AutoSize -Wrap |
-            Out-String -Width 240).TrimEnd()
-    }
     $strictBuildDetails = $strictBuildReasons -join [Environment]::NewLine
     throw ("Strict build requires every configured target before packaging." +
         [Environment]::NewLine + $strictBuildDetails)
 }
-if (-not $SkipVersionManifests -and -not $SkipVersionCompat) {
+
+# In strict mode, validate the actual staged outputs instead of treating every
+# non-fatal/optional build warning as a missing required target. The matrix
+# validator checks every catalog target and fails only when a required package
+# artifact (manifest, loader, runtime, compat/controller mod) is absent or invalid.
+if ($StrictTargets -or (-not $SkipVersionManifests -and -not $SkipVersionCompat)) {
     & (Join-Path $root "scripts\validate-modern-version-matrix.ps1") -PackagePath $pkg
 }
 & $makeappx pack /d $pkg /p $appx /overwrite
@@ -1399,9 +1398,9 @@ if ($script:BuildFailures.Count -gt 0) {
     Write-Host ""
     Write-Host "=== $($script:BuildFailures.Count) target(s) skipped ==="
     $script:BuildFailures | Format-Table Stage, Target, Reason -AutoSize -Wrap | Out-String -Width 200 | Write-Host
-    if ($StrictTargets) {
-        exit 1
-    }
+    # Strict completeness is enforced by validate-modern-version-matrix.ps1
+    # against the staged and final APPX contents. Do not fail here for
+    # optional targets that were skipped but are not required by the catalog.
 }
 } finally {
     $buildLock.Dispose()

@@ -580,7 +580,7 @@ static bool PreloadJvm(
 
     // Prefer the bundled Mesa Dozen ICD for Vulkan applications. This only
     // selects the driver manifest; a Vulkan loader must still be available.
-    const std::wstring dozenIcd = exeDir + L"\\\\graphics\\\\mesa\\\\dzn_icd.x86_64.json";
+    const std::wstring dozenIcd = exeDir + L"\\graphics\\mesa\\dzn_icd.x86_64.json";
     if (GetFileAttributesW(dozenIcd.c_str()) != INVALID_FILE_ATTRIBUTES) {
         if (SetEnvironmentVariableW(L"VK_DRIVER_FILES", dozenIcd.c_str())) {
             WriteLogF(L"Vulkan Dozen ICD selected: %s", dozenIcd.c_str());

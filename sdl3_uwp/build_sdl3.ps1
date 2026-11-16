@@ -55,10 +55,7 @@ Ensure-Dir $installDir
 # MSVC's UWP toolset keeps platform.winmd under its architecture-specific
 # store references directory. CMake's Visual Studio generator does not always
 # propagate this metadata search path to generated PCH compilation commands.
-$platformWinmd = Join-Path $env:VCToolsInstallDir "lib\x64\store\references\platform.winmd"
-if (-not (Test-Path -LiteralPath $platformWinmd)) {
-    $platformWinmd = Join-Path (Split-Path $tools.MsvcRoot -Parent) "lib\x64\store\references\platform.winmd"
-}
+$platformWinmd = Join-Path $tools.MsvcRoot "lib\x64\store\references\platform.winmd"
 if (-not (Test-Path -LiteralPath $platformWinmd)) {
     $platformWinmd = Get-ChildItem (Join-Path $tools.MsvcRoot "lib") -Filter "platform.winmd" -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -match "[\\/]x64[\\/]store[\\/]references[\\/]platform\.winmd$" } |

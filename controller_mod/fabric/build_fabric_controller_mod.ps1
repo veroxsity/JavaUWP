@@ -35,6 +35,10 @@ $variantLayers = @{
     "26.1.1" = @("26.1", "26.2", "1.21.11", "1.21.4", "1.21", "1.20.4", "1.20.1")
     "26.1.2" = @("26.1", "26.2", "1.21.11", "1.21.4", "1.21", "1.20.4", "1.20.1")
     "26.2" = @("26.2", "1.21.11", "1.21.4", "1.21", "1.20.4", "1.20.1")
+    # 26.3 and the 26.4 snapshot currently reuse the 26.2 source layer;
+    # the CI compile/parity checks below validate the actual mapped client API.
+    "26.3" = @("26.2", "1.21.11", "1.21.4", "1.21", "1.20.4", "1.20.1")
+    "26.4-snapshot-8" = @("26.2", "1.21.11", "1.21.4", "1.21", "1.20.4", "1.20.1")
 }
 $supportedVersions = @($variantLayers.Keys)
 if ($supportedVersions -notcontains $MinecraftVersion) {
@@ -122,6 +126,8 @@ $referenceOnlySources = @{
     "26.1.1" = @{}
     "26.1.2" = @{}
     "26.2" = @{}
+    "26.3" = @{}
+    "26.4-snapshot-8" = @{}
 }
 
 if ($MinecraftVersion -ne $parityReference) {

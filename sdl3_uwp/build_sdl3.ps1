@@ -52,14 +52,38 @@ Remove-Item -Recurse -Force $buildDir,$installDir -ErrorAction SilentlyContinue
 Ensure-Dir $buildDir
 Ensure-Dir $installDir
 
-& $cmake.Source -S $sourceDir -B $buildDir -A x64 -DWINDOWS_STORE=ON -DCMAKE_SYSTEM_VERSION=10.0.26100.0 -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL=ON
-if ($LASTEXITCODE -ne 0) { throw "SDL3-UWP CMake configuration failed." }
+# MSVC's UWP toolset keeps platform.winmd under its architecture-specific
+# store references directory. CMake's Visual Studio generator does not always
+# propagate this metadata search path to generated PCH compilation commands.
+$platformWinmd = Join-Path $env:VCToolsInstallDir "lib\x64\store\references\platform.winmd"
+if (-not (Test-Path -LiteralPath $platformWinmd)) {
+    $platformWinmd = Join-Path (Split-Path $tools.MsvcRoot -Parent) "lib\x64\store\references\platform.winmd"
+}
+if (-not (Test-Path -LiteralPath $platformWinmd)) {
+    $platformWinmd = Get-ChildItem (Join-Path $tools.MsvcRoot "lib") -Filter "platform.winmd" -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match "[\\/]x64[\\/]store[\\/]references[\\/]platform\.winmd$" } |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $platformWinmd -or -not (Test-Path -LiteralPath $platformWinmd)) {
+    throw "MSVC UWP platform.winmd not found. Install the MSVC x64 UWP toolset component."
+}
+$platformMetadataDir = Split-Path -Parent $platformWinmd
+$previousLibPath = $env:LIBPATH
+try {
+    $env:LIBPATH = if ($previousLibPath) { "$platformMetadataDir;$previousLibPath" } else { $platformMetadataDir }
+    Write-Host "UWP metadata search path: $platformMetadataDir"
 
-& $cmake.Source --build $buildDir --config Release
-if ($LASTEXITCODE -ne 0) { throw "SDL3-UWP build failed." }
+    & $cmake.Source -S $sourceDir -B $buildDir -A x64 -DWINDOWS_STORE=ON -DCMAKE_SYSTEM_VERSION=10.0.26100.0 -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL=ON
+    if ($LASTEXITCODE -ne 0) { throw "SDL3-UWP CMake configuration failed." }
 
-& $cmake.Source --install $buildDir --config Release --prefix $installDir
-if ($LASTEXITCODE -ne 0) { throw "SDL3-UWP install failed." }
+    & $cmake.Source --build $buildDir --config Release
+    if ($LASTEXITCODE -ne 0) { throw "SDL3-UWP build failed." }
+
+    & $cmake.Source --install $buildDir --config Release --prefix $installDir
+    if ($LASTEXITCODE -ne 0) { throw "SDL3-UWP install failed." }
+} finally {
+    $env:LIBPATH = $previousLibPath
+}
 
 $builtDll = Get-ChildItem $installDir -Filter "SDL3.dll" -File -Recurse | Select-Object -First 1
 if (-not $builtDll) {

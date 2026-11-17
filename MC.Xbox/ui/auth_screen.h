@@ -986,12 +986,14 @@ private:
             } else {
                 versionLabel = Tr(L"Latest compatible");
             }
-            DrawText(L"‹", rowStrongFormat_.Get(),
-                D2D1::RectF(versionRow.left + 190.0f, rowTop, versionRow.left + 238.0f, rowTop + 48.0f), muted_);
+            const D2D1_RECT_F previousVersion = D2D1::RectF(versionRow.left + 190.0f, rowTop, versionRow.left + 238.0f, rowTop + 48.0f);
+            RegisterHit(41001, previousVersion);
+            DrawText(L"‹", rowStrongFormat_.Get(), previousVersion, muted_);
             DrawText(versionLabel.c_str(), rowStrongFormat_.Get(),
                 D2D1::RectF(versionRow.left + 244.0f, rowTop, versionRow.right - 58.0f, rowTop + 48.0f), accent_);
-            DrawText(L"›", rowStrongFormat_.Get(),
-                D2D1::RectF(versionRow.right - 48.0f, rowTop, versionRow.right - 12.0f, rowTop + 48.0f), muted_);
+            const D2D1_RECT_F nextVersion = D2D1::RectF(versionRow.right - 48.0f, rowTop, versionRow.right - 12.0f, rowTop + 48.0f);
+            RegisterHit(41002, nextVersion);
+            DrawText(L"›", rowStrongFormat_.Get(), nextVersion, muted_);
             versionRowBottom = versionRow.bottom;
         }
 

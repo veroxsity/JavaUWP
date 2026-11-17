@@ -50,6 +50,19 @@ bool ResolveLatestFile(
     FileRef& out,
     std::wstring& error);
 
+bool ListFiles(
+    const std::wstring& modId,
+    const std::string& gameVersion,
+    const std::wstring& loader,
+    std::vector<FileRef>& out,
+    std::wstring& error);
+
+bool ResolveFileById(
+    const std::wstring& modId,
+    long long fileId,
+    FileRef& out,
+    std::wstring& error);
+
 // one request for the whole manifest
 bool ResolveFilesById(
     const std::vector<long long>& fileIds,

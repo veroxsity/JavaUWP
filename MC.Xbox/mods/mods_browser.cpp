@@ -1029,7 +1029,8 @@ static bool InstallCurseForgeProjectRecursive(
     const std::wstring& loaderName,
     const std::string& loaderVersion,
     const std::wstring& rootProjectId,
-    bool installingDependency) {
+    bool installingDependency,
+    const std::wstring& pinnedFileId = L"") {
     if (modId.empty()) {
         error = Tr(L"Missing CurseForge project id");
         return false;
@@ -1041,9 +1042,10 @@ static bool InstallCurseForgeProjectRecursive(
     const std::wstring title = topMeta ? topMeta->title : CurseForgeProjectName(modId);
 
     curseforge::FileRef file;
-    if (!curseforge::ResolveLatestFile(modId, gameVersion, loaderName, file, error)) {
-        return false;
-    }
+    const bool resolvedFile = (!installingDependency && !pinnedFileId.empty())
+        ? curseforge::ResolveFileById(modId, _wtoi64(pinnedFileId.c_str()), file, error)
+        : curseforge::ResolveLatestFile(modId, gameVersion, loaderName, file, error);
+    if (!resolvedFile) return false;
 
     if (file.distributionBlocked) {
         error = TrFormat(L"{0} cannot be downloaded by third party launchers. Get it from curseforge.com and upload the jar in Remote Files.", { title });
@@ -1157,7 +1159,7 @@ static bool InstallModProject(
     std::set<std::wstring> visited;
     const std::wstring id = !card.projectId.empty() ? card.projectId : card.slug;
     return InstallCurseForgeProjectRecursive(id, runtimeRoot, userModsDir, visited, installed,
-        &card, error, gameVersion, loaderName, loaderVersion, modsource::QualifyProjectId(ModSource::CurseForge, id), false);
+        &card, error, gameVersion, loaderName, loaderVersion, modsource::QualifyProjectId(ModSource::CurseForge, id), false, selectedVersion);
 }
 
 
@@ -1507,7 +1509,15 @@ static unsigned StartVersionFetch(const ModCard& card, const LaunchTarget& targe
     const ModSource source = card.source;
     std::thread([id, projectId, gameVersion, loaderId, source]() {
         std::vector<ModVersionOption> options;
-        if (source == ModSource::Modrinth) {
+        if (source == ModSource::CurseForge) {
+            std::vector<curseforge::FileRef> files;
+            std::wstring error;
+            if (curseforge::ListFiles(projectId, gameVersion, a2w(loaderId.c_str()), files, error)) {
+                for (const auto& file : files) {
+                    options.push_back({ std::to_wstring(file.fileId), file.fileName });
+                }
+            }
+        } else if (source == ModSource::Modrinth) {
             const std::string encodedVersions = FormUrlEncode("[\"" + gameVersion + "\"]");
             const std::wstring url = L"https://api.modrinth.com/v2/project/" +
                 a2w(FormUrlEncode(w2a(projectId).c_str()).c_str()) + L"/version?" +
@@ -3088,7 +3098,7 @@ void ShowModsPage(
                     state.modsDetailReqId = StartDetailFetch(selected);
                     state.modsVersionOptions.clear();
                     state.modsSelectedVersion = 0;
-                    state.modsVersionsLoading = (selected.kind == ContentKind::Mod && selected.source == ModSource::Modrinth);
+                    state.modsVersionsLoading = (selected.kind == ContentKind::Mod);
                     state.modsVersionsReqId = state.modsVersionsLoading
                         ? StartVersionFetch(selected, CurrentModsTarget(state)) : 0;
                     ApplyCompatFlag(state, selected);

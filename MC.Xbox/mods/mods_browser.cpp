@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cwchar>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -1043,7 +1044,7 @@ static bool InstallCurseForgeProjectRecursive(
 
     curseforge::FileRef file;
     const bool resolvedFile = (!installingDependency && !pinnedFileId.empty())
-        ? curseforge::ResolveFileById(modId, _wtoi64(pinnedFileId.c_str()), file, error)
+        ? curseforge::ResolveFileById(modId, std::wcstoll(pinnedFileId.c_str(), nullptr, 10), file, error)
         : curseforge::ResolveLatestFile(modId, gameVersion, loaderName, file, error);
     if (!resolvedFile) return false;
 

@@ -968,7 +968,34 @@ private:
                 D2D1::RectF(L_, under + 6.0f, R_, under + 36.0f), state.isError ? danger_ : muted_);
         }
 
-        const float bodyTop = CompatBannerBottom(state, L_, R_, under) + 16.0f;
+        float versionRowBottom = under;
+        if (card.kind == ContentKind::Mod) {
+            const float rowTop = under + 42.0f;
+            const D2D1_RECT_F versionRow = D2D1::RectF(L_, rowTop, R_, rowTop + 48.0f);
+            FillRound(versionRow, surface_, 12.0f);
+            DrawText(Tr(L"MOD VERSION"), overlineFormat_.Get(),
+                D2D1::RectF(versionRow.left + 16.0f, rowTop, versionRow.left + 170.0f, rowTop + 48.0f), muted_);
+            std::wstring versionLabel;
+            if (state.modsVersionsLoading) versionLabel = Tr(L"Loading versions...");
+            else if (!state.modsVersionOptions.empty() &&
+                state.modsSelectedVersion >= 0 &&
+                state.modsSelectedVersion < static_cast<int>(state.modsVersionOptions.size())) {
+                versionLabel = state.modsVersionOptions[static_cast<size_t>(state.modsSelectedVersion)].label;
+            } else if (card.source == ModSource::CurseForge) {
+                versionLabel = Tr(L"Latest compatible (CurseForge)");
+            } else {
+                versionLabel = Tr(L"Latest compatible");
+            }
+            DrawText(L"‹", rowStrongFormat_.Get(),
+                D2D1::RectF(versionRow.left + 190.0f, rowTop, versionRow.left + 238.0f, rowTop + 48.0f), muted_);
+            DrawText(versionLabel.c_str(), rowStrongFormat_.Get(),
+                D2D1::RectF(versionRow.left + 244.0f, rowTop, versionRow.right - 58.0f, rowTop + 48.0f), accent_);
+            DrawText(L"›", rowStrongFormat_.Get(),
+                D2D1::RectF(versionRow.right - 48.0f, rowTop, versionRow.right - 12.0f, rowTop + 48.0f), muted_);
+            versionRowBottom = versionRow.bottom;
+        }
+
+        const float bodyTop = CompatBannerBottom(state, L_, R_, versionRowBottom) + 16.0f;
         const D2D1_RECT_F bodyRect = D2D1::RectF(L_, bodyTop, R_, B_);
         FillRound(bodyRect, surface_, 16.0f);
         const D2D1_RECT_F bodyInner = D2D1::RectF(bodyRect.left + 30.0f, bodyRect.top + 22.0f, bodyRect.right - 30.0f, bodyRect.bottom - 22.0f);

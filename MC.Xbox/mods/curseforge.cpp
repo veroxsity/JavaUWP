@@ -563,6 +563,64 @@ bool ResolveLatestFile(
     }
 }
 
+bool ListFiles(
+    const std::wstring& modId,
+    const std::string& gameVersion,
+    const std::wstring& loader,
+    std::vector<FileRef>& out,
+    std::wstring& error) {
+    error.clear();
+    out.clear();
+    JsonObject root{ nullptr };
+    if (!GetJson(FilesUrl(modId, gameVersion, loader), root, error)) return false;
+    try {
+        const JsonArray data = JsonArrayOrNull(root, L"data");
+        if (!data) {
+            error = Tr(L"CurseForge returned no versions");
+            return false;
+        }
+        for (uint32_t i = 0; i < data.Size() && out.size() < 80; ++i) {
+            if (data.GetAt(i).ValueType() != JsonValueType::Object) continue;
+            const JsonObject item = data.GetAt(i).GetObject();
+            if (JsonBoolOrFalse(item, L"isServerPack")) continue;
+            FileRef file;
+            if (ParseFile(item, file)) out.push_back(std::move(file));
+        }
+        if (out.empty()) error = Tr(L"No compatible CurseForge versions were found");
+        return !out.empty();
+    } catch (const winrt::hresult_error&) {
+        error = Tr(L"Could not parse the CurseForge version list");
+        return false;
+    }
+}
+
+bool ResolveFileById(
+    const std::wstring& modId,
+    long long fileId,
+    FileRef& out,
+    std::wstring& error) {
+    error.clear();
+    if (fileId <= 0) {
+        error = Tr(L"Invalid CurseForge file version");
+        return false;
+    }
+    const std::wstring url = std::wstring(kApiBase) + L"/mods/" +
+        a2w(FormUrlEncode(w2a(modId)).c_str()) + L"/files/" + std::to_wstring(fileId);
+    JsonObject root{ nullptr };
+    if (!GetJson(url, root, error)) return false;
+    try {
+        const JsonObject data = JsonObjectOrNull(root, L"data");
+        if (!data || !ParseFile(data, out)) {
+            error = Tr(L"Could not resolve the selected CurseForge version");
+            return false;
+        }
+        return true;
+    } catch (const winrt::hresult_error&) {
+        error = Tr(L"Could not parse the selected CurseForge version");
+        return false;
+    }
+}
+
 bool ResolveFilesById(
     const std::vector<long long>& fileIds,
     std::vector<FileRef>& out,

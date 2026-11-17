@@ -2547,6 +2547,8 @@ void ShowModsPage(
         }
 
         bool clickActivate = false;
+        bool clickVersionPrevious = false;
+        bool clickVersionNext = false;
         float wheelDelta = 0.0f;
         state.modsHoverTab = -1;
         state.modsHoverSource = -1;
@@ -2589,6 +2591,10 @@ void ShowModsPage(
                 } else if (state.modsDetailOpen) {
                     if (hid == launchhit::kDetailInstall && clicked) {
                         clickActivate = true;
+                    } else if (hid == 41001 && clicked) {
+                        clickVersionPrevious = true;
+                    } else if (hid == 41002 && clicked) {
+                        clickVersionNext = true;
                     } else if (hid == launchhit::kBack && clicked) {
                         state.modsDetailOpen = false;
                         state.status.clear();
@@ -2826,10 +2832,10 @@ void ShowModsPage(
             if (backDown && !backWasDown) {
                 state.modsDetailOpen = false;
                 state.status.clear();
-            } else if (leftDown && !leftWasDown && !state.modsVersionOptions.empty()) {
+            } else if ((leftDown && !leftWasDown || clickVersionPrevious) && !state.modsVersionOptions.empty()) {
                 const int total = static_cast<int>(state.modsVersionOptions.size());
                 state.modsSelectedVersion = (state.modsSelectedVersion - 1 + total) % total;
-            } else if (rightDown && !rightWasDown && !state.modsVersionOptions.empty()) {
+            } else if ((rightDown && !rightWasDown || clickVersionNext) && !state.modsVersionOptions.empty()) {
                 const int total = static_cast<int>(state.modsVersionOptions.size());
                 state.modsSelectedVersion = (state.modsSelectedVersion + 1) % total;
             } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {

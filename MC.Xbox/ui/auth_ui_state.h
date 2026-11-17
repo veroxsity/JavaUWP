@@ -14,6 +14,11 @@ constexpr int kModsTargetRowsVisible = 10;
 
 constexpr int kMainMenuItems = 7;
 
+struct ModVersionOption {
+    std::wstring id;
+    std::wstring label;
+};
+
 struct AuthUiState {
     std::wstring title;
     std::wstring userCode;
@@ -45,6 +50,10 @@ struct AuthUiState {
     std::vector<std::pair<UINT32, UINT32>> modsDetailBold;
     std::vector<std::pair<UINT32, UINT32>> modsDetailHead;
     bool modsDetailLoading = false;
+    std::vector<ModVersionOption> modsVersionOptions;
+    int modsSelectedVersion = 0;
+    bool modsVersionsLoading = false;
+    unsigned modsVersionsReqId = 0;
     int modsDetailScroll = 0;
     unsigned modsDetailReqId = 0;
     bool modsCompatWarn = false;

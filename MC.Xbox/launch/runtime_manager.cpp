@@ -1358,6 +1358,7 @@ bool PrepareTargetNativeDir(
 
     CopyFileIfNeeded(packageNativesDir + L"\\glfw.dll", nativeDir + L"\\glfw.dll");
 
+    const bool hasSdl3 = GetFileAttributesW((nativeDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
     const bool ready =
         extractedLwjgl &&
         extractedJna &&
@@ -1365,7 +1366,14 @@ bool PrepareTargetNativeDir(
         GetFileAttributesW((nativeDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\jemalloc.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        (!requiresSdl3 || GetFileAttributesW((nativeDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES);
+        (!requiresSdl3 || hasSdl3);
+    WriteLogF(L"Target native check target=%s requiresSDL3=%d SDL3.dll=%d lwjgl=%d jna=%d",
+        targetId.c_str(), requiresSdl3 ? 1 : 0, hasSdl3 ? 1 : 0,
+        GetFileAttributesW((nativeDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0,
+        GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0);
+    if (requiresSdl3 && !hasSdl3) {
+        WriteLogF(L"Required LWJGL SDL3 native was not extracted for %s from its version manifest", targetId.c_str());
+    }
     if (ready) {
         WriteTextFile(markerPath, marker);
     } else {

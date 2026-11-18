@@ -686,16 +686,16 @@ private:
         const float memoryFraction = memoryAvailable
             ? (std::min)(1.0f, static_cast<float>(memoryUsedMb) / static_cast<float>(memoryLimitMb))
             : 0.0f;
-        const D2D1_RECT_F memoryCard = D2D1::RectF(L_, T_ + 66.0f, R_, T_ + 116.0f);
+        const D2D1_RECT_F memoryCard = D2D1::RectF(L_, T_ + 66.0f, R_, T_ + 128.0f);
         FillRound(memoryCard, surface_, 12.0f);
         DrawText(Tr(L"App memory usage"), smallMid_.Get(),
-            D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 5.0f, memoryCard.right - 16.0f, memoryCard.top + 24.0f), muted_);
+            D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 4.0f, memoryCard.right - 16.0f, memoryCard.top + 23.0f), muted_);
         const std::wstring memoryValue = memoryAvailable
             ? std::to_wstring(memoryUsedMb) + L" MB / " + std::to_wstring(memoryLimitMb) + L" MB"
             : std::wstring(Tr(L"Memory information unavailable"));
         DrawText(memoryValue.c_str(), valueFormat_.Get(),
-            D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 23.0f, memoryCard.right - 16.0f, memoryCard.bottom - 3.0f), text_);
-        const D2D1_RECT_F track = D2D1::RectF(memoryCard.right - 260.0f, memoryCard.top + 17.0f, memoryCard.right - 18.0f, memoryCard.top + 31.0f);
+            D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 22.0f, memoryCard.right - 16.0f, memoryCard.top + 43.0f), text_);
+        const D2D1_RECT_F track = D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 48.0f, memoryCard.right - 16.0f, memoryCard.top + 58.0f);
         FillRound(track, MakeBrush(pal_.shade, 0.65f), 7.0f);
         if (memoryAvailable && memoryFraction > 0.0f) {
             FillRound(D2D1::RectF(track.left, track.top, track.left + (track.right - track.left) * memoryFraction, track.bottom), accent_, 7.0f);
@@ -703,7 +703,7 @@ private:
 
         const float rowH = 58.0f;
         const float rowGap = 6.0f;
-        float rowY = T_ + 128.0f;
+        float rowY = T_ + 138.0f;
         auto row = [&](int index, const wchar_t* label, const wchar_t* sub, float controlW) {
             const D2D1_RECT_F r = D2D1::RectF(L_, rowY, R_, rowY + rowH);
             const bool sel = state.settingsSelected == index;
@@ -797,8 +797,8 @@ private:
             L"All third-party projects retain their respective licenses."
         };
         for (const wchar_t* line : credits) {
-            DrawFlow(line, rowFormat_.Get(), L_, y, R_ - L_ - 8.0f, 36.0f, text_);
-            y += 43.0f;
+            DrawFlow(line, rowFormat_.Get(), L_, y, R_ - L_ - 8.0f, 32.0f, text_);
+            y += 36.0f;
         }
         DrawFooter(Tr(L"Press B or select Back to return to Settings."));
     }

@@ -184,5 +184,21 @@
   "Minecraft crashed while starting up": "O Minecraft travou durante a inicialização",
   "Minecraft crashed while playing": "O Minecraft travou durante o jogo",
   "Suspected: {0}": "Possível causa: {0}",
-  "Press B or select Back to return to the launcher.": "Pressione B ou selecione Voltar para retornar ao launcher."
+  "Press B or select Back to return to the launcher.": "Pressione B ou selecione Voltar para retornar ao launcher.",
+  "App memory usage": "Uso de memória do aplicativo",
+  "Memory information unavailable": "Informações de memória indisponíveis",
+  "Credits": "Créditos",
+  "View project, platform and library credits.": "Veja os créditos do projeto, da plataforma e das bibliotecas.",
+  "Bandit Launcher": "Bandit Launcher",
+  "Created and maintained by the Bandit Launcher project contributors.": "Criado e mantido pelos colaboradores do projeto Bandit Launcher.",
+  "Mojang Studios — Minecraft": "Mojang Studios — Minecraft",
+  "Microsoft — Xbox and Windows UWP": "Microsoft — Xbox e Windows UWP",
+  "OpenJDK / Eclipse Temurin — Java runtime": "OpenJDK / Eclipse Temurin — ambiente Java",
+  "Fabric — mod loader and ecosystem": "Fabric — carregador de mods e ecossistema",
+  "Cleanroom — legacy 1.12.2 platform": "Cleanroom — plataforma legada 1.12.2",
+  "LWJGL and GLFW — input and graphics": "LWJGL e GLFW — entrada e gráficos",
+  "Mesa3D — graphics compatibility": "Mesa3D — compatibilidade gráfica",
+  "Modrinth and CurseForge — mod discovery": "Modrinth e CurseForge — catálogo de mods",
+  "All third-party projects retain their respective licenses.": "Todos os projetos de terceiros mantêm suas respectivas licenças.",
+  "Press B or select Back to return to Settings.": "Pressione B ou selecione Voltar para retornar às configurações."
 }

@@ -600,8 +600,32 @@ static void ShowChangelogScreen(
     WriteLog(L"Changelog closed");
 }
 
+static void ShowCreditsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
+    state.showSettings = false;
+    state.showCredits = true;
+    bool backWas = false;
+    while (true) {
+        state.animation = static_cast<float>((GetTickCount64() % 100000) / 1000.0);
+        RenderAuth(renderer, state);
+        LauncherMouse& mouse = LauncherMouseInstance();
+        bool clickedBack = false;
+        if (mouse.Visible() && mouse.TakeClick()) {
+            clickedBack = renderer->HitTest(mouse.X(), mouse.Y()) == launchhit::kBack;
+        }
+        const bool backDown = AnyVirtualKeyDown(window, {
+            ABI::Windows::System::VirtualKey_Escape,
+            ABI::Windows::System::VirtualKey_GamepadB
+        });
+        if ((backDown && !backWas) || clickedBack) break;
+        backWas = backDown;
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    state.showCredits = false;
+    state.showSettings = true;
+}
+
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 6;
+    constexpr int kSettingsRows = 7;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -749,6 +773,8 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
             state.settingsThemeName = themes::CurrentName();
             state.settingsNote = saved ? TrFormat(L"Theme set to {0}.", { state.settingsThemeName })
                                        : Tr(L"The theme was changed but could not be saved.");
+        } else if (pressed == 6) {
+            ShowCreditsPage(window, renderer, state);
         }
 
         upWas = upDown;

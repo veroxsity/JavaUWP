@@ -111,6 +111,7 @@ struct AuthUiState {
     bool updateAvailable = false;
 
     bool showSettings = false;
+    bool showCredits = false;
     bool settingsUpdateCheckOn = true;
     std::wstring settingsLanguageName;
     std::wstring settingsThemeName;

@@ -119,6 +119,32 @@ works on Xbox.
    - Keep the CoreWindow GLFW backend as fallback until the SDL3-backed
      facade passes the same test matrix across multiple mods.
 
+## Voice-chat audio compatibility
+
+Voice chat is a separate compatibility workstream from controller input. The
+initial targets are Simple Voice Chat and Plasmo Voice, only on Minecraft and
+loader versions for which the upstream mod publishes a compatible release.
+
+- Keep microphone capture and playback independent of the GLFW controller
+  backend. A working Controlify/GLFW path must not be treated as proof that
+  voice chat audio works.
+- Inventory the actual audio implementation and native dependencies from the
+  selected mod version. In particular, verify LWJGL OpenAL and the packaged
+  `OpenAL32.dll` (when required) independently of SDL3.
+- Do not assume that adding `SDL3.dll` fixes OpenAL, microphone capture, or
+  audio-device enumeration. Record missing DLLs, missing exports, dependent
+  DLL failures, and device/API failures separately.
+- Test microphone permission and capture-device enumeration in UWP, audio
+  playback, mute state, push-to-talk press/hold/release, focus loss, and
+  disconnect/reconnect. If the platform does not expose a microphone device
+  to the app, report that limitation instead of simulating successful capture.
+- Keep voice chat optional: a profile without a voice-chat mod must still
+  launch, and installing one voice-chat implementation must not force the
+  other to load.
+- Maintain a per-Minecraft-version and per-loader compatibility matrix. Do
+  not copy one mod JAR across Fabric, Forge, and NeoForge unless the upstream
+  artifact explicitly supports those loaders.
+
 ## Acceptance tests
 
 - Xbox controller is detected on launch and after reconnect.
@@ -126,6 +152,12 @@ works on Xbox.
   correct values without duplicate or stuck events.
 - Controlify opens its controller configuration UI and accepts a remapped
   button.
+- Simple Voice Chat and Plasmo Voice are tested separately on each supported
+  version/loader combination; microphone capture and playback are verified.
+- Voice-chat push-to-talk handles press, hold, release, focus loss, and device
+  disconnect without leaving the microphone stuck open.
+- OpenAL native loading and audio-device enumeration are validated separately
+  from SDL3 and GLFW.
 - Minecraft keyboard and mouse input continue to work.
 - Simple Voice Chat PTT responds to the configured controller binding on
   press and release.
@@ -141,8 +173,9 @@ works on Xbox.
 
 ## Current status
 
-**Not implemented or verified.** This plan intentionally does not add a
-placeholder native library, claim SDL3 is active, or patch Controlify without
-a reproducible failure and matching source-level diagnosis. The asset issue
-is now tracked as a separate launcher workstream; its root cause still needs
-the exact launch error or log.
+**Not implemented or verified.** Controlify and voice chat remain separate
+compatibility targets. This plan does not bundle arbitrary mod JARs, add a
+placeholder native library, claim SDL3/OpenAL is active, or report microphone
+support without a successful UWP capture test. Each version/loader combination
+must be validated against the matching upstream mod release. The asset issue
+is tracked as a separate launcher workstream.

@@ -824,9 +824,11 @@ public final class NeoForgeControllerCompat {
     private static boolean sendKeyboardKey(KeyMapping key, int action) {
         InputConstants.Key input = key.getKey();
         if (input == null || input.getValue() < 0) return false;
-        if (input.getType() != InputConstants.Type.KEYSYM && input.getType() != InputConstants.Type.SCANCODE) return false;
-        int code = input.getType() == InputConstants.Type.KEYSYM ? input.getValue() : GLFW.GLFW_KEY_UNKNOWN;
-        int scan = input.getType() == InputConstants.Type.SCANCODE ? input.getValue() : 0;
+        String typeName = String.valueOf(input.getType()).toLowerCase(java.util.Locale.ROOT);
+        if (typeName.contains("mouse")) return false;
+        boolean scanCode = typeName.contains("scan");
+        int code = scanCode ? GLFW.GLFW_KEY_UNKNOWN : input.getValue();
+        int scan = scanCode ? input.getValue() : 0;
         Minecraft client = Minecraft.getInstance();
         if (client == null || client.getWindow() == null) return false;
         NeoForgeControllerTextTargets.keyPress(client.keyboardHandler,

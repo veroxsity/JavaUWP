@@ -1,4 +1,9 @@
 minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	controllerProvider	notes
+b1.7.3	Beta 1.7.3 Vanilla	vanilla	none	legacy	experimental	none	Legacy Java/LWJGL 2 target; requires a compatible legacy runtime and window/input backend; not implemented or tested on Xbox
+26.3	26.3 Fabric	fabric	0.20.1	current	experimental	none	Controller mod build skipped for now; use Controlify instead
+26.3	26.3 Forge	forge	66.1.8	current	experimental	none	Controller mod build skipped for now; use Controlify instead
+26.3	26.3 NeoForge	neoforge	26.3.0.103	current	experimental	none	Controller mod build skipped for now; use Controlify instead
+26.4-snapshot-8	26.4 Snapshot 8 Fabric	fabric	0.20.1	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.2	26.2 Fabric	fabric	0.19.5	current	experimental	fabric	Modern controller and compat target
 26.2	26.2 Forge	forge	65.1.3	current	experimental	forge	Modern shared controller target
 26.2	26.2 NeoForge	neoforge	26.2.0.82	current	experimental	neoforge	Modern shared controller target
@@ -51,7 +56,4 @@ minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	contr
 1.20.1	1.20.1 Fabric	fabric	0.19.5	java21	testing	fabric	Legacy target retained
 1.20.1	1.20.1 Forge	forge	47.4.20	java21	experimental	forge	Legacy target retained
 1.19.2	1.19.2 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
-1.18.2	1.18.2 Forge	forge	40.2.27	java17	experimental	none	Legacy target retained
-1.16.5	1.16.5 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
 1.12.2	1.12.2 Forge	cleanroom	0.3.35-alpha	java21	experimental	cleanroom	Forge 1.12.2 through Cleanroom on Java 21 and LWJGL 3
-1.12.2	1.12.2 Vanilla	vanilla	none	legacy	experimental	none	Legacy provider not implemented yet

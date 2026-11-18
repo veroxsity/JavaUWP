@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cwchar>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -1029,7 +1030,8 @@ static bool InstallCurseForgeProjectRecursive(
     const std::wstring& loaderName,
     const std::string& loaderVersion,
     const std::wstring& rootProjectId,
-    bool installingDependency) {
+    bool installingDependency,
+    const std::wstring& pinnedFileId = L"") {
     if (modId.empty()) {
         error = Tr(L"Missing CurseForge project id");
         return false;
@@ -1041,9 +1043,10 @@ static bool InstallCurseForgeProjectRecursive(
     const std::wstring title = topMeta ? topMeta->title : CurseForgeProjectName(modId);
 
     curseforge::FileRef file;
-    if (!curseforge::ResolveLatestFile(modId, gameVersion, loaderName, file, error)) {
-        return false;
-    }
+    const bool resolvedFile = (!installingDependency && !pinnedFileId.empty())
+        ? curseforge::ResolveFileById(modId, std::wcstoll(pinnedFileId.c_str(), nullptr, 10), file, error)
+        : curseforge::ResolveLatestFile(modId, gameVersion, loaderName, file, error);
+    if (!resolvedFile) return false;
 
     if (file.distributionBlocked) {
         error = TrFormat(L"{0} cannot be downloaded by third party launchers. Get it from curseforge.com and upload the jar in Remote Files.", { title });
@@ -1132,10 +1135,11 @@ static bool InstallModrinthProject(
     std::wstring& error,
     const std::string& gameVersion,
     const std::string& loaderId,
-    const std::string& loaderVersion) {
+    const std::string& loaderVersion,
+    const std::wstring& selectedVersion) {
     std::set<std::wstring> visited;
     const std::wstring id = !card.projectId.empty() ? card.projectId : card.slug;
-    return InstallModrinthProjectRecursive(id, runtimeRoot, userModsDir, visited, installed, &card, error, gameVersion, loaderId, loaderVersion, id, false);
+    return InstallModrinthProjectRecursive(id, runtimeRoot, userModsDir, visited, installed, &card, error, gameVersion, loaderId, loaderVersion, id, false, selectedVersion);
 }
 
 static bool InstallModProject(
@@ -1147,15 +1151,16 @@ static bool InstallModProject(
     const std::string& gameVersion,
     const std::string& loaderId,
     const std::wstring& loaderName,
-    const std::string& loaderVersion) {
+    const std::string& loaderVersion,
+    const std::wstring& selectedVersion) {
     if (card.source != ModSource::CurseForge) {
         return InstallModrinthProject(card, runtimeRoot, userModsDir, installed, error,
-            gameVersion, loaderId, loaderVersion);
+            gameVersion, loaderId, loaderVersion, selectedVersion);
     }
     std::set<std::wstring> visited;
     const std::wstring id = !card.projectId.empty() ? card.projectId : card.slug;
     return InstallCurseForgeProjectRecursive(id, runtimeRoot, userModsDir, visited, installed,
-        &card, error, gameVersion, loaderName, loaderVersion, modsource::QualifyProjectId(ModSource::CurseForge, id), false);
+        &card, error, gameVersion, loaderName, loaderVersion, modsource::QualifyProjectId(ModSource::CurseForge, id), false, selectedVersion);
 }
 
 
@@ -1463,6 +1468,10 @@ static void FetchProjectDetail(const std::wstring& idOrSlug, std::wstring& body,
 }
 
 static std::atomic<unsigned> g_detailReqId{0};
+static std::atomic<unsigned> g_versionsReqId{0};
+static std::mutex g_versionsMutex;
+static unsigned g_versionsReadyId = 0;
+static std::vector<ModVersionOption> g_versionsReady;
 static std::mutex g_detailMutex;
 static unsigned g_detailReadyId = 0;
 static std::wstring g_detailBody;
@@ -1493,6 +1502,58 @@ static unsigned StartDetailFetch(const ModCard& card) {
     return id;
 }
 
+static unsigned StartVersionFetch(const ModCard& card, const LaunchTarget& target) {
+    const unsigned id = ++g_versionsReqId;
+    const std::wstring projectId = !card.projectId.empty() ? card.projectId : card.slug;
+    const std::string gameVersion = w2a(target.minecraftVersion);
+    const std::string loaderId = ModrinthLoaderId(target.loader);
+    const ModSource source = card.source;
+    std::thread([id, projectId, gameVersion, loaderId, source]() {
+        std::vector<ModVersionOption> options;
+        if (source == ModSource::CurseForge) {
+            std::vector<curseforge::FileRef> files;
+            std::wstring error;
+            if (curseforge::ListFiles(projectId, gameVersion, a2w(loaderId.c_str()), files, error)) {
+                for (const auto& file : files) {
+                    options.push_back({ std::to_wstring(file.fileId), file.fileName });
+                }
+            }
+        } else if (source == ModSource::Modrinth) {
+            const std::string encodedVersions = FormUrlEncode("[\"" + gameVersion + "\"]");
+            const std::wstring url = L"https://api.modrinth.com/v2/project/" +
+                a2w(FormUrlEncode(w2a(projectId).c_str()).c_str()) + L"/version?" +
+                (loaderId.empty() ? std::wstring() :
+                    L"loaders=" + a2w(FormUrlEncode("[\"" + loaderId + "\"]").c_str()) + L"&") +
+                L"game_versions=" + a2w(encodedVersions.c_str()) + L"&include_changelog=false";
+            const HttpResult response = HttpGetString(url.c_str());
+            if (response.success()) {
+                try {
+                    using namespace winrt::Windows::Data::Json;
+                    const JsonArray array = JsonArray::Parse(winrt::to_hstring(response.body));
+                    for (uint32_t i = 0; i < array.Size() && options.size() < 80; ++i) {
+                        if (array.GetAt(i).ValueType() != JsonValueType::Object) continue;
+                        const JsonObject version = array.GetAt(i).GetObject();
+                        const std::wstring versionId = JsonStringOrEmpty(version, L"id");
+                        if (versionId.empty()) continue;
+                        std::wstring label = JsonStringOrEmpty(version, L"name");
+                        const std::wstring number = JsonStringOrEmpty(version, L"version_number");
+                        if (label.empty()) label = number;
+                        if (label.empty()) label = versionId;
+                        if (JsonStringOrEmpty(version, L"version_type") != L"release") label += L" (beta)";
+                        options.push_back({ versionId, label });
+                    }
+                } catch (...) {}
+            }
+        }
+        std::lock_guard<std::mutex> lk(g_versionsMutex);
+        if (id == g_versionsReqId.load()) {
+            g_versionsReady = std::move(options);
+            g_versionsReadyId = id;
+        }
+    }).detach();
+    return id;
+}
+
 static void ApplyCompatFlag(AuthUiState& state, const ModCard& card) {
     state.modsCompatWarn = false;
     state.modsCompatAcked = false;
@@ -1511,7 +1572,7 @@ static void ApplyCompatFlag(AuthUiState& state, const ModCard& card) {
     if (!flag.severity.empty()) state.modsCompatNote = flag.severity + L": " + state.modsCompatNote;
 }
 
-static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot, const LaunchTarget& target) {
+static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot, const LaunchTarget& target, const std::wstring& selectedVersion) {
     if (g_installRunning.load()) return;
     g_installRunning.store(true);
     g_installResultReady.store(false);
@@ -1519,7 +1580,8 @@ static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot
     ModCard copy = card;
     std::wstring rootCopy = runtimeRoot;
     LaunchTarget targetCopy = target;
-    std::thread([copy, rootCopy, targetCopy]() {
+    std::wstring selectedVersionCopy = selectedVersion;
+    std::thread([copy, rootCopy, targetCopy, selectedVersionCopy]() {
         const std::string gameVersion = w2a(targetCopy.minecraftVersion);
         const std::string loaderId = ModrinthLoaderId(targetCopy.loader);
         const std::string loaderVersion = w2a(targetCopy.loaderVersion);
@@ -1556,7 +1618,7 @@ static void StartInstallJob(const ModCard& card, const std::wstring& runtimeRoot
                     } else if (copy.kind == ContentKind::Mod) {
                         std::vector<std::wstring> installed;
                         WriteLogF(L"Installing mod '%s' target=%s into profile %s", copy.title.c_str(), targetCopy.targetId.c_str(), active.c_str());
-                        ok = InstallModProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err, gameVersion, loaderId, targetCopy.loader, loaderVersion);
+                        ok = InstallModProject(copy, rootCopy, ProfileModsDir(rootCopy, active), installed, err, gameVersion, loaderId, targetCopy.loader, loaderVersion, selectedVersionCopy);
                         SetInstallStatus(ok
                             ? ((installed.empty() ? std::wstring(Tr(L"Already installed")) : TrFormat(L"Installed {0} file(s)", { std::to_wstring(installed.size()) })) + (err.empty() ? std::wstring() : L"\n" + err))
                             : (err.empty() ? Tr(L"Install failed") : err));
@@ -2485,6 +2547,8 @@ void ShowModsPage(
         }
 
         bool clickActivate = false;
+        bool clickVersionPrevious = false;
+        bool clickVersionNext = false;
         float wheelDelta = 0.0f;
         state.modsHoverTab = -1;
         state.modsHoverSource = -1;
@@ -2527,6 +2591,10 @@ void ShowModsPage(
                 } else if (state.modsDetailOpen) {
                     if (hid == launchhit::kDetailInstall && clicked) {
                         clickActivate = true;
+                    } else if (hid == 41001 && clicked) {
+                        clickVersionPrevious = true;
+                    } else if (hid == 41002 && clicked) {
+                        clickVersionNext = true;
                     } else if (hid == launchhit::kBack && clicked) {
                         state.modsDetailOpen = false;
                         state.status.clear();
@@ -2705,11 +2773,9 @@ void ShowModsPage(
                         continue;
                     }
                     if (state.modsProfileControllerModEnabled) {
-                        const int removed = DeleteControlifyModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));
+                        // Enabling Bandit Controller must not delete the user's Controlify JAR.
                         state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
-                        state.status = removed > 0
-                            ? Tr(L"Bandit controller mod enabled and Controlify removed")
-                            : Tr(L"Bandit controller mod will be forced on launch");
+                        state.status = Tr(L"Bandit controller enabled; Controlify files preserved");
                     } else {
                         const int removed = DeleteBanditControllerModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));
                         state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
@@ -2755,16 +2821,33 @@ void ShowModsPage(
                     state.modsDetailLoading = false;
                 }
             }
+            {
+                std::lock_guard<std::mutex> lk(g_versionsMutex);
+                if (state.modsVersionsReqId != 0 && g_versionsReadyId == state.modsVersionsReqId) {
+                    state.modsVersionOptions = g_versionsReady;
+                    state.modsVersionsLoading = false;
+                    if (state.modsSelectedVersion >= static_cast<int>(state.modsVersionOptions.size())) state.modsSelectedVersion = 0;
+                }
+            }
             if (backDown && !backWasDown) {
                 state.modsDetailOpen = false;
                 state.status.clear();
+            } else if ((leftDown && !leftWasDown || clickVersionPrevious) && !state.modsVersionOptions.empty()) {
+                const int total = static_cast<int>(state.modsVersionOptions.size());
+                state.modsSelectedVersion = (state.modsSelectedVersion - 1 + total) % total;
+            } else if ((rightDown && !rightWasDown || clickVersionNext) && !state.modsVersionOptions.empty()) {
+                const int total = static_cast<int>(state.modsVersionOptions.size());
+                state.modsSelectedVersion = (state.modsSelectedVersion + 1) % total;
             } else if ((selectDown && !selectWasDown) || (enterDown && !enterWasDown) || clickActivate) {
                 if (state.modsCompatWarn && !state.modsCompatAcked) {
                     state.modsCompatAcked = true;
                     state.status = Tr(L"Press install again to add it anyway");
                     state.isError = false;
                 } else {
-                    StartInstallJob(state.modsDetailCard, runtimeRoot, CurrentModsTarget(state));
+                    const std::wstring versionId = state.modsSelectedVersion >= 0 &&
+                        state.modsSelectedVersion < static_cast<int>(state.modsVersionOptions.size())
+                        ? state.modsVersionOptions[static_cast<size_t>(state.modsSelectedVersion)].id : L"";
+                    StartInstallJob(state.modsDetailCard, runtimeRoot, CurrentModsTarget(state), versionId);
                 }
             } else if (upDown && !upWasDown) {
                 state.modsDetailScroll = (std::max)(0, state.modsDetailScroll - 2);
@@ -3020,6 +3103,11 @@ void ShowModsPage(
                     state.modsDetailMeta.clear();
                     state.modsDetailLoading = true;
                     state.modsDetailReqId = StartDetailFetch(selected);
+                    state.modsVersionOptions.clear();
+                    state.modsSelectedVersion = 0;
+                    state.modsVersionsLoading = (selected.kind == ContentKind::Mod);
+                    state.modsVersionsReqId = state.modsVersionsLoading
+                        ? StartVersionFetch(selected, CurrentModsTarget(state)) : 0;
                     ApplyCompatFlag(state, selected);
                     state.status.clear();
                     state.isError = false;

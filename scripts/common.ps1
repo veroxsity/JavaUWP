@@ -540,6 +540,7 @@ function Get-MesaRuntimeDllNames {
         "libgallium_wgl.dll",
         "spirv_to_dxil.dll",
         "vulkan_dzn.dll",
+        "dzn_icd.x86_64.json",
         "dxil.dll",
         "z-1.dll"
     )
@@ -646,8 +647,20 @@ function Test-MinecraftVersionAtLeast {
         [Parameter(Mandatory = $true)][string]$Minimum
     )
 
-    $versionParts = $Version.Split('.') | ForEach-Object { [int]$_ }
-    $minimumParts = $Minimum.Split('.') | ForEach-Object { [int]$_ }
+    # Minecraft snapshots may use identifiers such as 26.4-snapshot-8.
+    # Compare the numeric release prefix and ignore prerelease labels instead
+    # of attempting to cast "4-snapshot-8" to Int32.
+    $versionMatch = [regex]::Match($Version, '^\d+(?:\.\d+)*')
+    $minimumMatch = [regex]::Match($Minimum, '^\d+(?:\.\d+)*')
+    if (-not $versionMatch.Success) {
+        throw "Invalid Minecraft version for comparison: $Version"
+    }
+    if (-not $minimumMatch.Success) {
+        throw "Invalid minimum Minecraft version for comparison: $Minimum"
+    }
+
+    $versionParts = @($versionMatch.Value.Split('.') | ForEach-Object { [int]$_ })
+    $minimumParts = @($minimumMatch.Value.Split('.') | ForEach-Object { [int]$_ })
     $count = [Math]::Max($versionParts.Length, $minimumParts.Length)
     for ($i = 0; $i -lt $count; $i++) {
         $value = if ($i -lt $versionParts.Length) { $versionParts[$i] } else { 0 }

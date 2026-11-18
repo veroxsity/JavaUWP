@@ -1271,9 +1271,11 @@ static void CollectManifestNativeSources(
     const std::wstring& manifestPath,
     const std::wstring& runtimeRoot,
     std::vector<std::wstring>& lwjglNativeJars,
-    std::vector<std::wstring>& jnaJars) {
+    std::vector<std::wstring>& jnaJars,
+    bool& requiresSdl3) {
     std::vector<DownloadManifestEntry> entries;
     if (!ReadDownloadManifest(manifestPath, entries)) return;
+    requiresSdl3 = false;
     for (const auto& e : entries) {
         std::wstring rel = e.relativePath;
         std::replace(rel.begin(), rel.end(), L'\\', L'/');
@@ -1286,6 +1288,7 @@ static void CollectManifestNativeSources(
         if (rel.find(L"/org/lwjgl/") != std::wstring::npos &&
             rel.find(L"-natives-windows.jar") != std::wstring::npos) {
             lwjglNativeJars.push_back(abs);
+            if (rel.find(L"/lwjgl-sdl/") != std::wstring::npos) requiresSdl3 = true;
         } else if (rel.find(L"/net/java/dev/jna/jna/") != std::wstring::npos &&
             rel.find(L"/jna-") != std::wstring::npos) {
             jnaJars.push_back(abs);
@@ -1304,15 +1307,33 @@ bool PrepareTargetNativeDir(
     nativeDir = runtimeRoot + L"\\runtime\\natives\\" + SafePathSegment(targetId);
     const std::wstring packageNativesDir = packageDir + L"\\natives";
     const std::wstring markerPath = nativeDir + L"\\.native_manifest";
-    const std::wstring marker = L"nativeVersion=3\nmanifest=" + FileStamp(manifestPath) +
+    const std::wstring marker = L"nativeVersion=4\nmanifest=" + FileStamp(manifestPath) +
         L"\nglfw=" + FileStamp(packageNativesDir + L"\\glfw.dll") + L"\n";
 
+    std::vector<DownloadManifestEntry> manifestEntries;
+    bool requiresSdl3 = false;
+    if (ReadDownloadManifest(manifestPath, manifestEntries)) {
+        for (const auto& entry : manifestEntries) {
+            std::wstring relative = entry.relativePath;
+            std::replace(relative.begin(), relative.end(), L'\\', L'/');
+            for (wchar_t& ch : relative) ch = static_cast<wchar_t>(towlower(ch));
+            if (relative.find(L"/org/lwjgl/lwjgl-sdl/") != std::wstring::npos &&
+                relative.find(L"-natives-windows.jar") != std::wstring::npos) {
+                requiresSdl3 = true;
+                break;
+            }
+        }
+    }
+
+    const bool hasRequiredSdl3 = !requiresSdl3 ||
+        GetFileAttributesW((nativeDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
     std::wstring existingMarker;
     if (ReadTextFile(markerPath, existingMarker) && existingMarker == marker &&
         GetFileAttributesW((nativeDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\jemalloc.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        hasRequiredSdl3) {
         return true;
     }
 
@@ -1321,7 +1342,7 @@ bool PrepareTargetNativeDir(
 
     std::vector<std::wstring> lwjglNativeJars;
     std::vector<std::wstring> jnaJars;
-    CollectManifestNativeSources(manifestPath, runtimeRoot, lwjglNativeJars, jnaJars);
+    CollectManifestNativeSources(manifestPath, runtimeRoot, lwjglNativeJars, jnaJars, requiresSdl3);
     WriteLogF(L"Preparing target natives target=%s lwjglNativeJars=%zu jnaJars=%zu",
         targetId.c_str(), lwjglNativeJars.size(), jnaJars.size());
 
@@ -1337,13 +1358,22 @@ bool PrepareTargetNativeDir(
 
     CopyFileIfNeeded(packageNativesDir + L"\\glfw.dll", nativeDir + L"\\glfw.dll");
 
+    const bool hasSdl3 = GetFileAttributesW((nativeDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
     const bool ready =
         extractedLwjgl &&
         extractedJna &&
         GetFileAttributesW((nativeDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
         GetFileAttributesW((nativeDir + L"\\jemalloc.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        (!requiresSdl3 || hasSdl3);
+    WriteLogF(L"Target native check target=%s requiresSDL3=%d SDL3.dll=%d lwjgl=%d jna=%d",
+        targetId.c_str(), requiresSdl3 ? 1 : 0, hasSdl3 ? 1 : 0,
+        GetFileAttributesW((nativeDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0,
+        GetFileAttributesW((nativeDir + L"\\jnidispatch.dll").c_str()) != INVALID_FILE_ATTRIBUTES ? 1 : 0);
+    if (requiresSdl3 && !hasSdl3) {
+        WriteLogF(L"Required LWJGL SDL3 native was not extracted for %s from its version manifest", targetId.c_str());
+    }
     if (ready) {
         WriteTextFile(markerPath, marker);
     } else {

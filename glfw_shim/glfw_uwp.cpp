@@ -354,6 +354,7 @@ static GameInputGamepadState g_lastGameInputGamepadState = {};
 static GLFWgamepadstate g_gamepad_state = {};
 static float g_joystick_axes[6] = {};
 static unsigned char g_joystick_buttons[15] = {};
+static unsigned char g_joystick_hats[1] = {};
 static void* g_joystick_user_pointer = NULL;
 
 static ComPtr<ICoreWindow> g_coreWindow;
@@ -827,6 +828,7 @@ static void ClearGamepadState() {
     ZeroMemory(&g_gamepad_state, sizeof(g_gamepad_state));
     ZeroMemory(g_joystick_axes, sizeof(g_joystick_axes));
     ZeroMemory(g_joystick_buttons, sizeof(g_joystick_buttons));
+    ZeroMemory(g_joystick_hats, sizeof(g_joystick_hats));
 }
 
 static void MarkCoreWindowInputStateChanged() {
@@ -1473,6 +1475,12 @@ static void ConvertGameInputGamepadState(const GameInputGamepadState& state) {
 
     memcpy(g_joystick_axes, g_gamepad_state.axes, sizeof(g_joystick_axes));
     memcpy(g_joystick_buttons, g_gamepad_state.buttons, sizeof(g_joystick_buttons));
+    // GLFW hat bitfield: UP=1, RIGHT=2, DOWN=4, LEFT=8. Diagonals are bitwise combinations.
+    g_joystick_hats[0] =
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_UP]    ? 1 : 0) |
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_RIGHT] ? 2 : 0) |
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_DOWN]  ? 4 : 0) |
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_LEFT]  ? 8 : 0);
 }
 
 static bool PollGameInputGamepad(bool fireCallbacks) {
@@ -3827,7 +3835,16 @@ extern "C" __declspec(dllexport) const unsigned char* glfwGetJoystickButtons(int
     if(c)*c=(int)(sizeof(g_joystick_buttons) / sizeof(g_joystick_buttons[0]));
     return g_joystick_buttons;
 }
-extern "C" __declspec(dllexport) const unsigned char* glfwGetJoystickHats(int, int*c) { if(c)*c=0; return NULL; }
+extern "C" __declspec(dllexport) const unsigned char* glfwGetJoystickHats(int jid, int*c) {
+    const bool result = IsSupportedJoystick(jid) && PollGameInputGamepad(false);
+    LogGamepadQuery("glfwGetJoystickHats", jid, result);
+    if (!result) {
+        if (c) *c = 0;
+        return NULL;
+    }
+    if (c) *c = 1;
+    return g_joystick_hats;
+}
 extern "C" __declspec(dllexport) const char* glfwGetJoystickName(int jid) {
     const bool result = IsSupportedJoystick(jid) && PollGameInputGamepad(false);
     LogGamepadQuery("glfwGetJoystickName", jid, result);
@@ -3866,7 +3883,16 @@ extern "C" __declspec(dllexport) GLFWjoystickfun glfwSetJoystickCallback(GLFWjoy
     }
     return p;
 }
-extern "C" __declspec(dllexport) int  glfwUpdateGamepadMappings(const char*) { return GLFW_TRUE; }
+extern "C" __declspec(dllexport) int glfwUpdateGamepadMappings(const char* mappings) {
+    // This UWP shim has no GLFW mapping database/parser. Do not report success for
+    // mappings that were silently ignored; the built-in GameInput mapping remains active.
+    if (g_gamepad_query_log_count < 32) {
+        ++g_gamepad_query_log_count;
+        ShimLog("glfwUpdateGamepadMappings unsupported; built-in Xbox mapping retained (input=%s)",
+            mappings ? "provided" : "null");
+    }
+    return GLFW_FALSE;
+}
 extern "C" __declspec(dllexport) const char* glfwGetGamepadName(int jid) {
     const bool result = IsSupportedJoystick(jid) && PollGameInputGamepad(false);
     LogGamepadQuery("glfwGetGamepadName", jid, result);

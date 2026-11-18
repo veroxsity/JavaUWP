@@ -817,10 +817,9 @@ public:
                 WriteLogF(L"Removed %d Bandit controller mod(s) from active profile before launch", controllerRemoved);
             }
         } else {
-            const int controlifyRemoved = DeleteControlifyModsFromDir(userModsDir);
-            if (controlifyRemoved > 0) {
-                WriteLogF(L"Removed %d Controlify mod(s) from active profile before launch", controlifyRemoved);
-            }
+            // Do not delete user-installed Controlify mods when Bandit Controller is enabled.
+            // Keep the profile's mods intact; controller selection is managed by the user.
+            WriteLogF(L"Preserving user-installed Controlify mods in active profile");
         }
         const int blockedRemoved = PurgeBlockedModsFromDir(exeDir, userModsDir);
         if (blockedRemoved > 0) {

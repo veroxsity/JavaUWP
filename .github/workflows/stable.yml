@@ -16,6 +16,7 @@ on:
       - "config/**"
       - "log_configs/**"
       - "mesa-runtime/**"
+      - "sdl3_uwp/**"
       - "build.ps1"
       - "xbox_security.properties"
   workflow_dispatch:
@@ -130,7 +131,7 @@ jobs:
             "X-GitHub-Api-Version" = "2022-11-28"
           }
 
-          foreach ($tag in @("nightly", "stable")) {
+          foreach ($tag in @("stable")) {
             try {
               $release = Invoke-RestMethod -Method Get -Uri "$apiBase/repos/$repo/releases/tags/$tag" -Headers $headers
               if ($release.body -match 'Package version:\s+(\d+)\.(\d+)\.(\d+)\.(\d+)') {

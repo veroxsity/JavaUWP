@@ -1,0 +1,25 @@
+
+name: ChatGPT Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  chatgpt_comment:
+    runs-on: ubuntu-latest
+    name: Let ChatGPT review the pull request
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ChatGPT code review
+        uses: mvtavares/chatgpt-ts-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          

@@ -368,7 +368,7 @@ final class CleanroomControllerCompat {
             takeControllerCursor();
             // Cleanroom's UWP input bridge may not forward queued keyboard events to legacy screens.
             // Invoke the 1.12 GuiScreen key callback directly so Escape closes the active menu.
-            CleanroomReflect.call(screen, GuiScreen.class, "func_73869_a",
+            CleanroomReflect.call(screen, screen.getClass(), "func_73869_a",
                 new Class<?>[] { char.class, int.class }, Character.valueOf((char) 0), Integer.valueOf(KEY_ESCAPE));
             Keyboard.addKeyEvent(KEY_ESCAPE, true);
             Keyboard.addKeyEvent(KEY_ESCAPE, false);
@@ -532,7 +532,7 @@ final class CleanroomControllerCompat {
         int x = (int) Math.round(cursorX);
         int y = (int) Math.round(cursorY);
         String method = down ? "func_73864_a" : "func_146286_b"; // mouseClicked / mouseReleased
-        CleanroomReflect.call(screen, GuiScreen.class, method,
+        CleanroomReflect.call(screen, screen.getClass(), method,
             new Class<?>[] { int.class, int.class, int.class }, x, y, button);
     }
 

@@ -349,7 +349,15 @@ final class CleanroomControllerCompat {
             injectCursor(screen);
             if (CleanroomControllerKeyboard.activate(screen, cursorX, cursorY)) return;
         }
-        primaryDown = mouseButton(LEFT_CLICK, held(settings, ControllerAction.MENU_ACCEPT), primaryDown);
+        boolean acceptHeld = held(settings, ControllerAction.MENU_ACCEPT);
+        if (acceptHeld && !primaryDown) {
+            takeControllerCursor();
+            injectCursor(screen);
+            dispatchScreenMouse(screen, LEFT_CLICK, true);
+        } else if (!acceptHeld && primaryDown) {
+            dispatchScreenMouse(screen, LEFT_CLICK, false);
+        }
+        primaryDown = acceptHeld;
         if (pressed(settings, ControllerAction.MENU_SECONDARY)) {
             takeControllerCursor();
             injectCursor(screen);
@@ -511,6 +519,17 @@ final class CleanroomControllerCompat {
         } catch (ReflectiveOperationException | ClassCastException e) {
             return null;
         }
+    }
+
+    // Cleanroom's newer LWJGL bridge can expose gamepad state while dropping injected mouse-button
+    // queue events. Dispatch the legacy 1.12 GuiScreen callbacks directly for the primary action.
+    private static void dispatchScreenMouse(GuiScreen screen, int button, boolean down) {
+        if (screen == null) return;
+        int x = (int) Math.round(cursorX);
+        int y = (int) Math.round(cursorY);
+        String method = down ? "func_73864_a" : "func_146286_b"; // mouseClicked / mouseReleased
+        CleanroomReflect.call(screen, GuiScreen.class, method,
+            new Class<?>[] { int.class, int.class, int.class }, x, y, button);
     }
 
     private static boolean mouseButton(int button, boolean held, boolean wasDown) {

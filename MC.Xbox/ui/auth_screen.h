@@ -200,6 +200,8 @@ public:
             else DrawModsBrowser(state);
         } else if (state.showChangelog) {
             DrawChangelog(state);
+        } else if (state.showCredits) {
+            DrawCredits(state);
         } else if (state.showSettings) {
             DrawSettings(state);
         } else if (state.showCrashScreen) {
@@ -678,32 +680,52 @@ private:
     void DrawSettings(const AuthUiState& state) {
         DrawHeader(Tr(L"Settings"));
 
-        const float rowH = 88.0f;
-        const float rowGap = 10.0f;
-        float rowY = T_ + 104.0f;
+        unsigned long long memoryLimitMb = 0;
+        unsigned long long memoryUsedMb = 0;
+        const bool memoryAvailable = ReadAppMemoryBudget(memoryLimitMb, memoryUsedMb) && memoryLimitMb > 0;
+        const float memoryFraction = memoryAvailable
+            ? (std::min)(1.0f, static_cast<float>(memoryUsedMb) / static_cast<float>(memoryLimitMb))
+            : 0.0f;
+        const D2D1_RECT_F memoryCard = D2D1::RectF(L_, T_ + 66.0f, R_, T_ + 116.0f);
+        FillRound(memoryCard, surface_, 12.0f);
+        DrawText(Tr(L"App memory usage"), smallMid_.Get(),
+            D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 5.0f, memoryCard.right - 16.0f, memoryCard.top + 24.0f), muted_);
+        const std::wstring memoryValue = memoryAvailable
+            ? std::to_wstring(memoryUsedMb) + L" MB / " + std::to_wstring(memoryLimitMb) + L" MB"
+            : std::wstring(Tr(L"Memory information unavailable"));
+        DrawText(memoryValue.c_str(), valueFormat_.Get(),
+            D2D1::RectF(memoryCard.left + 16.0f, memoryCard.top + 23.0f, memoryCard.right - 16.0f, memoryCard.bottom - 3.0f), text_);
+        const D2D1_RECT_F track = D2D1::RectF(memoryCard.right - 260.0f, memoryCard.top + 17.0f, memoryCard.right - 18.0f, memoryCard.top + 31.0f);
+        FillRound(track, MakeBrush(pal_.shade, 0.65f), 7.0f);
+        if (memoryAvailable && memoryFraction > 0.0f) {
+            FillRound(D2D1::RectF(track.left, track.top, track.left + (track.right - track.left) * memoryFraction, track.bottom), accent_, 7.0f);
+        }
 
+        const float rowH = 58.0f;
+        const float rowGap = 6.0f;
+        float rowY = T_ + 128.0f;
         auto row = [&](int index, const wchar_t* label, const wchar_t* sub, float controlW) {
             const D2D1_RECT_F r = D2D1::RectF(L_, rowY, R_, rowY + rowH);
             const bool sel = state.settingsSelected == index;
-            FillRound(r, sel ? raised_ : surface_, 14.0f);
-            if (sel) FocusRing(r, 14.0f);
-            const float textRight = r.right - controlW - 44.0f;
-            DrawText(label, rowStrongFormat_.Get(), D2D1::RectF(r.left + 26.0f, r.top + 10.0f, textRight, r.top + 48.0f), text_);
-            DrawText(sub, smallMid_.Get(), D2D1::RectF(r.left + 26.0f, r.top + 46.0f, textRight, r.bottom - 10.0f), muted_);
+            FillRound(r, sel ? raised_ : surface_, 12.0f);
+            if (sel) FocusRing(r, 12.0f);
+            const float textRight = r.right - controlW - 36.0f;
+            DrawText(label, rowStrongFormat_.Get(), D2D1::RectF(r.left + 20.0f, r.top + 5.0f, textRight, r.top + 30.0f), text_);
+            DrawText(sub, smallMid_.Get(), D2D1::RectF(r.left + 20.0f, r.top + 29.0f, textRight, r.bottom - 4.0f), muted_);
             RegisterHit(launchhit::kSettingsRowBase + index, r);
             rowY = r.bottom + rowGap;
             return r;
         };
         auto onOff = [&](const D2D1_RECT_F& r, bool on) {
             const float mid = (r.top + r.bottom) * 0.5f;
-            DrawToggle(r.right - 26.0f, mid, on);
+            DrawToggle(r.right - 24.0f, mid, on);
             DrawText(on ? Tr(L"On") : Tr(L"Off"), valueFormat_.Get(),
-                D2D1::RectF(r.right - 250.0f, r.top, r.right - 106.0f, r.bottom), on ? text_ : muted_);
+                D2D1::RectF(r.right - 210.0f, r.top, r.right - 88.0f, r.bottom), on ? text_ : muted_);
         };
 
         {
             const D2D1_RECT_F r = row(0, Tr(L"Send crash reports and usage stats"),
-                Tr(L"Crash reports and basic launch counts use the same setting."), 180.0f);
+                Tr(L"Crash reports and basic launch counts use the same setting."), 150.0f);
             onOff(r, state.settingsReportingOn);
         }
         row(1, Tr(L"Reset the reporting id"), state.settingsInstallId.c_str(), 0.0f);
@@ -711,57 +733,74 @@ private:
             const bool curseForge = state.settingsModSource == ModSource::CurseForge;
             const std::wstring sub = curseForge
                 ? (state.settingsCurseForgeKeyHint.empty()
-                    ? std::wstring(Tr(L"No API key set. Add one in Remote Files or CurseForge stays empty."))
+                    ? std::wstring(Tr(L"No API key set. Add one in Remote Files."))
                     : TrFormat(L"API key saved ({0}).", { state.settingsCurseForgeKeyHint }))
-                : std::wstring(Tr(L"Modrinth needs no key. Switch to CurseForge to browse there instead."));
-            const float segW = 164.0f;
+                : std::wstring(Tr(L"Modrinth does not need an API key."));
+            const float segW = 132.0f;
             const D2D1_RECT_F r = row(2, Tr(L"Mod download source"), sub.c_str(), segW * 2.0f + 8.0f);
-            const D2D1_RECT_F box = D2D1::RectF(r.right - 26.0f - segW * 2.0f - 8.0f, r.top + 20.0f, r.right - 26.0f, r.bottom - 20.0f);
-            FillRound(box, MakeBrush(pal_.shade, 0.35f), 12.0f);
+            const D2D1_RECT_F box = D2D1::RectF(r.right - 24.0f - segW * 2.0f - 8.0f, r.top + 12.0f, r.right - 24.0f, r.bottom - 12.0f);
+            FillRound(box, MakeBrush(pal_.shade, 0.35f), 10.0f);
             for (int i = 0; i < 2; ++i) {
-                const D2D1_RECT_F seg = D2D1::RectF(box.left + 4.0f + i * segW, box.top + 4.0f, box.left + 4.0f + (i + 1) * segW, box.bottom - 4.0f);
+                const D2D1_RECT_F seg = D2D1::RectF(box.left + 4.0f + i * segW, box.top + 3.0f, box.left + 4.0f + (i + 1) * segW, box.bottom - 3.0f);
                 const bool on = (i == 1) == curseForge;
-                if (on) FillRound(seg, accent_, 9.0f);
+                if (on) FillRound(seg, accent_, 8.0f);
                 DrawText(i == 0 ? L"Modrinth" : L"CurseForge", pillFormat_.Get(), seg, on ? onLight_ : muted_);
             }
         }
         {
             const D2D1_RECT_F r = row(3, Tr(L"Check for new versions"),
-                Tr(L"Asks GitHub which version is newest when the launcher opens. Nothing about you is sent."), 180.0f);
+                Tr(L"Check GitHub for launcher updates when it opens."), 150.0f);
             onOff(r, state.settingsUpdateCheckOn);
         }
         {
-            const D2D1_RECT_F r = row(4, Tr(L"Language"), Tr(L"Anything that is not translated yet stays in English."), 300.0f);
-            DrawIcon(L"\uE76C", D2D1::RectF(r.right - 56.0f, r.top, r.right - 22.0f, r.bottom), muted_);
+            const D2D1_RECT_F r = row(4, Tr(L"Language"), Tr(L"Missing translations stay in English."), 260.0f);
+            DrawIcon(L"\uE76C", D2D1::RectF(r.right - 48.0f, r.top, r.right - 18.0f, r.bottom), muted_);
             DrawText(state.settingsLanguageName.c_str(), valueFormat_.Get(),
-                D2D1::RectF(r.right - 380.0f, r.top, r.right - 66.0f, r.bottom), text_);
+                D2D1::RectF(r.right - 310.0f, r.top, r.right - 58.0f, r.bottom), text_);
         }
         {
-            const D2D1_RECT_F r = row(5, Tr(L"Theme"),
-                Tr(L"Make your own by adding a theme file to the themes folder in Remote Files."), 420.0f);
-            DrawIcon(L"\uE76C", D2D1::RectF(r.right - 56.0f, r.top, r.right - 22.0f, r.bottom), muted_);
-            const D2D1_RECT_F nameRect = D2D1::RectF(r.right - 380.0f, r.top, r.right - 66.0f, r.bottom);
-            DrawText(state.settingsThemeName.c_str(), valueFormat_.Get(), nameRect, text_);
-            const float nameW = (std::min)(MeasureWidth(state.settingsThemeName.c_str(), valueFormat_.Get()), 314.0f);
-            const float mid = (r.top + r.bottom) * 0.5f;
-            const float x = nameRect.right - nameW - 26.0f;
-            FillCircle(x - 32.0f, mid, 11.0f, MakeBrush(pal_.bg));
-            FillCircle(x - 16.0f, mid, 11.0f, text_);
-            FillCircle(x, mid, 11.0f, accent_);
-            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x - 32.0f, mid), 11.0f, 11.0f), line_, 1.5f);
+            const D2D1_RECT_F r = row(5, Tr(L"Theme"), Tr(L"Choose the launcher's appearance."), 310.0f);
+            DrawIcon(L"\uE76C", D2D1::RectF(r.right - 48.0f, r.top, r.right - 18.0f, r.bottom), muted_);
+            DrawText(state.settingsThemeName.c_str(), valueFormat_.Get(),
+                D2D1::RectF(r.right - 310.0f, r.top, r.right - 58.0f, r.bottom), text_);
         }
-
-        DrawFlow(
-            state.settingsConfigured
-                ? Tr(L"Reports use a random id and include launcher and Minecraft versions, loader details, launch stage, memory totals and a mod list hash. Mod jar names and project ids can be sent when a crash needs them. A crash trace can include exception text and Java class names. The launcher does not add your account, gamertag, worlds or access token. Common user and app storage paths are scrubbed. The id stays the same until it is reset.")
-                : Tr(L"No reporting server is configured on this install, so nothing can be sent either way."),
-            captionFormat_.Get(), L_ + 4.0f, rowY + 14.0f, R_ - L_ - 8.0f, 130.0f, muted_);
+        {
+            const D2D1_RECT_F r = row(6, Tr(L"Credits"), Tr(L"View project, platform and library credits."), 90.0f);
+            DrawIcon(L"\uE946", D2D1::RectF(r.right - 48.0f, r.top, r.right - 18.0f, r.bottom), muted_);
+        }
 
         if (!state.settingsNote.empty()) {
             DrawText(state.settingsNote.c_str(), smallMid_.Get(),
                 D2D1::RectF(L_, B_ - 92.0f, R_, B_ - 56.0f), accent_);
         }
         DrawFooter(Tr(L"Press B or select Back to return to the launcher."));
+    }
+
+    void DrawCredits(const AuthUiState& state) {
+        DrawHeader(Tr(L"Credits"));
+        float y = T_ + 104.0f;
+        DrawText(Tr(L"Bandit Launcher"), rowLargeFormat_.Get(),
+            D2D1::RectF(L_, y, R_, y + 52.0f), text_);
+        y += 66.0f;
+        DrawFlow(Tr(L"Created and maintained by the Bandit Launcher project contributors."),
+            leadFormat_.Get(), L_, y, R_ - L_, 58.0f, muted_);
+        y += 82.0f;
+        const wchar_t* credits[] = {
+            L"Mojang Studios — Minecraft",
+            L"Microsoft — Xbox and Windows UWP",
+            L"OpenJDK / Eclipse Temurin — Java runtime",
+            L"Fabric — mod loader and ecosystem",
+            L"Cleanroom — legacy 1.12.2 platform",
+            L"LWJGL and GLFW — input and graphics",
+            L"Mesa3D — graphics compatibility",
+            L"Modrinth and CurseForge — mod discovery",
+            L"All third-party projects retain their respective licenses."
+        };
+        for (const wchar_t* line : credits) {
+            DrawFlow(line, rowFormat_.Get(), L_, y, R_ - L_ - 8.0f, 36.0f, text_);
+            y += 43.0f;
+        }
+        DrawFooter(Tr(L"Press B or select Back to return to Settings."));
     }
 
     void DrawCrash(const AuthUiState& state) {

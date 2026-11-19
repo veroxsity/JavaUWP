@@ -194,7 +194,7 @@
   "Already installed": "Ya se instalo",
   "Installed {0} file(s)": "Instalado/s {0} archivo/s",
   "Install failed": "Instalación fallida",
-  "Installed {0}. Shaders need Iris or Oculus in this profile, add one from Popular.": "Instalado {0}. Los Shaders requieren Iris o Oculus en este perfil para funcionar, añade alguno desde "Popular".",
+  "Installed {0}. Shaders need Iris or Oculus in this profile, add one from Popular.": "Instalado {0}. Los Shaders requieren Iris o Oculus en este perfil para funcionar, añade alguno desde Popular".",
   "Already installed {0}. Turn it on in game from Options, Video Settings, Shader Packs.": "Ya se instalo {0}. Activalo dentro del juego desde Opciones, Opciones de video, Shader Packs.",
   "Installed {0}. Turn it on in game from Options, Video Settings, Shader Packs.": "Instalado {0}. Activalo dentro del juego desde Opciones, Opciones de video, Shader Packs.",
   "Already installed {0}. Turn it on in game from Options, Resource Packs.": "Ya se instalo {0}. Activalo dentro del juego desde Opciones, Paquetes de texturas.",

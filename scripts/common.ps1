@@ -539,6 +539,7 @@ function Get-MesaRuntimeDllNames {
         "opengl32.dll",
         "libgallium_wgl.dll",
         "spirv_to_dxil.dll",
+        "vulkan-1.dll",
         "vulkan_dzn.dll",
         "dzn_icd.x86_64.json",
         "dxil.dll",

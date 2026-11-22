@@ -1307,8 +1307,9 @@ bool PrepareTargetNativeDir(
     nativeDir = runtimeRoot + L"\\runtime\\natives\\" + SafePathSegment(targetId);
     const std::wstring packageNativesDir = packageDir + L"\\natives";
     const std::wstring markerPath = nativeDir + L"\\.native_manifest";
-    const std::wstring marker = L"nativeVersion=4\nmanifest=" + FileStamp(manifestPath) +
-        L"\nglfw=" + FileStamp(packageNativesDir + L"\\glfw.dll") + L"\n";
+    const std::wstring marker = L"nativeVersion=5\nmanifest=" + FileStamp(manifestPath) +
+        L"\nglfw=" + FileStamp(packageNativesDir + L"\\glfw.dll") +
+        L"\nsdl3=" + FileStamp(packageNativesDir + L"\\SDL3.dll") + L"\n";
 
     std::vector<DownloadManifestEntry> manifestEntries;
     bool requiresSdl3 = false;
@@ -1357,6 +1358,15 @@ bool PrepareTargetNativeDir(
     }
 
     CopyFileIfNeeded(packageNativesDir + L"\\glfw.dll", nativeDir + L"\\glfw.dll");
+    // SDL3 is a separate UWP runtime, not a DLL inside lwjgl-sdl's native JAR.
+    // Minecraft 26.3+ declares lwjgl-sdl in its manifest, so stage the packaged
+    // SDL3 runtime beside the other LWJGL natives before validating the directory.
+    const std::wstring packagedSdl3 = packageNativesDir + L"\\SDL3.dll";
+    if (GetFileAttributesW(packagedSdl3.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        if (!CopyFileIfNeeded(packagedSdl3, nativeDir + L"\\SDL3.dll")) {
+            WriteLogF(L"Could not stage SDL3.dll for target %s", targetId.c_str());
+        }
+    }
 
     const bool hasSdl3 = GetFileAttributesW((nativeDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
     const bool ready =

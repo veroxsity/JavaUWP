@@ -61,12 +61,14 @@ typedef jint(JNICALL* JNI_CreateJavaVM_t)(JavaVM**, void**, void*);
 static bool g_embeddedJvmUsed = false;
 static std::atomic<bool> g_minecraftShutdownRequested{ false };
 
-static void SignalGlfwWindowClose() {
+static bool SignalGlfwWindowClose() {
     HMODULE shim = GetModuleHandleW(L"glfw.dll");
-    if (!shim) return;
+    if (!shim) return false;
     using RequestCloseFn = void (*)();
     auto requestClose = reinterpret_cast<RequestCloseFn>(GetProcAddress(shim, "BanditShimRequestWindowClose"));
-    if (requestClose) requestClose();
+    if (!requestClose) return false;
+    requestClose();
+    return true;
 }
 
 void RequestMinecraftShutdown() {
@@ -1428,9 +1430,10 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
 
             if (g_minecraftShutdownRequested.load(std::memory_order_acquire)) {
                 if (!closeSignalSent) {
-                    closeSignalSent = true;
-                    SignalGlfwWindowClose();
-                    WriteLog(L"Application closed: requested GLFW window close so Minecraft can save and exit");
+                    closeSignalSent = SignalGlfwWindowClose();
+                    if (closeSignalSent) {
+                        WriteLog(L"Application closed: requested GLFW window close so Minecraft can save and exit");
+                    }
                 }
                 ++shutdownGraceSeconds;
                 if (shutdownGraceSeconds >= 20) {

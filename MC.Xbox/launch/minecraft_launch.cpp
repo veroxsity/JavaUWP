@@ -59,6 +59,25 @@ typedef jint(JNICALL* JNI_CreateJavaVM_t)(JavaVM**, void**, void*);
 // leaves the process unable to start anything else. JNI_CreateJavaVM answers -1 or -5 and the
 // user just sees a launch that did nothing
 static bool g_embeddedJvmUsed = false;
+static std::atomic<bool> g_minecraftShutdownRequested{ false };
+
+static void SignalGlfwWindowClose() {
+    HMODULE shim = GetModuleHandleW(L"glfw.dll");
+    if (!shim) return;
+    using RequestCloseFn = void (*)();
+    auto requestClose = reinterpret_cast<RequestCloseFn>(GetProcAddress(shim, "BanditShimRequestWindowClose"));
+    if (requestClose) requestClose();
+}
+
+void RequestMinecraftShutdown() {
+    g_minecraftShutdownRequested.store(true, std::memory_order_release);
+    SignalGlfwWindowClose();
+    WriteLog(L"Minecraft shutdown requested by application lifecycle");
+}
+
+bool IsMinecraftShutdownRequested() {
+    return g_minecraftShutdownRequested.load(std::memory_order_acquire);
+}
 
 bool EmbeddedJvmAlreadyUsed() {
     return g_embeddedJvmUsed;
@@ -1400,10 +1419,27 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         // MemoryManager is a winrt static, without an apartment here every read throws
         const HRESULT roHr = RoInitialize(RO_INIT_MULTITHREADED);
         unsigned seconds = 0;
+        unsigned shutdownGraceSeconds = 0;
         bool firstFrameSent = false;
+        bool closeSignalSent = false;
         while (javaMainRunning.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             ++seconds;
+
+            if (g_minecraftShutdownRequested.load(std::memory_order_acquire)) {
+                if (!closeSignalSent) {
+                    closeSignalSent = true;
+                    SignalGlfwWindowClose();
+                    WriteLog(L"Application closed: requested GLFW window close so Minecraft can save and exit");
+                }
+                ++shutdownGraceSeconds;
+                if (shutdownGraceSeconds >= 20) {
+                    WriteLog(L"Minecraft did not stop after CoreWindow close; terminating host to prevent an online game from remaining active");
+                    TerminateProcess(GetCurrentProcess(), 0);
+                    return;
+                }
+            }
+
             if (!firstFrameSent && ShimPresentedFrames() > presentedFramesAtLaunch) {
                 firstFrameSent = true;
                 telemetry::SendFirstFrame();

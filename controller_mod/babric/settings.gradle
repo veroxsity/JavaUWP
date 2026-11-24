@@ -1,0 +1,9 @@
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.glass-launcher.net/babric' }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'onyx-xbox-controller-babric'

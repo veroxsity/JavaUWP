@@ -208,6 +208,7 @@ static void RegisterCoreWindowLifecycleHandlers(ICoreWindow* window) {
     g_coreWindowClosedHandler = Callback<CoreWindowClosedHandler>(
         [](ICoreWindow*, ICoreWindowEventArgs*) -> HRESULT {
             LogLifecycleEvent(L"CoreWindow Closed");
+            RequestMinecraftShutdown();
             return S_OK;
         });
 
@@ -923,6 +924,11 @@ public:
                     authConfig,
                     progress);
             });
+        if (IsMinecraftShutdownRequested()) {
+            g_minecraftRunning.store(false);
+            WriteLog(L"Application shutdown requested; leaving launcher Run loop");
+            return S_OK;
+        }
         if (!launched) {
             g_minecraftRunning.store(false);
             WriteLog(L"Embedded JVM launch failed");

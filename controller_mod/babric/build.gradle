@@ -1,0 +1,41 @@
+plugins {
+    id 'babric-loom' version '1.5-SNAPSHOT'
+}
+
+sourceCompatibility = targetCompatibility = JavaVersion.VERSION_1_8
+
+group = project.maven_group
+version = project.mod_version
+archivesBaseName = project.archives_base_name
+
+loom {
+    gluedMinecraftJar()
+    customMinecraftManifest.set("https://babric.github.io/manifest-polyfill/${minecraft_version}.json")
+    intermediaryUrl.set("https://maven.glass-launcher.net/babric/babric/intermediary/%1\$s/intermediary-%1\$s-v2.jar")
+}
+
+repositories {
+    maven { name = 'Babric'; url = 'https://maven.glass-launcher.net/babric' }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "babric:barn:${project.yarn_mappings}:v2"
+    modImplementation "babric:fabric-loader:${project.loader_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") { expand "version": project.version }
+}
+
+java {
+    withSourcesJar()
+}
+
+jar {
+    from("../../LICENSE") {
+        rename { "${it}_onyx-xbox-controller" }
+    }
+}

@@ -267,7 +267,7 @@ static DWORD g_contextThreadId = 0;
 static HMODULE g_opengl32 = NULL;
 static BOOL g_graphicsRuntimeUsesGles = FALSE;
 static BOOL g_initialised = FALSE;
-static BOOL g_should_close = FALSE;
+static volatile LONG g_should_close = FALSE;
 static int g_window_width = 1920;
 static int g_window_height = 1080;
 static bool g_window_size_notification_pending = false;
@@ -2772,7 +2772,7 @@ extern "C" __declspec(dllexport) void glfwWindowHintString(int,const char*) {}
 
 extern "C" __declspec(dllexport)
 GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFWwindow*) {
-    g_should_close = FALSE;
+    InterlockedExchange(&g_should_close, FALSE);
     ShimLog("glfwCreateWindow %dx%d '%s'", w, h, title ? title : "");
     if (!g_initialised && !glfwInit()) return NULL;
     g_created_width = w;
@@ -2816,10 +2816,18 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
 
 extern "C" __declspec(dllexport) void glfwDestroyWindow(GLFWwindow*) {
     ShimLog("glfwDestroyWindow");
-    g_should_close = TRUE;
+    InterlockedExchange(&g_should_close, TRUE);
 }
-extern "C" __declspec(dllexport) int  glfwWindowShouldClose(GLFWwindow*) { return g_should_close ? GLFW_TRUE : GLFW_FALSE; }
-extern "C" __declspec(dllexport) void glfwSetWindowShouldClose(GLFWwindow*, int v) { g_should_close = (v != 0); }
+extern "C" __declspec(dllexport) int glfwWindowShouldClose(GLFWwindow*) {
+    return InterlockedCompareExchange(&g_should_close, FALSE, FALSE) ? GLFW_TRUE : GLFW_FALSE;
+}
+extern "C" __declspec(dllexport) void glfwSetWindowShouldClose(GLFWwindow*, int v) {
+    InterlockedExchange(&g_should_close, v ? TRUE : FALSE);
+}
+extern "C" __declspec(dllexport) void BanditShimRequestWindowClose(void) {
+    ShimLog("BanditShimRequestWindowClose: requesting Minecraft main loop exit");
+    InterlockedExchange(&g_should_close, TRUE);
+}
 // lwjgl 3.4.1 binds glfwGetWindowTitle as a required symbol, so the title has to be kept
 static std::string g_window_title;
 extern "C" __declspec(dllexport) void glfwSetWindowTitle(GLFWwindow*, const char* title) { g_window_title = title ? title : ""; }

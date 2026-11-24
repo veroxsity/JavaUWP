@@ -699,14 +699,40 @@ if ($BuildSDL3) {
 Write-Host "Copying Mesa runtime..."
 $mesaRuntime = Resolve-MesaRuntimeDir -MesaRuntimeDir $MesaRuntimeDir
 Write-Host "Mesa runtime source: $mesaRuntime"
+
+$mesaDestinations = @(
+    $pkg,
+    (Join-Path $pkg "natives"),
+    (Join-Path $pkg "graphics\mesa")
+)
+foreach ($destination in $mesaDestinations) {
+    Ensure-Dir $destination
+}
+
+$mesaMissing = @()
 foreach ($dll in Get-MesaRuntimeDllNames) {
     $source = Join-Path $mesaRuntime $dll
-    if (Test-Path $source) {
-        Copy-Item $source (Join-Path $pkg $dll) -Force
-        Copy-Item $source (Join-Path $pkg "natives\$dll") -Force
-        Copy-Item $source (Join-Path $pkg "graphics\mesa\$dll") -Force
-        Write-Host "Mesa: $dll"
+    if (-not (Test-Path $source -PathType Leaf)) {
+        $mesaMissing += $dll
+        Write-Warning "Mesa runtime file not found: $source"
+        continue
     }
+
+    foreach ($destination in $mesaDestinations) {
+        $target = Join-Path $destination $dll
+        Copy-Item $source $target -Force
+        if (-not (Test-Path $target -PathType Leaf)) {
+            throw "Mesa runtime copy verification failed: $target"
+        }
+    }
+    Write-Host "Mesa copied to package root, natives, and graphics\mesa: $dll"
+}
+
+if ($mesaMissing -contains "vulkan-1.dll") {
+    Write-Warning "Vulkan loader missing: Vulkan applications will not find vulkan-1.dll."
+}
+if ($mesaMissing -contains "vulkan_dzn.dll" -or $mesaMissing -contains "dzn_icd.x86_64.json") {
+    Write-Warning "Mesa Dozen ICD is incomplete: Vulkan 1.2 cannot be used until both vulkan_dzn.dll and dzn_icd.x86_64.json are packaged."
 }
 
 $manifestGenerator = Join-Path $root "scripts\new-download-manifest.ps1"

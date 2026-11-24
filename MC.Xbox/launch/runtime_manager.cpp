@@ -1357,7 +1357,13 @@ bool PrepareTargetNativeDir(
         extractedJna = ExtractDllsFromJar(jar, nativeDir, true) || extractedJna;
     }
 
-    CopyFileIfNeeded(packageNativesDir + L"\\glfw.dll", nativeDir + L"\\glfw.dll");
+    // Always replace the desktop GLFW extracted from LWJGL's native JAR with the packaged UWP/CoreWindow shim.
+    // CopyFileIfNeeded may keep the JAR's DLL when its timestamp is newer, causing GLFW to load Win32 code on Xbox.
+    if (!CopyFileAlways(packageNativesDir + L"\\glfw.dll", nativeDir + L"\\glfw.dll")) {
+        WriteLogF(L"Could not stage the packaged UWP GLFW shim for target %s", targetId.c_str());
+    } else {
+        WriteLogF(L"Packaged UWP GLFW shim staged for target %s", targetId.c_str());
+    }
     // SDL3 is a separate UWP runtime, not a DLL inside lwjgl-sdl's native JAR.
     // Minecraft 26.3+ declares lwjgl-sdl in its manifest, so stage the packaged
     // SDL3 runtime beside the other LWJGL natives before validating the directory.

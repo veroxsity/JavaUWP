@@ -2,7 +2,7 @@
   "file_format_version": "1.0.0",
   "ICD": {
     "library_path": "vulkan_dzn.dll",
-    "api_version": "1.1",
+    "api_version": "1.2",
     "library_arch": "64"
   }
 }

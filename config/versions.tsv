@@ -55,6 +55,6 @@ b1.7.3	Beta 1.7.3 Vanilla	vanilla	none	legacy	experimental	none	Legacy Java/LWJG
 1.20.4	1.20.4 NeoForge	neoforge	20.4.237	java17	experimental	none	Legacy target retained
 1.20.1	1.20.1 Fabric	fabric	0.19.5	java21	testing	fabric	Legacy target retained
 1.20.1	1.20.1 Forge	forge	47.4.20	java21	experimental	forge	Legacy target retained
-1.19.2	1.19.2 Fabric	fabric	0.14.25	java21	testing	none	Legacy target retained. Bundled controller unavailable
+1.19.2	1.19.2 Fabric	fabric	0.19.5	java21	testing	none	Legacy target retained; Fabric Loader upgraded to 0.19.5; bundled controller unavailable; Xbox validation pending
 1.14.2	1.14.2 Fabric	fabric	0.14.25	java21	experimental	none	Legacy Minecraft target; Fabric Loader 0.14.25; Java 21 UWP runtime required by launcher patches; not yet validated on Xbox
 1.12.2	1.12.2 Forge	cleanroom	0.3.35-alpha	java21	experimental	cleanroom	Forge 1.12.2 through Cleanroom on Java 21 and LWJGL 3

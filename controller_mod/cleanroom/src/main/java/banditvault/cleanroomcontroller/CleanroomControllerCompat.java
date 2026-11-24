@@ -34,7 +34,6 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWGamepadState;
 import org.lwjglx.input.Keyboard;
 import org.lwjglx.input.Mouse;
 import org.lwjglx.opengl.Display;
@@ -59,7 +58,6 @@ final class CleanroomControllerCompat {
     private static final double CONTROLLER_CURSOR_TAKEOVER_THRESHOLD = 0.20;
     private static final long INJECT_SETTLE_NANOS = 150_000_000L;
 
-    private static final GLFWGamepadState GLFW_STATE = GLFWGamepadState.create();
     private static final ControllerState STATE = new ControllerState();
     private static final CleanroomMenuNavigation NAVIGATION = new CleanroomMenuNavigation();
     private static final float[] AXES = new float[6];
@@ -238,17 +236,6 @@ final class CleanroomControllerCompat {
                 }
             }
 
-            // Keep the standardized GLFW path as a fallback for alternate
-            // native runtimes that expose a mapped gamepad but no raw buffers.
-            if (GLFW.glfwJoystickIsGamepad(GAMEPAD_ID)
-                && GLFW.glfwGetGamepadState(GAMEPAD_ID, GLFW_STATE)) {
-                for (int i = 0; i < AXES.length; i++) AXES[i] = GLFW_STATE.axes(i);
-                for (int i = 0; i < BUTTONS.length; i++) {
-                    BUTTONS[i] = GLFW_STATE.buttons(i) == GLFW.GLFW_PRESS;
-                }
-                STATE.capture(AXES, BUTTONS);
-                return true;
-            }
             return false;
         } catch (RuntimeException e) {
             if (!loggedRawJoystickFallback) {

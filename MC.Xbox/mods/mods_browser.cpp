@@ -558,7 +558,6 @@ static const BlockedMod kBlockedMods[] = {
 	{ L"ixeris", L"Ixeris replaces GLFW event polling/threading, which conflicts with the UWP GLFW shim" },
     { L"rrls", L"Remove Reloading Screen failed config file canonical-path checks under LocalState" },
     { L"remove-reloading-screen", L"Remove Reloading Screen failed config file canonical-path checks under LocalState" },
-	{ L"vulkanmod", L"Xbox doesn't use Vulkan." },
 	{ L"xaeros-minimap", L"Exception Access Violation" },
     { L"xaeros-world-map", L"Exception Access Violation" },
 };

@@ -17,6 +17,8 @@ if (-not $LoaderVersion) { $LoaderVersion = $ProjectConfig.FabricLoaderVersion }
 
 $variantRootDir = Join-Path $PSScriptRoot "src\variants"
 $variantLayers = @{
+    # Legacy 1.14.2 has a dedicated LWJGL 3.2 raw-joystick adapter and a minimal mixin set.
+    "1.14.2" = @("1.14.2")
     "1.20.1" = @("1.20.1")
     "1.20.4" = @("1.20.4", "1.20.1")
     "1.21" = @("1.21", "1.20.4", "1.20.1")
@@ -130,7 +132,7 @@ $referenceOnlySources = @{
     "26.4-snapshot-8" = @{}
 }
 
-if ($MinecraftVersion -ne $parityReference) {
+if ($MinecraftVersion -ne $parityReference -and $MinecraftVersion -ne "1.14.2") {
     $referenceLeaves = @(Resolve-VariantSources $parityReference | ForEach-Object { Split-Path $_ -Leaf })
     $targetLeaves = @($sources | ForEach-Object { Split-Path $_ -Leaf })
     $allowed = $referenceOnlySources[$MinecraftVersion]

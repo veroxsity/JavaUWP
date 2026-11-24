@@ -1,0 +1,39 @@
+plugins {
+    id 'fabric-loom' version '1.6.12'
+}
+
+version = '0.1.0'
+group = 'banditvault'
+archivesBaseName = 'java21compat-1.14.2'
+
+repositories {
+    maven { url = 'https://maven.fabricmc.net/' }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft 'com.mojang:minecraft:1.14.2'
+    mappings 'net.fabricmc:yarn:1.14.2+build.7:v2'
+    modImplementation 'net.fabricmc:fabric-loader:0.14.25'
+    compileOnly 'org.lwjgl:lwjgl:3.2.2'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 8
+    options.encoding = 'UTF-8'
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}

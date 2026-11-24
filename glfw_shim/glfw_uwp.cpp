@@ -2845,7 +2845,10 @@ extern "C" __declspec(dllexport) void glfwSetWindowPos(GLFWwindow*, int, int) {}
 extern "C" __declspec(dllexport) void glfwGetWindowSize(GLFWwindow*, int*w, int*h) { RefreshWindowMetrics(false); if(w)*w=g_window_width; if(h)*h=g_window_height; }
 extern "C" __declspec(dllexport) void glfwSetWindowSizeLimits(GLFWwindow*, int, int, int, int) {}
 extern "C" __declspec(dllexport) void glfwSetWindowAspectRatio(GLFWwindow*, int, int) {}
-extern "C" __declspec(dllexport) void glfwSetWindowSize(GLFWwindow*, int width, int height) {\n    ShimLog("glfwSetWindowSize requested=%dx%d; retaining full-screen CoreWindow", width, height);\n    RefreshWindowMetrics(true);\n}
+extern "C" __declspec(dllexport) void glfwSetWindowSize(GLFWwindow*, int width, int height) {
+    ShimLog("glfwSetWindowSize requested=%dx%d; retaining full-screen CoreWindow", width, height);
+    RefreshWindowMetrics(true);
+}
 extern "C" __declspec(dllexport) void glfwGetFramebufferSize(GLFWwindow*, int*w, int*h) { RefreshWindowMetrics(false); if(w)*w=g_framebuffer_width; if(h)*h=g_framebuffer_height; }
 extern "C" __declspec(dllexport) void glfwGetWindowFrameSize(GLFWwindow*, int*l, int*t, int*r, int*b) {
     if(l)*l=0; if(t)*t=0; if(r)*r=0; if(b)*b=0;
@@ -2866,7 +2869,10 @@ extern "C" __declspec(dllexport) void glfwHideWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwFocusWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwRequestWindowAttention(GLFWwindow*) {}
 extern "C" __declspec(dllexport) GLFWmonitor* glfwGetWindowMonitor(GLFWwindow*) { return NULL; }
-extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) {\n    g_window_size_notification_pending = true;\n    RefreshWindowMetrics(true);\n}
+extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) {
+    g_window_size_notification_pending = true;
+    RefreshWindowMetrics(true);
+}
 extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
     if (g_window_attrib_log_count < 32) {
         ++g_window_attrib_log_count;

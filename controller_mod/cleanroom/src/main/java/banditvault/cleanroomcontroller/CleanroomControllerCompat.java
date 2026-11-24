@@ -213,35 +213,47 @@ final class CleanroomControllerCompat {
 
     private static boolean poll() {
         try {
-            // Prefer GLFW's standardized gamepad mapping. Some 1.12.2 / LWJGL
-            // compatibility paths expose the Xbox pad as a joystick but do not
-            // report it as a mapped GLFW gamepad, so fall back to raw HID state.
+            // Cleanroom 1.12.2 runs through the LWJGL compatibility layer. Read
+            // the raw joystick buffers first: this avoids depending on the
+            // GLFWGamepadState struct wrapper being laid out identically by
+            // every LWJGL build shipped with older Cleanroom profiles.
+            if (GLFW.glfwJoystickPresent(GAMEPAD_ID)) {
+                FloatBuffer rawAxes = GLFW.glfwGetJoystickAxes(GAMEPAD_ID);
+                ByteBuffer rawButtons = GLFW.glfwGetJoystickButtons(GAMEPAD_ID);
+                if (rawAxes != null && rawButtons != null
+                    && rawAxes.remaining() >= AXES.length
+                    && rawButtons.remaining() >= BUTTONS.length) {
+                    for (int i = 0; i < AXES.length; i++) {
+                        AXES[i] = rawAxes.get(rawAxes.position() + i);
+                    }
+                    for (int i = 0; i < BUTTONS.length; i++) {
+                        BUTTONS[i] = rawButtons.get(rawButtons.position() + i) != 0;
+                    }
+                    STATE.capture(AXES, BUTTONS);
+                    if (!loggedRawJoystickFallback) {
+                        loggedRawJoystickFallback = true;
+                        CleanroomControllerLog.log("Xbox controller detected through raw GLFW joystick buffers (1.12.2)");
+                    }
+                    return true;
+                }
+            }
+
+            // Keep the standardized GLFW path as a fallback for alternate
+            // native runtimes that expose a mapped gamepad but no raw buffers.
             if (GLFW.glfwJoystickIsGamepad(GAMEPAD_ID)
                 && GLFW.glfwGetGamepadState(GAMEPAD_ID, GLFW_STATE)) {
                 for (int i = 0; i < AXES.length; i++) AXES[i] = GLFW_STATE.axes(i);
-                for (int i = 0; i < BUTTONS.length; i++) BUTTONS[i] = GLFW_STATE.buttons(i) == GLFW.GLFW_PRESS;
+                for (int i = 0; i < BUTTONS.length; i++) {
+                    BUTTONS[i] = GLFW_STATE.buttons(i) == GLFW.GLFW_PRESS;
+                }
                 STATE.capture(AXES, BUTTONS);
                 return true;
             }
-
-            if (!GLFW.glfwJoystickPresent(GAMEPAD_ID)) return false;
-            FloatBuffer rawAxes = GLFW.glfwGetJoystickAxes(GAMEPAD_ID);
-            ByteBuffer rawButtons = GLFW.glfwGetJoystickButtons(GAMEPAD_ID);
-            if (rawAxes == null || rawButtons == null || rawAxes.remaining() < AXES.length
-                || rawButtons.remaining() < BUTTONS.length) return false;
-
-            for (int i = 0; i < AXES.length; i++) AXES[i] = rawAxes.get(rawAxes.position() + i);
-            for (int i = 0; i < BUTTONS.length; i++) BUTTONS[i] = rawButtons.get(rawButtons.position() + i) != 0;
-            STATE.capture(AXES, BUTTONS);
-            if (!loggedRawJoystickFallback) {
-                loggedRawJoystickFallback = true;
-                CleanroomControllerLog.log("GLFW gamepad mapping unavailable; using raw joystick axes/buttons for 1.12.2");
-            }
-            return true;
+            return false;
         } catch (RuntimeException e) {
             if (!loggedRawJoystickFallback) {
                 loggedRawJoystickFallback = true;
-                CleanroomControllerLog.logException("GLFW controller polling failed", e);
+                CleanroomControllerLog.logException("Cleanroom 1.12.2 GLFW controller polling failed", e);
             }
             return false;
         }

@@ -2799,12 +2799,18 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
         return NULL;
     }
 
+    // GLFW's initial requested size (often 854x480) is not the UWP display
+    // size. Notify LWJGL of the real CoreWindow dimensions as well as the
+    // framebuffer dimensions, otherwise early Mojang loading UI can remain
+    // rendered as a small rectangle in the top-left corner.
+    RefreshWindowMetrics(true);
     g_fake_window.width = g_window_width;
     g_fake_window.height = g_window_height;
     g_vidmode.width = g_framebuffer_width;
     g_vidmode.height = g_framebuffer_height;
     if (g_fbsize_cb) g_fbsize_cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
-    ShimLog("glfwCreateWindow OK");
+    ShimLog("glfwCreateWindow OK window=%dx%d framebuffer=%dx%d",
+        g_window_width, g_window_height, g_framebuffer_width, g_framebuffer_height);
     return (GLFWwindow*)&g_fake_window;
 }
 
@@ -2824,7 +2830,7 @@ extern "C" __declspec(dllexport) void glfwSetWindowPos(GLFWwindow*, int, int) {}
 extern "C" __declspec(dllexport) void glfwGetWindowSize(GLFWwindow*, int*w, int*h) { RefreshWindowMetrics(false); if(w)*w=g_window_width; if(h)*h=g_window_height; }
 extern "C" __declspec(dllexport) void glfwSetWindowSizeLimits(GLFWwindow*, int, int, int, int) {}
 extern "C" __declspec(dllexport) void glfwSetWindowAspectRatio(GLFWwindow*, int, int) {}
-extern "C" __declspec(dllexport) void glfwSetWindowSize(GLFWwindow*, int, int) {}
+extern "C" __declspec(dllexport) void glfwSetWindowSize(GLFWwindow*, int width, int height) {\n    ShimLog("glfwSetWindowSize requested=%dx%d; retaining full-screen CoreWindow", width, height);\n    RefreshWindowMetrics(true);\n}
 extern "C" __declspec(dllexport) void glfwGetFramebufferSize(GLFWwindow*, int*w, int*h) { RefreshWindowMetrics(false); if(w)*w=g_framebuffer_width; if(h)*h=g_framebuffer_height; }
 extern "C" __declspec(dllexport) void glfwGetWindowFrameSize(GLFWwindow*, int*l, int*t, int*r, int*b) {
     if(l)*l=0; if(t)*t=0; if(r)*r=0; if(b)*b=0;
@@ -2845,7 +2851,7 @@ extern "C" __declspec(dllexport) void glfwHideWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwFocusWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwRequestWindowAttention(GLFWwindow*) {}
 extern "C" __declspec(dllexport) GLFWmonitor* glfwGetWindowMonitor(GLFWwindow*) { return NULL; }
-extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) { g_window_size_notification_pending = true; }
+extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) {\n    g_window_size_notification_pending = true;\n    RefreshWindowMetrics(true);\n}
 extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
     if (g_window_attrib_log_count < 32) {
         ++g_window_attrib_log_count;

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - stable
+      - feature/sdl3-minecraft-26.3-26.4
     paths:
       - ".github/workflows/stable.yml"
       - "MC.Xbox/**"

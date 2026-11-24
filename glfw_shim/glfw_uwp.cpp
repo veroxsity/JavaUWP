@@ -2913,7 +2913,14 @@ extern "C" __declspec(dllexport) GLFWwindowposfun glfwSetWindowPosCallback(GLFWw
     return SwapCallback(g_winpos_cb, cb);
 }
 extern "C" __declspec(dllexport) GLFWwindowsizefun glfwSetWindowSizeCallback(GLFWwindow*, GLFWwindowsizefun cb) {
-    return SwapCallback(g_winsize_cb, cb);
+    GLFWwindowsizefun previous = SwapCallback(g_winsize_cb, cb);
+    if (cb) {
+        RefreshWindowMetrics(false);
+        cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
+        g_window_size_notification_pending = false;
+        ShimLog("Initial GLFW window-size callback delivered: %dx%d", g_window_width, g_window_height);
+    }
+    return previous;
 }
 extern "C" __declspec(dllexport) GLFWwindowclosefun glfwSetWindowCloseCallback(GLFWwindow*, GLFWwindowclosefun cb) {
     return SwapCallback(g_winclose_cb, cb);
@@ -2931,7 +2938,13 @@ extern "C" __declspec(dllexport) GLFWwindowmaximizefun glfwSetWindowMaximizeCall
     return SwapCallback(g_maximize_cb, cb);
 }
 extern "C" __declspec(dllexport) GLFWframebuffersizefun glfwSetFramebufferSizeCallback(GLFWwindow*, GLFWframebuffersizefun cb) {
-    return SwapCallback(g_fbsize_cb, cb);
+    GLFWframebuffersizefun previous = SwapCallback(g_fbsize_cb, cb);
+    if (cb) {
+        RefreshWindowMetrics(false);
+        cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
+        ShimLog("Initial GLFW framebuffer-size callback delivered: %dx%d", g_framebuffer_width, g_framebuffer_height);
+    }
+    return previous;
 }
 extern "C" __declspec(dllexport) GLFWwindowcontentscalefun glfwSetWindowContentScaleCallback(GLFWwindow*, GLFWwindowcontentscalefun cb) {
     return SwapCallback(g_contentscale_cb, cb);

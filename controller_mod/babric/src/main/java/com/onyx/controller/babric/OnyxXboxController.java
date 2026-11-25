@@ -1,11 +1,10 @@
 package com.onyx.controller.babric;
 
+import java.util.logging.Logger;
 import net.fabricmc.api.ModInitializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public final class OnyxXboxController implements ModInitializer {
-    public static final Logger LOGGER = LoggerFactory.getLogger("onyx-xbox-controller");
+    public static final Logger LOGGER = Logger.getLogger("OnyxXboxController");
 
     @Override
     public void onInitialize() {

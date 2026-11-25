@@ -62,7 +62,7 @@ public final class GamepadBridge {
             STATE.rightTrigger = trigger(axis(axes, 5));
         } catch (Throwable error) {
             STATE.clear();
-            OnyxXboxController.LOGGER.debug("GLFW gamepad poll failed: {}", error.toString());
+            OnyxXboxController.LOGGER.fine("GLFW gamepad poll failed: " + error.toString());
         }
     }
 
@@ -76,7 +76,7 @@ public final class GamepadBridge {
             joystickButtons = glfw.getMethod("glfwGetJoystickButtons", int.class);
             return true;
         } catch (Throwable error) {
-            OnyxXboxController.LOGGER.warn("GLFW 3 joystick API is unavailable; controller input is disabled.");
+            OnyxXboxController.LOGGER.warning("GLFW 3 joystick API is unavailable; controller input is disabled.");
             return false;
         }
     }

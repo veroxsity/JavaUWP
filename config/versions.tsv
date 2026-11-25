@@ -1,5 +1,5 @@
 minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	controllerProvider	notes
-b1.7.3	Beta 1.7.3 Babric	vanilla	none	legacy	experimental	babric	Onyx Xbox Controller Babric mod build/artifact is available; Staráč GLFW 3 bridge required; in-game Xbox validation pending
+b1.7.3	Beta 1.7.3 Babric	babric	none	legacy	experimental	babric	Onyx Xbox Controller Babric mod build/artifact is available; Staráč GLFW 3 bridge required; in-game Xbox validation pending
 26.3	26.3 Fabric	fabric	0.20.1	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.3	26.3 Forge	forge	66.1.8	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.3	26.3 NeoForge	neoforge	26.3.0.103	current	experimental	none	Controller mod build skipped for now; use Controlify instead
@@ -12,7 +12,7 @@ b1.7.3	Beta 1.7.3 Babric	vanilla	none	legacy	experimental	babric	Onyx Xbox Contr
 26.1.2	26.1.2 NeoForge	neoforge	26.1.2.107	current	experimental	none	Modern shared controller target
 26.1.1	26.1.1 Fabric	fabric	0.19.5	current	experimental	fabric	Modern controller and compat target
 26.1.1	26.1.1 Forge	forge	63.0.2	current	experimental	forge	Modern shared controller target
-26.1.1	26.1.1 NeoForge	neoforge	26.1.1.15-beta	current	experimental	neoforge	Modern shared controller target
+26.1.1	26.1.1 NeoForge	neoforge	63.0.2	current	experimental	neoforge	Modern shared controller target
 26.1	26.1 Fabric	fabric	0.19.5	current	experimental	fabric	Modern controller and compat target
 26.1	26.1 Forge	forge	62.0.9	current	experimental	forge	Modern shared controller target
 26.1	26.1 NeoForge	neoforge	26.1.0.19-beta	current	experimental	neoforge	Modern shared controller target
@@ -27,10 +27,10 @@ b1.7.3	Beta 1.7.3 Babric	vanilla	none	legacy	experimental	babric	Onyx Xbox Contr
 1.21.9	1.21.9 NeoForge	neoforge	21.9.16	java21	experimental	neoforge	Modern shared controller target
 1.21.8	1.21.8 Fabric	fabric	0.19.5	java21	experimental	fabric	Modern controller and compat target
 1.21.8	1.21.8 Forge	forge	58.1.22	java21	experimental	forge	Modern shared controller target
-1.21.8	1.21.8 NeoForge	neoforge	21.8.54	java21	experimental	neoforge	Modern shared controller target
+1.21.8	1.21.8 NeoForge	neoforge	58.1.22	java21	experimental	neoforge	Modern shared controller target
 1.21.7	1.21.7 Fabric	fabric	0.19.5	java21	experimental	fabric	Modern controller and compat target
 1.21.7	1.21.7 Forge	forge	57.0.3	java21	experimental	forge	Modern shared controller target
-1.21.7	1.21.7 NeoForge	neoforge	21.7.25-beta	java21	experimental	neoforge	Modern shared controller target
+1.21.7	1.21.7 NeoForge	neoforge	21.7.25-beta	java21	experimental	neoforge	Modern controller and compat target
 1.21.6	1.21.6 Fabric	fabric	0.19.5	java21	experimental	fabric	Modern controller and compat target
 1.21.6	1.21.6 Forge	forge	56.0.9	java21	experimental	forge	Modern shared controller target
 1.21.6	1.21.6 NeoForge	neoforge	21.6.20	java21	experimental	neoforge	Modern shared controller target

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "integration": "mcef",
+  "minecraftVersion": "1.12.2",
+  "loader": "cleanroom",
+  "target": "xbox-uwp",
+  "architecture": "x64",
+  "status": "scaffold-only",
+  "enabledByDefault": false,
+  "javaArtifacts": {
+    "mcef": {
+      "version": null,
+      "path": "java/",
+      "verified": false
+    }
+  },
+  "nativeRuntime": {
+    "framework": "CEF",
+    "version": null,
+    "path": "native/x64/",
+    "subprocess": null,
+    "verifiedForUwp": false
+  },
+  "win32Adapter": {
+    "path": "win32-adapter/",
+    "status": "design-only",
+    "coreWindowInput": false,
+    "uwpLibraryLoading": false,
+    "cefProcessModel": false,
+    "gpuSurfaceBridge": false
+  },
+  "requirements": [
+    "Verify the exact MCEF release for Minecraft 1.12.2",
+    "Review upstream licenses and redistribution requirements",
+    "Replace desktop-only Win32 calls with UWP-supported implementations",
+    "Verify every native dependency is compatible with the UWP AppContainer",
+    "Test on Xbox Dev Mode before enabling"
+  ]
+}

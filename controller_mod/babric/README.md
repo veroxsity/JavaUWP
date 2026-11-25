@@ -11,13 +11,13 @@ Client-side controller mod for Minecraft Beta 1.7.3 on Babric. It is a separate 
 
 ## Build
 
-Use JDK 17 and run:
+Use JDK 17 and Gradle 8.7:
 
-```powershell
-.gradlew.bat build
+```sh
+gradle clean build --no-daemon
 ```
 
-The Gradle project uses the Babric Loom plugin and the Babric Beta 1.7.3 mappings. The resulting mod is in `build/libs/`.
+The Gradle project uses the Babric Loom plugin and the Babric Beta 1.7.3 mappings. Fabric Maven is also required for Babric Loom's transitive tooling dependencies. The resulting mod is in `build/libs/`.
 
 ## Initial button map
 

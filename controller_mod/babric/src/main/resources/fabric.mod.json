@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "onyx_xbox_controller",
+  "version": "${version}",
+  "name": "Onyx Xbox Controller",
+  "description": "Xbox gamepad support for Minecraft Beta 1.7.3 on Babric, using the GLFW gamepad bridge supplied by the host runtime.",
+  "authors": ["Team Onyx"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "main": ["com.onyx.controller.babric.OnyxXboxController"]
+  },
+  "mixins": ["onyx_xbox_controller.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "1.0.0-beta.7.3"
+  }
+}

@@ -13,6 +13,7 @@ param(
     [switch]$SkipVersionManifests,
     [switch]$SkipVersionCompat,
     [switch]$IncludePrebuiltNeoForgeArtifacts,
+    [switch]$BuildSDL3,
     [switch]$StrictTargets
 )
 
@@ -430,6 +431,16 @@ Write-Host "=== Building GLFW CoreWindow shim ==="
 & (Join-Path $root "glfw_shim\build_glfw.ps1") -OutputDir $glfwBuildDir -MouseSupportLib $mouseSupportLib -MouseSupportInclude (Join-Path $root "mouse_support")
 if (-not (Test-Path $shimDll)) { throw "GLFW shim DLL missing after build: $shimDll" }
 
+if ($BuildSDL3) {
+    Write-Host "=== Building SDL3 UWP WinRT runtime ==="
+    $sdl3BuildScript = Join-Path $root "sdl3_uwp\build_sdl3.ps1"
+    $sdl3BuildDir = Join-Path $buildDir "sdl3-uwp"
+    & $sdl3BuildScript -OutputDir $sdl3BuildDir
+    if (-not (Test-Path (Join-Path $sdl3BuildDir "SDL3.dll"))) { throw "SDL3.dll missing after SDL3 UWP build." }
+} else {
+    Write-Host "SDL3 UWP build skipped. Use -BuildSDL3 to build and package it."
+}
+
 Write-Host "=== Building Xbox compatibility mod ==="
 & (Join-Path $root "compat_mod\build_compat_mod.ps1")
 
@@ -678,17 +689,50 @@ Copy-Item $shimDll (Join-Path $pkg "natives\glfw.dll") -Force
 Copy-Item $mouseSupportDll (Join-Path $pkg "mouse_support.dll") -Force
 Copy-Item $mouseSupportDll (Join-Path $pkg "natives\mouse_support.dll") -Force
 
+if ($BuildSDL3) {
+    $sdl3Dll = Join-Path (Join-Path $buildDir "sdl3-uwp") "SDL3.dll"
+    Copy-Item $sdl3Dll (Join-Path $pkg "SDL3.dll") -Force
+    Copy-Item $sdl3Dll (Join-Path $pkg "natives\SDL3.dll") -Force
+    Write-Host "SDL3 UWP: SDL3.dll"
+}
+
 Write-Host "Copying Mesa runtime..."
 $mesaRuntime = Resolve-MesaRuntimeDir -MesaRuntimeDir $MesaRuntimeDir
 Write-Host "Mesa runtime source: $mesaRuntime"
+
+$mesaDestinations = @(
+    $pkg,
+    (Join-Path $pkg "natives"),
+    (Join-Path $pkg "graphics\mesa")
+)
+foreach ($destination in $mesaDestinations) {
+    Ensure-Dir $destination
+}
+
+$mesaMissing = @()
 foreach ($dll in Get-MesaRuntimeDllNames) {
     $source = Join-Path $mesaRuntime $dll
-    if (Test-Path $source) {
-        Copy-Item $source (Join-Path $pkg $dll) -Force
-        Copy-Item $source (Join-Path $pkg "natives\$dll") -Force
-        Copy-Item $source (Join-Path $pkg "graphics\mesa\$dll") -Force
-        Write-Host "Mesa: $dll"
+    if (-not (Test-Path $source -PathType Leaf)) {
+        $mesaMissing += $dll
+        Write-Warning "Mesa runtime file not found: $source"
+        continue
     }
+
+    foreach ($destination in $mesaDestinations) {
+        $target = Join-Path $destination $dll
+        Copy-Item $source $target -Force
+        if (-not (Test-Path $target -PathType Leaf)) {
+            throw "Mesa runtime copy verification failed: $target"
+        }
+    }
+    Write-Host "Mesa copied to package root, natives, and graphics\mesa: $dll"
+}
+
+if ($mesaMissing -contains "vulkan-1.dll") {
+    Write-Warning "Vulkan loader missing: Vulkan applications will not find vulkan-1.dll."
+}
+if ($mesaMissing -contains "vulkan_dzn.dll" -or $mesaMissing -contains "dzn_icd.x86_64.json") {
+    Write-Warning "Mesa Dozen ICD is incomplete: Vulkan 1.2 cannot be used until both vulkan_dzn.dll and dzn_icd.x86_64.json are packaged."
 }
 
 $manifestGenerator = Join-Path $root "scripts\new-download-manifest.ps1"
@@ -1313,10 +1357,24 @@ if (-not $SkipStopAppProcesses) {
         -LockPaths $lockPaths
 }
 
-if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat -or $script:BuildFailures.Count -gt 0)) {
-    throw "Strict build requires every configured target before packaging"
+if ($StrictTargets -and ($SkipVersionManifests -or $SkipVersionCompat)) {
+    $strictBuildReasons = @()
+    if ($SkipVersionManifests) {
+        $strictBuildReasons += "-SkipVersionManifests was supplied; extra version manifests were not built."
+    }
+    if ($SkipVersionCompat) {
+        $strictBuildReasons += "-SkipVersionCompat was supplied; per-version compatibility/controller targets were not built."
+    }
+    $strictBuildDetails = $strictBuildReasons -join [Environment]::NewLine
+    throw ("Strict build requires every configured target before packaging." +
+        [Environment]::NewLine + $strictBuildDetails)
 }
-if (-not $SkipVersionManifests -and -not $SkipVersionCompat) {
+
+# In strict mode, validate the actual staged outputs instead of treating every
+# non-fatal/optional build warning as a missing required target. The matrix
+# validator checks every catalog target and fails only when a required package
+# artifact (manifest, loader, runtime, compat/controller mod) is absent or invalid.
+if ($StrictTargets -or (-not $SkipVersionManifests -and -not $SkipVersionCompat)) {
     & (Join-Path $root "scripts\validate-modern-version-matrix.ps1") -PackagePath $pkg
 }
 & $makeappx pack /d $pkg /p $appx /overwrite
@@ -1366,9 +1424,9 @@ if ($script:BuildFailures.Count -gt 0) {
     Write-Host ""
     Write-Host "=== $($script:BuildFailures.Count) target(s) skipped ==="
     $script:BuildFailures | Format-Table Stage, Target, Reason -AutoSize -Wrap | Out-String -Width 200 | Write-Host
-    if ($StrictTargets) {
-        exit 1
-    }
+    # Strict completeness is enforced by validate-modern-version-matrix.ps1
+    # against the staged and final APPX contents. Do not fail here for
+    # optional targets that were skipped but are not required by the catalog.
 }
 } finally {
     $buildLock.Dispose()

@@ -59,6 +59,27 @@ typedef jint(JNICALL* JNI_CreateJavaVM_t)(JavaVM**, void**, void*);
 // leaves the process unable to start anything else. JNI_CreateJavaVM answers -1 or -5 and the
 // user just sees a launch that did nothing
 static bool g_embeddedJvmUsed = false;
+static std::atomic<bool> g_minecraftShutdownRequested{ false };
+
+static bool SignalGlfwWindowClose() {
+    HMODULE shim = GetModuleHandleW(L"glfw.dll");
+    if (!shim) return false;
+    using RequestCloseFn = void (*)();
+    auto requestClose = reinterpret_cast<RequestCloseFn>(GetProcAddress(shim, "BanditShimRequestWindowClose"));
+    if (!requestClose) return false;
+    requestClose();
+    return true;
+}
+
+void RequestMinecraftShutdown() {
+    g_minecraftShutdownRequested.store(true, std::memory_order_release);
+    SignalGlfwWindowClose();
+    WriteLog(L"Minecraft shutdown requested by application lifecycle");
+}
+
+bool IsMinecraftShutdownRequested() {
+    return g_minecraftShutdownRequested.load(std::memory_order_acquire);
+}
 
 bool EmbeddedJvmAlreadyUsed() {
     return g_embeddedJvmUsed;
@@ -415,20 +436,36 @@ void CollectManifestLibraryJars(
     std::vector<DownloadManifestEntry> entries;
     if (!ReadDownloadManifest(manifestPath, entries)) return;
     for (const auto& e : entries) {
-        std::wstring rel = e.relativePath;
-        std::replace(rel.begin(), rel.end(), L'\\', L'/');
+        // Manifest paths may use either slash style. Normalize once before
+        // deriving the library-relative path; otherwise a forward-slash entry
+        // is sliced at the wrong offset and the packaged Xbox library path
+        // becomes invalid.
+        std::wstring normalizedRelative = e.relativePath;
+        std::replace(normalizedRelative.begin(), normalizedRelative.end(), L'/', L'\\');
+        std::wstring rel = normalizedRelative;
         for (wchar_t& c : rel) c = static_cast<wchar_t>(towlower(c));
-        if (rel.rfind(L"game/libraries/", 0) != 0) continue;
+        constexpr wchar_t kLibraryPrefix[] = L"game\\libraries\\";
+        constexpr size_t kLibraryPrefixLength = (sizeof(kLibraryPrefix) / sizeof(kLibraryPrefix[0])) - 1;
+        if (rel.rfind(kLibraryPrefix, 0) != 0) continue;
         if (rel.size() < 4 || rel.compare(rel.size() - 4, 4, L".jar") != 0) continue;
         if (rel.find(L"-natives-") != std::wstring::npos) continue;
         if (rel.find(L"-installer.jar") != std::wstring::npos) continue;
-        const std::wstring libraryRelative = e.relativePath.substr(wcslen(L"game\\libraries\\"));
-        const std::wstring packagedOverride = packageDir + L"\\runtime\\libraries\\" + libraryRelative;
+
+        const std::wstring libraryRelative = normalizedRelative.substr(kLibraryPrefixLength);
+        const std::wstring packagedOverride =
+            JoinRuntimeRelativePath(packageDir + L"\\runtime\\libraries", libraryRelative);
+        const std::wstring localLibrary =
+            JoinRuntimeRelativePath(runtimeRoot, normalizedRelative);
         const std::wstring abs =
-            GetFileAttributesW(packagedOverride.c_str()) != INVALID_FILE_ATTRIBUTES
+            !packagedOverride.empty() && GetFileAttributesW(packagedOverride.c_str()) != INVALID_FILE_ATTRIBUTES
                 ? packagedOverride
-                : JoinRuntimeRelativePath(runtimeRoot, e.relativePath);
-        if (!abs.empty()) jars.push_back(abs);
+                : localLibrary;
+        if (!abs.empty()) {
+            jars.push_back(abs);
+            WriteLogF(L"Classpath library: %s", abs.c_str());
+        } else {
+            WriteLogF(L"Skipping invalid classpath library path: %s", e.relativePath.c_str());
+        }
     }
 }
 
@@ -577,6 +614,19 @@ static bool PreloadJvm(
     const std::wstring path = jreBin + L";" + jreServer + L";" + exeDir + L";" + nativesDir + L";" + GetEnvVarString(L"PATH");
     SetEnvironmentVariableW(L"PATH", path.c_str());
     SetEnvironmentVariableW(L"JAVA_HOME", jreDir.c_str());
+
+    // Prefer the bundled Mesa Dozen ICD for Vulkan applications. This only
+    // selects the driver manifest; a Vulkan loader must still be available.
+    const std::wstring dozenIcd = exeDir + L"\\graphics\\mesa\\dzn_icd.x86_64.json";
+    if (GetFileAttributesW(dozenIcd.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        if (SetEnvironmentVariableW(L"VK_DRIVER_FILES", dozenIcd.c_str())) {
+            WriteLogF(L"Vulkan Dozen ICD selected: %s", dozenIcd.c_str());
+        } else {
+            WriteLogF(L"Could not set VK_DRIVER_FILES for Dozen ICD err=%u", GetLastError());
+        }
+    } else {
+        WriteLogF(L"Vulkan Dozen ICD manifest not packaged: %s", dozenIcd.c_str());
+    }
 
     const std::wstring packagedPrefix = packagedJreRelativeDir.empty() ? L"jre" : packagedJreRelativeDir;
     auto loadPackaged = [&](const std::wstring& relativePath, const wchar_t* label) -> HMODULE {
@@ -1371,10 +1421,28 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
         // MemoryManager is a winrt static, without an apartment here every read throws
         const HRESULT roHr = RoInitialize(RO_INIT_MULTITHREADED);
         unsigned seconds = 0;
+        unsigned shutdownGraceSeconds = 0;
         bool firstFrameSent = false;
+        bool closeSignalSent = false;
         while (javaMainRunning.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             ++seconds;
+
+            if (g_minecraftShutdownRequested.load(std::memory_order_acquire)) {
+                if (!closeSignalSent) {
+                    closeSignalSent = SignalGlfwWindowClose();
+                    if (closeSignalSent) {
+                        WriteLog(L"Application closed: requested GLFW window close so Minecraft can save and exit");
+                    }
+                }
+                ++shutdownGraceSeconds;
+                if (shutdownGraceSeconds >= 20) {
+                    WriteLog(L"Minecraft did not stop after CoreWindow close; terminating host to prevent an online game from remaining active");
+                    TerminateProcess(GetCurrentProcess(), 0);
+                    return;
+                }
+            }
+
             if (!firstFrameSent && ShimPresentedFrames() > presentedFramesAtLaunch) {
                 firstFrameSent = true;
                 telemetry::SendFirstFrame();

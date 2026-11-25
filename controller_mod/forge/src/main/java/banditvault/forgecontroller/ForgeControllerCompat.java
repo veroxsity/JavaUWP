@@ -790,9 +790,11 @@ public final class ForgeControllerCompat {
     private static boolean sendKeyboardKey(KeyMapping key, int action) {
         InputConstants.Key input = key.getKey();
         if (input == null || input.m_84873_() < 0) return false;
-        if (input.m_84868_() != InputConstants.Type.KEYSYM && input.m_84868_() != InputConstants.Type.SCANCODE) return false;
-        int code = input.m_84868_() == InputConstants.Type.KEYSYM ? input.m_84873_() : GLFW.GLFW_KEY_UNKNOWN;
-        int scan = input.m_84868_() == InputConstants.Type.SCANCODE ? input.m_84873_() : 0;
+        String typeName = String.valueOf(input.m_84868_()).toLowerCase(java.util.Locale.ROOT);
+        if (typeName.contains("mouse")) return false;
+        boolean scanCode = typeName.contains("scan");
+        int code = scanCode ? GLFW.GLFW_KEY_UNKNOWN : input.m_84873_();
+        int scan = scanCode ? input.m_84873_() : 0;
         Minecraft client = Minecraft.m_91087_();
         if (client == null || client.m_91268_() == null) return false;
         client.f_91068_.m_90893_(client.m_91268_().m_85439_(), code, scan, action, 0);

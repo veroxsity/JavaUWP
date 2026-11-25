@@ -21,6 +21,8 @@ bool PublishCoreWindowProperty(ABI::Windows::UI::Core::ICoreWindow* window);
 using LaunchProgressCallback = std::function<void(const wchar_t* status, const wchar_t* detail, float progress)>;
 
 bool EmbeddedJvmAlreadyUsed();
+void RequestMinecraftShutdown();
+bool IsMinecraftShutdownRequested();
 
 bool RunEmbeddedMinecraft(
     const std::wstring& exeDir,

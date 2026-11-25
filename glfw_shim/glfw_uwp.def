@@ -1,5 +1,6 @@
 LIBRARY glfw
 EXPORTS
+    BanditShimRequestWindowClose
     banditKeyboardBegin
     banditKeyboardConsumeFlags
     banditKeyboardCopyText

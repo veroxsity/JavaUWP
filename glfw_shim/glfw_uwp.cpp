@@ -267,7 +267,8 @@ static DWORD g_contextThreadId = 0;
 static HMODULE g_opengl32 = NULL;
 static BOOL g_graphicsRuntimeUsesGles = FALSE;
 static BOOL g_initialised = FALSE;
-static BOOL g_should_close = FALSE;
+static volatile LONG g_should_close = FALSE;
+static volatile LONG g_app_close_requested = FALSE;
 static int g_window_width = 1920;
 static int g_window_height = 1080;
 static bool g_window_size_notification_pending = false;
@@ -354,6 +355,7 @@ static GameInputGamepadState g_lastGameInputGamepadState = {};
 static GLFWgamepadstate g_gamepad_state = {};
 static float g_joystick_axes[6] = {};
 static unsigned char g_joystick_buttons[15] = {};
+static unsigned char g_joystick_hats[1] = {};
 static void* g_joystick_user_pointer = NULL;
 
 static ComPtr<ICoreWindow> g_coreWindow;
@@ -827,6 +829,7 @@ static void ClearGamepadState() {
     ZeroMemory(&g_gamepad_state, sizeof(g_gamepad_state));
     ZeroMemory(g_joystick_axes, sizeof(g_joystick_axes));
     ZeroMemory(g_joystick_buttons, sizeof(g_joystick_buttons));
+    ZeroMemory(g_joystick_hats, sizeof(g_joystick_hats));
 }
 
 static void MarkCoreWindowInputStateChanged() {
@@ -1473,6 +1476,12 @@ static void ConvertGameInputGamepadState(const GameInputGamepadState& state) {
 
     memcpy(g_joystick_axes, g_gamepad_state.axes, sizeof(g_joystick_axes));
     memcpy(g_joystick_buttons, g_gamepad_state.buttons, sizeof(g_joystick_buttons));
+    // GLFW hat bitfield: UP=1, RIGHT=2, DOWN=4, LEFT=8. Diagonals are bitwise combinations.
+    g_joystick_hats[0] =
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_UP]    ? 1 : 0) |
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_RIGHT] ? 2 : 0) |
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_DOWN]  ? 4 : 0) |
+        (g_gamepad_state.buttons[GLFW_GAMEPAD_BUTTON_DPAD_LEFT]  ? 8 : 0);
 }
 
 static bool PollGameInputGamepad(bool fireCallbacks) {
@@ -2764,7 +2773,8 @@ extern "C" __declspec(dllexport) void glfwWindowHintString(int,const char*) {}
 
 extern "C" __declspec(dllexport)
 GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFWwindow*) {
-    g_should_close = FALSE;
+    const LONG appCloseRequested = InterlockedCompareExchange(&g_app_close_requested, FALSE, FALSE);
+    InterlockedExchange(&g_should_close, appCloseRequested ? TRUE : FALSE);
     ShimLog("glfwCreateWindow %dx%d '%s'", w, h, title ? title : "");
     if (!g_initialised && !glfwInit()) return NULL;
     g_created_width = w;
@@ -2791,21 +2801,40 @@ GLFWwindow* glfwCreateWindow(int w, int h, const char* title, GLFWmonitor*, GLFW
         return NULL;
     }
 
+    // GLFW's initial requested size (often 854x480) is not the UWP display
+    // size. Notify LWJGL of the real CoreWindow dimensions as well as the
+    // framebuffer dimensions, otherwise early Mojang loading UI can remain
+    // rendered as a small rectangle in the top-left corner.
+    RefreshWindowMetrics(true);
     g_fake_window.width = g_window_width;
     g_fake_window.height = g_window_height;
     g_vidmode.width = g_framebuffer_width;
     g_vidmode.height = g_framebuffer_height;
     if (g_fbsize_cb) g_fbsize_cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
-    ShimLog("glfwCreateWindow OK");
+    ShimLog("glfwCreateWindow OK window=%dx%d framebuffer=%dx%d",
+        g_window_width, g_window_height, g_framebuffer_width, g_framebuffer_height);
     return (GLFWwindow*)&g_fake_window;
 }
 
 extern "C" __declspec(dllexport) void glfwDestroyWindow(GLFWwindow*) {
     ShimLog("glfwDestroyWindow");
-    g_should_close = TRUE;
+    InterlockedExchange(&g_should_close, TRUE);
 }
-extern "C" __declspec(dllexport) int  glfwWindowShouldClose(GLFWwindow*) { return g_should_close ? GLFW_TRUE : GLFW_FALSE; }
-extern "C" __declspec(dllexport) void glfwSetWindowShouldClose(GLFWwindow*, int v) { g_should_close = (v != 0); }
+extern "C" __declspec(dllexport) int glfwWindowShouldClose(GLFWwindow*) {
+    return InterlockedCompareExchange(&g_should_close, FALSE, FALSE) ? GLFW_TRUE : GLFW_FALSE;
+}
+extern "C" __declspec(dllexport) void glfwSetWindowShouldClose(GLFWwindow*, int v) {
+    if (v) {
+        InterlockedExchange(&g_should_close, TRUE);
+    } else if (!InterlockedCompareExchange(&g_app_close_requested, FALSE, FALSE)) {
+        InterlockedExchange(&g_should_close, FALSE);
+    }
+}
+extern "C" __declspec(dllexport) void BanditShimRequestWindowClose(void) {
+    ShimLog("BanditShimRequestWindowClose: requesting Minecraft main loop exit");
+    InterlockedExchange(&g_app_close_requested, TRUE);
+    InterlockedExchange(&g_should_close, TRUE);
+}
 // lwjgl 3.4.1 binds glfwGetWindowTitle as a required symbol, so the title has to be kept
 static std::string g_window_title;
 extern "C" __declspec(dllexport) void glfwSetWindowTitle(GLFWwindow*, const char* title) { g_window_title = title ? title : ""; }
@@ -2816,7 +2845,10 @@ extern "C" __declspec(dllexport) void glfwSetWindowPos(GLFWwindow*, int, int) {}
 extern "C" __declspec(dllexport) void glfwGetWindowSize(GLFWwindow*, int*w, int*h) { RefreshWindowMetrics(false); if(w)*w=g_window_width; if(h)*h=g_window_height; }
 extern "C" __declspec(dllexport) void glfwSetWindowSizeLimits(GLFWwindow*, int, int, int, int) {}
 extern "C" __declspec(dllexport) void glfwSetWindowAspectRatio(GLFWwindow*, int, int) {}
-extern "C" __declspec(dllexport) void glfwSetWindowSize(GLFWwindow*, int, int) {}
+extern "C" __declspec(dllexport) void glfwSetWindowSize(GLFWwindow*, int width, int height) {
+    ShimLog("glfwSetWindowSize requested=%dx%d; retaining full-screen CoreWindow", width, height);
+    RefreshWindowMetrics(true);
+}
 extern "C" __declspec(dllexport) void glfwGetFramebufferSize(GLFWwindow*, int*w, int*h) { RefreshWindowMetrics(false); if(w)*w=g_framebuffer_width; if(h)*h=g_framebuffer_height; }
 extern "C" __declspec(dllexport) void glfwGetWindowFrameSize(GLFWwindow*, int*l, int*t, int*r, int*b) {
     if(l)*l=0; if(t)*t=0; if(r)*r=0; if(b)*b=0;
@@ -2837,7 +2869,10 @@ extern "C" __declspec(dllexport) void glfwHideWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwFocusWindow(GLFWwindow*) {}
 extern "C" __declspec(dllexport) void glfwRequestWindowAttention(GLFWwindow*) {}
 extern "C" __declspec(dllexport) GLFWmonitor* glfwGetWindowMonitor(GLFWwindow*) { return NULL; }
-extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) { g_window_size_notification_pending = true; }
+extern "C" __declspec(dllexport) void glfwSetWindowMonitor(GLFWwindow*, GLFWmonitor*, int, int, int, int, int) {
+    g_window_size_notification_pending = true;
+    RefreshWindowMetrics(true);
+}
 extern "C" __declspec(dllexport) int glfwGetWindowAttrib(GLFWwindow*, int a) {
     if (g_window_attrib_log_count < 32) {
         ++g_window_attrib_log_count;
@@ -2891,7 +2926,14 @@ extern "C" __declspec(dllexport) GLFWwindowposfun glfwSetWindowPosCallback(GLFWw
     return SwapCallback(g_winpos_cb, cb);
 }
 extern "C" __declspec(dllexport) GLFWwindowsizefun glfwSetWindowSizeCallback(GLFWwindow*, GLFWwindowsizefun cb) {
-    return SwapCallback(g_winsize_cb, cb);
+    GLFWwindowsizefun previous = SwapCallback(g_winsize_cb, cb);
+    if (cb) {
+        RefreshWindowMetrics(false);
+        cb((GLFWwindow*)&g_fake_window, g_window_width, g_window_height);
+        g_window_size_notification_pending = false;
+        ShimLog("Initial GLFW window-size callback delivered: %dx%d", g_window_width, g_window_height);
+    }
+    return previous;
 }
 extern "C" __declspec(dllexport) GLFWwindowclosefun glfwSetWindowCloseCallback(GLFWwindow*, GLFWwindowclosefun cb) {
     return SwapCallback(g_winclose_cb, cb);
@@ -2909,7 +2951,13 @@ extern "C" __declspec(dllexport) GLFWwindowmaximizefun glfwSetWindowMaximizeCall
     return SwapCallback(g_maximize_cb, cb);
 }
 extern "C" __declspec(dllexport) GLFWframebuffersizefun glfwSetFramebufferSizeCallback(GLFWwindow*, GLFWframebuffersizefun cb) {
-    return SwapCallback(g_fbsize_cb, cb);
+    GLFWframebuffersizefun previous = SwapCallback(g_fbsize_cb, cb);
+    if (cb) {
+        RefreshWindowMetrics(false);
+        cb((GLFWwindow*)&g_fake_window, g_framebuffer_width, g_framebuffer_height);
+        ShimLog("Initial GLFW framebuffer-size callback delivered: %dx%d", g_framebuffer_width, g_framebuffer_height);
+    }
+    return previous;
 }
 extern "C" __declspec(dllexport) GLFWwindowcontentscalefun glfwSetWindowContentScaleCallback(GLFWwindow*, GLFWwindowcontentscalefun cb) {
     return SwapCallback(g_contentscale_cb, cb);
@@ -3827,7 +3875,16 @@ extern "C" __declspec(dllexport) const unsigned char* glfwGetJoystickButtons(int
     if(c)*c=(int)(sizeof(g_joystick_buttons) / sizeof(g_joystick_buttons[0]));
     return g_joystick_buttons;
 }
-extern "C" __declspec(dllexport) const unsigned char* glfwGetJoystickHats(int, int*c) { if(c)*c=0; return NULL; }
+extern "C" __declspec(dllexport) const unsigned char* glfwGetJoystickHats(int jid, int*c) {
+    const bool result = IsSupportedJoystick(jid) && PollGameInputGamepad(false);
+    LogGamepadQuery("glfwGetJoystickHats", jid, result);
+    if (!result) {
+        if (c) *c = 0;
+        return NULL;
+    }
+    if (c) *c = 1;
+    return g_joystick_hats;
+}
 extern "C" __declspec(dllexport) const char* glfwGetJoystickName(int jid) {
     const bool result = IsSupportedJoystick(jid) && PollGameInputGamepad(false);
     LogGamepadQuery("glfwGetJoystickName", jid, result);
@@ -3866,7 +3923,16 @@ extern "C" __declspec(dllexport) GLFWjoystickfun glfwSetJoystickCallback(GLFWjoy
     }
     return p;
 }
-extern "C" __declspec(dllexport) int  glfwUpdateGamepadMappings(const char*) { return GLFW_TRUE; }
+extern "C" __declspec(dllexport) int glfwUpdateGamepadMappings(const char* mappings) {
+    // This UWP shim has no GLFW mapping database/parser. Do not report success for
+    // mappings that were silently ignored; the built-in GameInput mapping remains active.
+    if (g_gamepad_query_log_count < 32) {
+        ++g_gamepad_query_log_count;
+        ShimLog("glfwUpdateGamepadMappings unsupported; built-in Xbox mapping retained (input=%s)",
+            mappings ? "provided" : "null");
+    }
+    return GLFW_FALSE;
+}
 extern "C" __declspec(dllexport) const char* glfwGetGamepadName(int jid) {
     const bool result = IsSupportedJoystick(jid) && PollGameInputGamepad(false);
     LogGamepadQuery("glfwGetGamepadName", jid, result);

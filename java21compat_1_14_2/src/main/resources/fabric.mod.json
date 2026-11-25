@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "java21compat_1142",
+  "version": "${version}",
+  "name": "Java21Compat 1.14.2",
+  "description": "Java 21 runtime diagnostics for the JavaUWP Minecraft 1.14.2 Fabric profile.",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "banditvault.java21compat.Java21Compat"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.25",
+    "minecraft": "1.14.2",
+    "java": ">=21"
+  }
+}

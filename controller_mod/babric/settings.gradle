@@ -1,0 +1,14 @@
+pluginManagement {
+    repositories {
+        // Babric Loom is hosted by Glass, but its transitive Fabric tooling
+        // (Tiny Remapper, Mercury and Tiny Mappings Parser) lives on Fabric Maven.
+        maven { url = 'https://maven.glass-launcher.net/babric' }
+        maven { url = 'https://maven.fabricmc.net/' }
+        // Mirror Maven Central to avoid transient HTTP 429 responses from repo.maven.apache.org.
+        maven { url = 'https://maven-central.storage-download.googleapis.com/maven2/' }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'onyx-xbox-controller-babric'

@@ -34,11 +34,12 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWGamepadState;
 import org.lwjglx.input.Keyboard;
 import org.lwjglx.input.Mouse;
 import org.lwjglx.opengl.Display;
 
+import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -57,7 +58,6 @@ final class CleanroomControllerCompat {
     private static final double CONTROLLER_CURSOR_TAKEOVER_THRESHOLD = 0.20;
     private static final long INJECT_SETTLE_NANOS = 150_000_000L;
 
-    private static final GLFWGamepadState GLFW_STATE = GLFWGamepadState.create();
     private static final ControllerState STATE = new ControllerState();
     private static final CleanroomMenuNavigation NAVIGATION = new CleanroomMenuNavigation();
     private static final float[] AXES = new float[6];
@@ -65,6 +65,7 @@ final class CleanroomControllerCompat {
 
     private static boolean active;
     private static boolean loggedConnect;
+    private static boolean loggedRawJoystickFallback;
     private static long lastLookNanos;
     private static long lastCursorNanos;
     private static long lastInjectNanos;
@@ -210,14 +211,39 @@ final class CleanroomControllerCompat {
 
     private static boolean poll() {
         try {
-            if (!GLFW.glfwJoystickIsGamepad(GAMEPAD_ID) || !GLFW.glfwGetGamepadState(GAMEPAD_ID, GLFW_STATE)) return false;
+            // Cleanroom 1.12.2 runs through the LWJGL compatibility layer. Read
+            // the raw joystick buffers first: this avoids depending on the
+            // GLFWGamepadState struct wrapper being laid out identically by
+            // every LWJGL build shipped with older Cleanroom profiles.
+            if (GLFW.glfwJoystickPresent(GAMEPAD_ID)) {
+                FloatBuffer rawAxes = GLFW.glfwGetJoystickAxes(GAMEPAD_ID);
+                ByteBuffer rawButtons = GLFW.glfwGetJoystickButtons(GAMEPAD_ID);
+                if (rawAxes != null && rawButtons != null
+                    && rawAxes.remaining() >= AXES.length
+                    && rawButtons.remaining() >= BUTTONS.length) {
+                    for (int i = 0; i < AXES.length; i++) {
+                        AXES[i] = rawAxes.get(rawAxes.position() + i);
+                    }
+                    for (int i = 0; i < BUTTONS.length; i++) {
+                        BUTTONS[i] = rawButtons.get(rawButtons.position() + i) != 0;
+                    }
+                    STATE.capture(AXES, BUTTONS);
+                    if (!loggedRawJoystickFallback) {
+                        loggedRawJoystickFallback = true;
+                        CleanroomControllerLog.log("Xbox controller detected through raw GLFW joystick buffers (1.12.2)");
+                    }
+                    return true;
+                }
+            }
+
+            return false;
         } catch (RuntimeException e) {
+            if (!loggedRawJoystickFallback) {
+                loggedRawJoystickFallback = true;
+                CleanroomControllerLog.logException("Cleanroom 1.12.2 GLFW controller polling failed", e);
+            }
             return false;
         }
-        for (int i = 0; i < AXES.length; i++) AXES[i] = GLFW_STATE.axes(i);
-        for (int i = 0; i < BUTTONS.length; i++) BUTTONS[i] = GLFW_STATE.buttons(i) == GLFW.GLFW_PRESS;
-        STATE.capture(AXES, BUTTONS);
-        return true;
     }
 
 
@@ -349,7 +375,15 @@ final class CleanroomControllerCompat {
             injectCursor(screen);
             if (CleanroomControllerKeyboard.activate(screen, cursorX, cursorY)) return;
         }
-        primaryDown = mouseButton(LEFT_CLICK, held(settings, ControllerAction.MENU_ACCEPT), primaryDown);
+        boolean acceptHeld = held(settings, ControllerAction.MENU_ACCEPT);
+        if (acceptHeld && !primaryDown) {
+            takeControllerCursor();
+            injectCursor(screen);
+            dispatchScreenMouse(screen, LEFT_CLICK, true);
+        } else if (!acceptHeld && primaryDown) {
+            dispatchScreenMouse(screen, LEFT_CLICK, false);
+        }
+        primaryDown = acceptHeld;
         if (pressed(settings, ControllerAction.MENU_SECONDARY)) {
             takeControllerCursor();
             injectCursor(screen);
@@ -358,6 +392,10 @@ final class CleanroomControllerCompat {
 
         if (pressed(settings, ControllerAction.MENU_CANCEL)) {
             takeControllerCursor();
+            // Cleanroom's UWP input bridge may not forward queued keyboard events to legacy screens.
+            // Invoke the 1.12 GuiScreen key callback directly so Escape closes the active menu.
+            CleanroomReflect.call(screen, screen.getClass(), "func_73869_a",
+                new Class<?>[] { char.class, int.class }, Character.valueOf((char) 0), Integer.valueOf(KEY_ESCAPE));
             Keyboard.addKeyEvent(KEY_ESCAPE, true);
             Keyboard.addKeyEvent(KEY_ESCAPE, false);
             return;
@@ -511,6 +549,17 @@ final class CleanroomControllerCompat {
         } catch (ReflectiveOperationException | ClassCastException e) {
             return null;
         }
+    }
+
+    // Cleanroom's newer LWJGL bridge can expose gamepad state while dropping injected mouse-button
+    // queue events. Dispatch the legacy 1.12 GuiScreen callbacks directly for the primary action.
+    private static void dispatchScreenMouse(GuiScreen screen, int button, boolean down) {
+        if (screen == null) return;
+        int x = (int) Math.round(cursorX);
+        int y = (int) Math.round(cursorY);
+        String method = down ? "func_73864_a" : "func_146286_b"; // mouseClicked / mouseReleased
+        CleanroomReflect.call(screen, screen.getClass(), method,
+            new Class<?>[] { int.class, int.class, int.class }, x, y, button);
     }
 
     private static boolean mouseButton(int button, boolean held, boolean wasDown) {

@@ -12,6 +12,10 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 **A link to make a CurseForge API key.** The CurseForge key section in Remote Files now links straight to the CurseForge page where you make a key. When CurseForge is picked in Settings and no key is set, Settings shows a QR code for the same page.
 
+### Fixed
+
+**Files with long names download reliably.** Files now download into a short temporary folder first and are then moved into place, so a file with a very long name, like NeoForge's listenablefuture jar, stays under the console's path length limit.
+
 ## 2026-11-13
 
 ### Added

@@ -1,6 +1,6 @@
 # Onyx Xbox Controller — Babric / Beta 1.7.3
 
-Client-side controller mod for Minecraft Beta 1.7.3 on Babric. It is a separate mod from Staráč.
+Client-side Xbox controller mod for Minecraft Beta 1.7.3 on Babric, tracked and built as part of JavaUWP-Update's controller integration. It remains a separate JAR from the Staráč GLFW runtime.
 
 ## Runtime design
 
@@ -42,3 +42,10 @@ This first integration layer is deliberately conservative. Right-stick camera mo
 - Loader: Babric
 - Java: 17
 - Window/input bridge: Staráč GLFW 3 compatibility layer hosted by JavaUWP
+
+
+## JavaUWP-Update integration
+
+- Version catalog entry: `config/versions.tsv` (`b1.7.3`, controller provider `babric`).
+- CI workflow: `.github/workflows/babric-controller.yml` builds this project and publishes the JAR as the `onyx-xbox-controller-babric-b1.7.3` artifact.
+- Runtime packaging/loading in the Xbox launcher still requires the launcher to place the mod JAR into the Beta instance's mod-loading path and verify the Babric/Mixin bootstrap on-device. The catalog entry does not itself install the JAR.

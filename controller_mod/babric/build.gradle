@@ -17,6 +17,8 @@ loom {
 repositories {
     maven { name = 'Babric'; url = 'https://maven.glass-launcher.net/babric' }
     maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+    // Use a Central mirror before the rate-limited canonical endpoint.
+    maven { name = 'GoogleMavenCentralMirror'; url = 'https://maven-central.storage-download.googleapis.com/maven2/' }
     mavenCentral()
 }
 

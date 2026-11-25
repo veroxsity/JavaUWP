@@ -2,6 +2,12 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-25
+
+### Fixed
+
+**NeoForge packs download and start again.** Pressing Play on a NeoForge profile stopped with an error about listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar, because its download path was too long for the console. Files now download into a short temporary folder first and are then moved into place.
+
 ## 2026-11-13
 
 ### Added

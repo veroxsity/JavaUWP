@@ -875,7 +875,8 @@ bool EnsureRuntimeDownloads(
 
             const auto& entry = entries[entryIndex];
             const std::wstring finalPath = JoinRuntimeRelativePath(runtimeRoot, entry.relativePath);
-            const std::wstring tempPath = finalPath + L".download";
+            // temp files live in a short folder, the neoforge listenablefuture jar plus .download went past MAX_PATH
+            const std::wstring tempPath = runtimeRoot + L"\\downloads\\" + std::to_wstring(entryIndex) + L".download";
             DeleteFileW(tempPath.c_str());
 
             if (entryIndex < 25 || entryIndex % 100 == 0) {

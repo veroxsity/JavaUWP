@@ -1,6 +1,9 @@
 pluginManagement {
     repositories {
+        // Babric Loom is hosted by Glass, but its transitive Fabric tooling
+        // (Tiny Remapper, Mercury and Tiny Mappings Parser) lives on Fabric Maven.
         maven { url = 'https://maven.glass-launcher.net/babric' }
+        maven { url = 'https://maven.fabricmc.net/' }
         gradlePluginPortal()
         mavenCentral()
     }

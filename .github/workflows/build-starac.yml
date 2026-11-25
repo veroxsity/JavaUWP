@@ -1,0 +1,58 @@
+name: Build Starač for Beta 1.7.3
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "starac-uwp/**"
+      - ".github/workflows/build-starac.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-starac:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Bandit Launcher
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream Starač source
+        uses: actions/checkout@v4
+        with:
+          repository: matthewperiut/starac
+          ref: master
+          path: starac-source
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: starac-source/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Build Starač
+        working-directory: starac-source
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon clean build
+
+      - name: Collect build outputs and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find starac-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' -exec cp {} dist/ \;
+          test -n "$(find dist -maxdepth 1 -type f -name '*.jar' -print -quit)"
+          (cd dist && sha256sum *.jar > SHA256SUMS.txt)
+          printf 'Built JARs:\n'
+          ls -lh dist
+
+      - name: Upload Starač JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: starac-beta-1.7.3-java21
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

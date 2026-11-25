@@ -1,5 +1,5 @@
 minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	controllerProvider	notes
-b1.7.3	Beta 1.7.3 Vanilla	vanilla	none	legacy	experimental	none	Legacy Java/LWJGL 2 target; requires a compatible legacy runtime and window/input backend; not implemented or tested on Xbox
+b1.7.3	Beta 1.7.3 Babric	vanilla	none	legacy	experimental	babric	Babric client mod is built separately; requires Staráč GLFW 3 bridge; controller integration and Xbox runtime validation pending
 26.3	26.3 Fabric	fabric	0.20.1	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.3	26.3 Forge	forge	66.1.8	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.3	26.3 NeoForge	neoforge	26.3.0.103	current	experimental	none	Controller mod build skipped for now; use Controlify instead
@@ -56,5 +56,5 @@ b1.7.3	Beta 1.7.3 Vanilla	vanilla	none	legacy	experimental	none	Legacy Java/LWJG
 1.20.1	1.20.1 Fabric	fabric	0.19.5	java21	testing	fabric	Legacy target retained
 1.20.1	1.20.1 Forge	forge	47.4.20	java21	experimental	forge	Legacy target retained
 1.19.2	1.19.2 Fabric	fabric	0.19.5	java21	testing	none	Legacy target retained; Fabric Loader upgraded to 0.19.5; bundled controller unavailable; Xbox validation pending
-1.14.2	1.14.2 Fabric	fabric	0.14.25	java21	experimental	none	Legacy Minecraft target; Fabric Loader 0.14.25; Java 21 UWP runtime required by launcher patches; not yet validated on Xbox
+1.14.2	1.14.2 Fabric	fabric	0.14.25	java21	experimental	fabric	Dedicated legacy controller variant exists; Java 21 UWP runtime; build and Xbox validation pending
 1.12.2	1.12.2 Forge	cleanroom	0.3.35-alpha	java21	experimental	cleanroom	Forge 1.12.2 through Cleanroom on Java 21 and LWJGL 3

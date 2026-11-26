@@ -34,6 +34,7 @@ inline const ModsTabInfo& ModsTabAt(int tab) {
         { TR_NOOP(L"Modpacks"),       L"\uE7B8", ContentKind::Modpack,      true,  true  },
         { TR_NOOP(L"Resource packs"), L"\uE790", ContentKind::ResourcePack, true,  true  },
         { TR_NOOP(L"Shaders"),        L"\uE706", ContentKind::Shader,       true,  true  },
+        { TR_NOOP(L"Worlds"),          L"\uE7C3", ContentKind::World,        true,  true  },
     };
     return kTabs[(tab >= 0 && tab < modstab::kCount) ? tab : modstab::kProfiles];
 }

@@ -43,7 +43,7 @@ static bool ReadVulkanGraphicsBackend() {
 }
 
 static bool WriteVulkanGraphicsBackend(bool enabled) {
-    return WriteTextFile(GraphicsBackendConfigPath(), enabled ? L"vulkan\n" : L"opengl\\n");
+    return WriteTextFile(GraphicsBackendConfigPath(), enabled ? L"vulkan\n" : L"opengl\n");
 }
 
 static bool IsVirtualKeyDown(ICoreWindow* window, ABI::Windows::System::VirtualKey key) {

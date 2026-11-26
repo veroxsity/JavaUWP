@@ -620,7 +620,7 @@ static bool PreloadJvm(
     // it does not force Minecraft to use a Vulkan renderer by itself.
     const std::wstring backendConfig = GetLocalStateDir() + L"\\graphics_backend.txt";
     if (GetFileAttributesW(backendConfig.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        WriteTextFile(backendConfig, L"opengl\\n");
+        WriteTextFile(backendConfig, L"opengl\n");
     }
     std::wstring graphicsBackend;
     if (!ReadTextFile(backendConfig, graphicsBackend)) graphicsBackend = L"opengl";

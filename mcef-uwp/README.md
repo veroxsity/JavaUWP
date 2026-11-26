@@ -19,6 +19,10 @@ Provide a separate compatibility layer for evaluating Minecraft Chromium Embedde
 
 **This commit does not claim that MCEF is already running.** No MCEF/CEF binaries are included because the exact upstream build, redistribution terms, and UWP compatibility have not yet been verified.
 
+## AWT / CoreWindow port
+
+See [AWT-COREWINDOW-PORT.md](AWT-COREWINDOW-PORT.md) for the located upstream MCEF 1.12.2 source/release, the API-only asset distinction, and the required AWT-to-CoreWindow work across the requested version families. The upstream 1.12.2 release asset is API-only and is not a complete runnable MCEF/CEF package.
+
 ## Why a Win32 adapter is needed
 
 MCEF's desktop Windows native layer cannot be assumed to work inside an AppContainer. The adapter must explicitly handle:

@@ -961,16 +961,30 @@ bool RunEmbeddedMinecraft(const std::wstring& exeDir,
     const std::wstring lwjglTmpDir = exeDir + L"\\tmp";
     const std::wstring launcherOverrideDir = gameDir + L"\\launcher-overrides";
     const std::wstring packagedNativesDir = packageDir + L"\\natives";
+    // Minecraft 26.3+ requires SDL3 alongside LWJGL/GLFW. Do not select a
+    // native directory that has the older pair but is missing SDL3.dll.
+    const bool requiresSdl3 = CompareVersionNumbers(w2a(minecraftVersion), "26.3") >= 0;
     const bool suppliedNativesReady =
         GetFileAttributesW((nativesDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((nativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        GetFileAttributesW((nativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        (!requiresSdl3 || GetFileAttributesW((nativesDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES);
     const bool packagedNativesReady =
         GetFileAttributesW((packagedNativesDir + L"\\lwjgl.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
-        GetFileAttributesW((packagedNativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        GetFileAttributesW((packagedNativesDir + L"\\glfw.dll").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        (!requiresSdl3 || GetFileAttributesW((packagedNativesDir + L"\\SDL3.dll").c_str()) != INVALID_FILE_ATTRIBUTES);
     const std::wstring lwjglNativeDir =
         suppliedNativesReady ? nativesDir :
         (packagedNativesReady ? packagedNativesDir : nativesDir);
     const std::wstring lwjglGlfwDll = lwjglNativeDir + L"\\glfw.dll";
+    if (requiresSdl3) {
+        const std::wstring sdl3Path = lwjglNativeDir + L"\\SDL3.dll";
+        if (GetFileAttributesW(sdl3Path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            WriteLogF(L"ERROR: Minecraft %s requires SDL3.dll, but it is missing from selected LWJGL native directory: %s",
+                minecraftVersion.c_str(), lwjglNativeDir.c_str());
+        } else {
+            WriteLogF(L"SDL3 native runtime found: %s", sdl3Path.c_str());
+        }
+    }
     const std::wstring logConfigPath = exeDir + L"\\game\\log_configs\\client-uwp.xml";
     const std::wstring fabricLogPath = gameDir + L"\\logs\\fabric-loader.log";
     const std::wstring forgeLogPath = gameDir + L"\\logs\\forge-loader.log";

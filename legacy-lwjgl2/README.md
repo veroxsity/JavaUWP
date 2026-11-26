@@ -32,7 +32,7 @@ The runtime and LWJGL binaries are not checked into this repository. They must b
 
 ## Babric Beta 1.7.3 target
 
-See [BABRIC-BETA-1.7.3.md](BABRIC-BETA-1.7.3.md). This is the intended legacy loader target; it is separate from modern Fabric and from the MCEF/AWT experiment. The launcher currently has no Babric loader implementation, so this profile is not yet launchable.
+See [BABRIC-BETA-1.7.3.md](BABRIC-BETA-1.7.3.md). The Beta profile now pins Starac `1.3.2+babric` (Modrinth `fBYyB56e`) to replace the legacy LWJGL 2/AWT window stack with LWJGL 3.4.0/GLFW. The launcher still needs Babric loader integration and an Xbox UWP/CoreWindow GLFW backend, so this profile is not yet launchable.
 
 ## Required implementation work
 
@@ -46,4 +46,4 @@ See [BABRIC-BETA-1.7.3.md](BABRIC-BETA-1.7.3.md). This is the intended legacy lo
 
 ## Current status
 
-This is still a preparation scaffold. The Java 21 selection is declared in profile metadata, but the native launcher does not yet consume this profile, the Java 21 UWP runtime is not bundled here, and the LWJGL 2/CoreWindow JNI adapter is not implemented. Beta 1.7.3 is not yet confirmed launchable.
+This is still a preparation scaffold. Starac is pinned in metadata, but the native launcher does not yet consume the Babric profile, the Java 21 UWP runtime is not bundled here, and Starac's desktop GLFW backend has not been replaced by a UWP/CoreWindow backend. Beta 1.7.3 is not yet confirmed launchable.

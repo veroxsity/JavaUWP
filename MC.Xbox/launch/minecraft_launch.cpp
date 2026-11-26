@@ -615,17 +615,40 @@ static bool PreloadJvm(
     SetEnvironmentVariableW(L"PATH", path.c_str());
     SetEnvironmentVariableW(L"JAVA_HOME", jreDir.c_str());
 
-    // Prefer the bundled Mesa Dozen ICD for Vulkan applications. This only
-    // selects the driver manifest; a Vulkan loader must still be available.
+    // The user can select "opengl" (default) or "vulkan" in
+    // LocalState\\graphics_backend.txt. Vulkan selects Mesa Dozen's ICD;
+    // it does not force Minecraft to use a Vulkan renderer by itself.
+    const std::wstring backendConfig = GetLocalStateDir() + L"\\graphics_backend.txt";
+    if (GetFileAttributesW(backendConfig.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        WriteTextFile(backendConfig, L"opengl\\n");
+    }
+    std::wstring graphicsBackend;
+    if (!ReadTextFile(backendConfig, graphicsBackend)) graphicsBackend = L"opengl";
+    graphicsBackend = ToLowerW(TrimWhitespace(graphicsBackend));
+
     const std::wstring dozenIcd = exeDir + L"\\graphics\\mesa\\dzn_icd.x86_64.json";
-    if (GetFileAttributesW(dozenIcd.c_str()) != INVALID_FILE_ATTRIBUTES) {
-        if (SetEnvironmentVariableW(L"VK_DRIVER_FILES", dozenIcd.c_str())) {
-            WriteLogF(L"Vulkan Dozen ICD selected: %s", dozenIcd.c_str());
+    const std::wstring vulkanLoaderRoot = exeDir + L"\\vulkan-1.dll";
+    const std::wstring vulkanLoaderMesa = exeDir + L"\\graphics\\mesa\\vulkan-1.dll";
+    const bool hasVulkanLoader =
+        GetFileAttributesW(vulkanLoaderRoot.c_str()) != INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesW(vulkanLoaderMesa.c_str()) != INVALID_FILE_ATTRIBUTES;
+    const bool hasDozenIcd = GetFileAttributesW(dozenIcd.c_str()) != INVALID_FILE_ATTRIBUTES;
+
+    if (graphicsBackend == L"vulkan") {
+        if (hasVulkanLoader && hasDozenIcd) {
+            if (SetEnvironmentVariableW(L"VK_DRIVER_FILES", dozenIcd.c_str())) {
+                WriteLogF(L"Vulkan backend selected: Dozen ICD=%s", dozenIcd.c_str());
+            } else {
+                WriteLogF(L"Could not select Vulkan Dozen ICD err=%u", GetLastError());
+            }
         } else {
-            WriteLogF(L"Could not set VK_DRIVER_FILES for Dozen ICD err=%u", GetLastError());
+            SetEnvironmentVariableW(L"VK_DRIVER_FILES", nullptr);
+            WriteLogF(L"Vulkan requested but runtime is incomplete: loader=%d ICD=%d",
+                hasVulkanLoader ? 1 : 0, hasDozenIcd ? 1 : 0);
         }
     } else {
-        WriteLogF(L"Vulkan Dozen ICD manifest not packaged: %s", dozenIcd.c_str());
+        SetEnvironmentVariableW(L"VK_DRIVER_FILES", nullptr);
+        WriteLog(L"OpenGL backend selected (default)");
     }
 
     const std::wstring packagedPrefix = packagedJreRelativeDir.empty() ? L"jre" : packagedJreRelativeDir;

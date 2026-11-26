@@ -27,6 +27,7 @@ constexpr int kClassMods = 6;
 constexpr int kClassResourcePacks = 12;
 constexpr int kClassModpacks = 4471;
 constexpr int kClassShaders = 6552;
+constexpr int kClassWorlds = 17;
 constexpr int kRelationRequired = 3;
 constexpr int kHashAlgoSha1 = 1;
 constexpr int kReleaseTypeRelease = 1;
@@ -346,6 +347,7 @@ int ClassIdFor(ContentKind kind) {
     case ContentKind::Modpack: return kClassModpacks;
     case ContentKind::ResourcePack: return kClassResourcePacks;
     case ContentKind::Shader: return kClassShaders;
+    case ContentKind::World: return kClassWorlds;
     case ContentKind::Mod: break;
     }
     return kClassMods;
@@ -357,6 +359,7 @@ bool KindForClassId(int classId, ContentKind& kind) {
     case kClassModpacks: kind = ContentKind::Modpack; return true;
     case kClassResourcePacks: kind = ContentKind::ResourcePack; return true;
     case kClassShaders: kind = ContentKind::Shader; return true;
+    case kClassWorlds: kind = ContentKind::World; return true;
     default: return false;
     }
 }
@@ -368,6 +371,7 @@ std::wstring ProjectWebUrl(ContentKind kind, const std::wstring& slug) {
     case ContentKind::Modpack: section = L"modpacks"; break;
     case ContentKind::ResourcePack: section = L"texture-packs"; break;
     case ContentKind::Shader: section = L"shaders"; break;
+    case ContentKind::World: section = L"worlds"; break;
     case ContentKind::Mod: break;
     }
     return std::wstring(L"https://www.curseforge.com/minecraft/") + section + L"/" + slug;

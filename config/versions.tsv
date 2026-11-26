@@ -1,5 +1,5 @@
 minecraftVersion	displayName	loader	loaderVersion	javaRuntime	supportLevel	controllerProvider	notes
-b1.7.3	Beta 1.7.3 Babric	babric	none	java21	experimental	babric	Uses bundled Xbox Java 21 runtime; legacy Minecraft/Babric compatibility patches and Staráč GLFW 3 bridge required; in-game Xbox validation pending
+b1.7.3	Beta 1.7.3 Babric	babric	none	java21	experimental	babric	Staráč 1.3.2+babric (Modrinth fBYyB56e) provides LWJGL3/GLFW compatibility; bundled Xbox Java 21 runtime; UWP-native GLFW bridge and Xbox validation pending; gamepad support is separate
 26.3	26.3 Fabric	fabric	0.20.1	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.3	26.3 Forge	forge	66.1.8	current	experimental	none	Controller mod build skipped for now; use Controlify instead
 26.3	26.3 NeoForge	neoforge	26.3.0.103	current	experimental	none	Controller mod build skipped for now; use Controlify instead

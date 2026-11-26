@@ -12,6 +12,10 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 **A link to make a CurseForge API key.** The CurseForge key section in Remote Files now links straight to the CurseForge page where you make a key. When CurseForge is picked in Settings and no key is set, Settings shows a QR code for the same page.
 
+### Fixed
+
+**Backing up a NeoForge profile works.** NeoForge keeps a cache of the jars bundled inside mods in very deep folders, and Backup failed on them because the path was too long for the console. Backup, Duplicate and deleting a profile now handle paths of any length.
+
 ## 2026-11-25
 
 ### Fixed

@@ -14,6 +14,7 @@ enum class ContentKind {
     Modpack,
     ResourcePack,
     Shader,
+    World,
 };
 
 inline const wchar_t* ContentNoun(ContentKind kind, bool plural) {
@@ -31,6 +32,7 @@ inline const wchar_t* ContentLabel(ContentKind kind) {
     case ContentKind::Modpack: return TR_NOOP(L"Modpack");
     case ContentKind::ResourcePack: return TR_NOOP(L"Resource pack");
     case ContentKind::Shader: return TR_NOOP(L"Shader");
+    case ContentKind::World: return TR_NOOP(L"World");
     case ContentKind::Mod: break;
     }
     return TR_NOOP(L"Mod");
@@ -41,6 +43,7 @@ inline const wchar_t* ContentFolder(ContentKind kind) {
     switch (kind) {
     case ContentKind::ResourcePack: return L"resourcepacks";
     case ContentKind::Shader: return L"shaderpacks";
+    case ContentKind::World: return L"saves";
     case ContentKind::Mod:
     case ContentKind::Modpack: break;
     }

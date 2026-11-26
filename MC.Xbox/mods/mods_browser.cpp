@@ -2872,7 +2872,7 @@ void ShowModsPage(
                     }
                     if (state.modsProfileControllerModEnabled) {
                         // Enabling Bandit Controller must not delete the user's Controlify JAR.
-                        state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
+                        state.modsProfileMods = ListProfileLocalContentForUi(runtimeRoot, state.modsProfileId);
                         state.status = Tr(L"Bandit controller enabled; Controlify files preserved");
                     } else {
                         const int removed = DeleteBanditControllerModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));

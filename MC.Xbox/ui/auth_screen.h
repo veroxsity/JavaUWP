@@ -1100,12 +1100,22 @@ private:
         const float headX = back.right + 20.0f;
         DrawText(nameShown.c_str(), titleFormat_.Get(),
             D2D1::RectF(headX, T_ - 4.0f, headRight, T_ + 54.0f), state.modsRenaming ? accent_ : text_);
-        const std::wstring modCount = std::to_wstring(state.modsProfileMods.size());
+        size_t localModCount = 0;
+        size_t localResourcePackCount = 0;
+        size_t localShaderPackCount = 0;
+        const std::wstring localModPrefix = std::wstring(Tr(L"Mod")) + L": ";
+        const std::wstring localResourcePackPrefix = std::wstring(Tr(L"Resource pack")) + L": ";
+        const std::wstring localShaderPackPrefix = std::wstring(Tr(L"Shader pack")) + L": ";
+        for (const std::wstring& item : state.modsProfileMods) {
+            if (item.rfind(localModPrefix, 0) == 0) ++localModCount;
+            else if (item.rfind(localResourcePackPrefix, 0) == 0) ++localResourcePackCount;
+            else if (item.rfind(localShaderPackPrefix, 0) == 0) ++localShaderPackCount;
+        }
         const std::wstring sub = state.modsProfileBuiltin
             ? TrFormat(L"{0} - Pure vanilla, always available", { state.modsProfileTargetText })
-            : state.modsProfileMods.size() == 1
-                ? TrFormat(L"{0} - {1} mod installed", { state.modsProfileTargetText, modCount })
-                : TrFormat(L"{0} - {1} mods installed", { state.modsProfileTargetText, modCount });
+            : TrFormat(L"{0} - {1} mods, {2} resource packs, {3} shader packs",
+                { state.modsProfileTargetText, std::to_wstring(localModCount),
+                  std::to_wstring(localResourcePackCount), std::to_wstring(localShaderPackCount) });
         DrawText(sub.c_str(), smallMid_.Get(), D2D1::RectF(headX, T_ + 52.0f, headRight, T_ + 84.0f), muted_);
 
         // play sits on the right edge and the rest run leftward from it, the order the d-pad walks them

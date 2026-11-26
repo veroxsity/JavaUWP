@@ -431,8 +431,10 @@ Write-Host "=== Building GLFW CoreWindow shim ==="
 & (Join-Path $root "glfw_shim\build_glfw.ps1") -OutputDir $glfwBuildDir -MouseSupportLib $mouseSupportLib -MouseSupportInclude (Join-Path $root "mouse_support")
 if (-not (Test-Path $shimDll)) { throw "GLFW shim DLL missing after build: $shimDll" }
 
-if ($BuildSDL3) {
-    Write-Host "=== Building SDL3 UWP WinRT runtime ==="
+$mcVersionForSdl3 = [version]("$($ProjectConfig.MinecraftVersion).0")
+$buildSdl3ForTarget = $BuildSDL3 -or ($mcVersionForSdl3 -ge [version]"26.3.0")
+if ($buildSdl3ForTarget) {
+    Write-Host "=== Building SDL3 UWP WinRT runtime (required for Minecraft 26.3+) ==="
     $sdl3BuildScript = Join-Path $root "sdl3_uwp\build_sdl3.ps1"
     $sdl3BuildDir = Join-Path $buildDir "sdl3-uwp"
     & $sdl3BuildScript -OutputDir $sdl3BuildDir
@@ -689,7 +691,7 @@ Copy-Item $shimDll (Join-Path $pkg "natives\glfw.dll") -Force
 Copy-Item $mouseSupportDll (Join-Path $pkg "mouse_support.dll") -Force
 Copy-Item $mouseSupportDll (Join-Path $pkg "natives\mouse_support.dll") -Force
 
-if ($BuildSDL3) {
+if ($buildSdl3ForTarget) {
     $sdl3Dll = Join-Path (Join-Path $buildDir "sdl3-uwp") "SDL3.dll"
     Copy-Item $sdl3Dll (Join-Path $pkg "SDL3.dll") -Force
     Copy-Item $sdl3Dll (Join-Path $pkg "natives\SDL3.dll") -Force

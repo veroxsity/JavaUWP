@@ -25,6 +25,10 @@ The UWP port must:
 
 This is an architecture note for the requested 1.12.x–1.21.x–26.x range, not a claim that one MCEF binary supports every Minecraft version. Each Minecraft/loader line needs its own compatible MCEF artifact and native CEF build.
 
+## Additional legacy target: Babric Beta 1.7.3
+
+Babric Beta 1.7.3 is tracked separately in [BABRIC-1.7.3.md](BABRIC-1.7.3.md). The MCEF 1.12.2 API-only artifact is not compatible evidence for Babric; a separate Babric entrypoint, matching browser API, and UWP-capable native backend are required.
+
 ## Status
 
 - [x] Located the upstream 1.12.2 source and release.

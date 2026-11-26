@@ -64,6 +64,8 @@ struct AuthUiState {
     bool modsProfileBuiltin = false;
     bool modsProfileControllerModEnabled = true;
     std::vector<std::wstring> modsProfileMods;
+    // parallel to modsProfileMods, true when that jar sits in disabled-mods
+    std::vector<bool> modsProfileModOff;
     int modsProfileScroll = 0;
     int modsProfileFocus = 0;
     int modsProfileSel = 0;

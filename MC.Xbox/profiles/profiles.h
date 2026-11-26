@@ -32,6 +32,7 @@ std::wstring ProfilesRoot(const std::wstring& runtimeRoot);
 std::wstring ProfileDir(const std::wstring& runtimeRoot, const std::wstring& id);
 std::wstring ProfileGameDir(const std::wstring& runtimeRoot, const std::wstring& id);
 std::wstring ProfileModsDir(const std::wstring& runtimeRoot, const std::wstring& id);
+std::wstring ProfileDisabledModsDir(const std::wstring& runtimeRoot, const std::wstring& id);
 std::wstring MakeTargetId(const std::wstring& minecraftVersion, const std::wstring& loader, const std::wstring& loaderVersion);
 
 LaunchTarget DefaultLaunchTarget();
@@ -57,6 +58,9 @@ bool DeleteProfilePermanent(const std::wstring& runtimeRoot, const std::wstring&
 bool DeleteProfile(const std::wstring& runtimeRoot, const std::wstring& id);
 bool RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName);
 bool SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled);
+std::wstring DuplicateProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName);
+bool SetProfileModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& jarName, bool enabled);
+std::vector<std::wstring> ListProfileDisabledMods(const std::wstring& runtimeRoot, const std::wstring& id);
 
 void EnsureProfilesInitialized(const std::wstring& runtimeRoot);
 void EnsureProfileGameDataInitialized(const std::wstring& runtimeRoot, const std::wstring& profileId);

@@ -303,6 +303,36 @@ std::vector<Scene> Scenes() {
         };
         return state;
     } });
+    scenes.push_back({ L"mods-profile-mods-off", [] {
+        AuthUiState state = ModsPage(modstab::kProfiles);
+        state.status = L"Turned off iris-fabric-1.8.12+mc1.21.11.jar";
+        state.isError = false;
+        state.modsProfileOpen = true;
+        state.modsProfileId = L"survival";
+        state.modsProfileName = L"Survival";
+        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.5";
+        state.modsProfileMods = {
+            L"entityculling-fabric-1.8.2-mc1.21.11.jar", L"fabric-api-0.130.0+1.21.11.jar", L"iris-fabric-1.8.12+mc1.21.11.jar",
+            L"lithium-fabric-0.15.1+mc1.21.11.jar", L"modmenu-15.0.0.jar", L"sodium-fabric-0.6.13+mc1.21.11.jar",
+        };
+        state.modsProfileModOff = { false, false, true, false, true, false };
+        state.modsProfileFocus = 2;
+        state.modsProfileSel = 2;
+        return state;
+    } });
+    scenes.push_back({ L"mods-profile-duplicate", [] {
+        AuthUiState state = ModsPage(modstab::kProfiles);
+        state.status = L"Made Survival copy. Press Y to rename it.";
+        state.isError = false;
+        state.modsProfileOpen = true;
+        state.modsProfileId = L"survival-copy";
+        state.modsProfileName = L"Survival copy";
+        state.modsProfileTargetText = L"1.21.11 Fabric 0.19.5";
+        state.modsProfileMods = { L"fabric-api-0.130.0+1.21.11.jar", L"sodium-fabric-0.6.13+mc1.21.11.jar" };
+        state.modsProfileModOff = { false, false };
+        state.modsProfileFocus = 6;
+        return state;
+    } });
     scenes.push_back({ L"mods-target-open", [] {
         AuthUiState state = ModsPage(modstab::kPopular);
         state.modsFocus = 3;

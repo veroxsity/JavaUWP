@@ -18,6 +18,9 @@ bool HasCurseForgeKey();
 // last four characters only, for showing that a key is present without printing it
 std::wstring CurseForgeKeyHint();
 
+// where a player makes their own key, shown as a link in Remote Files and a QR code in Settings
+inline constexpr char kCurseForgeKeyUrl[] = "https://console.curseforge.com/#/api-keys";
+
 // curseforge ids are numeric and modrinth ids are base62, so stored curseforge ids get a cf prefix
 std::wstring QualifyProjectId(ModSource source, const std::wstring& projectId);
 

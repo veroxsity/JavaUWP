@@ -50,6 +50,7 @@ constexpr int kProfileDelete = 11;
 constexpr int kProfileController = 12;
 constexpr int kProfileBackup = 13;
 constexpr int kProfileExport = 14;
+constexpr int kProfileDuplicate = 15;
 constexpr int kTabBase = 100;
 constexpr int kCrashButtonBase = 300;
 constexpr int kChangelogButtonBase = 350;

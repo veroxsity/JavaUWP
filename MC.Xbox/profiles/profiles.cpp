@@ -66,6 +66,8 @@ std::wstring ProfileDir(const std::wstring& runtimeRoot, const std::wstring& id)
 std::wstring ProfileGameDir(const std::wstring& runtimeRoot, const std::wstring& id) { return ProfileDir(runtimeRoot, id) + L"\\game"; }
 std::wstring LegacyProfileModsDir(const std::wstring& runtimeRoot, const std::wstring& id) { return ProfileDir(runtimeRoot, id) + L"\\mods"; }
 std::wstring ProfileModsDir(const std::wstring& runtimeRoot, const std::wstring& id) { return ProfileGameDir(runtimeRoot, id) + L"\\mods"; }
+// outside game\mods so no loader ever scans it, and not profile\mods which gets migrated into game\mods
+std::wstring ProfileDisabledModsDir(const std::wstring& runtimeRoot, const std::wstring& id) { return ProfileDir(runtimeRoot, id) + L"\\disabled-mods"; }
 std::wstring ProfilesJsonPath(const std::wstring& runtimeRoot) { return ProfilesRoot(runtimeRoot) + L"\\profiles.json"; }
 std::wstring LegacyProfilesManifestPath(const std::wstring& runtimeRoot) { return ProfilesRoot(runtimeRoot) + L"\\profiles.txt"; }
 std::wstring ActiveProfilePath(const std::wstring& runtimeRoot) { return ProfilesRoot(runtimeRoot) + L"\\active.txt"; }
@@ -614,6 +616,56 @@ bool RenameProfile(const std::wstring& runtimeRoot, const std::wstring& id, cons
     std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
     for (auto& p : profiles) if (p.id == id && !p.builtin) p.name = StripNewlines(newName);
     return SaveProfiles(runtimeRoot, profiles);
+}
+
+std::wstring DuplicateProfile(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& newName) {
+    std::lock_guard<std::recursive_mutex> guard(g_profilesMutex);
+    if (id.empty() || id == kVanillaProfileId) return {};
+    std::vector<Profile> profiles = LoadProfiles(runtimeRoot);
+    const auto source = std::find_if(profiles.begin(), profiles.end(), [&](const Profile& p) { return p.id == id; });
+    if (source == profiles.end() || source->builtin) return {};
+
+    Profile copy = *source;
+    copy.name = newName.empty() ? source->name : StripNewlines(newName);
+    copy.id = MakeProfileId(runtimeRoot, copy.name);
+    copy.builtin = false;
+    const std::wstring dest = ProfileDir(runtimeRoot, copy.id);
+    if (!CopyDirectoryTree(ProfileDir(runtimeRoot, id), dest)) {
+        DeleteDirectoryTree(dest);
+        return {};
+    }
+    profiles.push_back(copy);
+    if (!SaveProfiles(runtimeRoot, profiles)) {
+        DeleteDirectoryTree(dest);
+        return {};
+    }
+    return copy.id;
+}
+
+bool SetProfileModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, const std::wstring& jarName, bool enabled) {
+    if (id.empty() || jarName.empty() || jarName.find_first_of(L"\\/") != std::wstring::npos) return false;
+    const std::wstring onPath = ProfileModsDir(runtimeRoot, id) + L"\\" + jarName;
+    const std::wstring offPath = ProfileDisabledModsDir(runtimeRoot, id) + L"\\" + jarName;
+    const std::wstring& from = enabled ? offPath : onPath;
+    const std::wstring& to = enabled ? onPath : offPath;
+    EnsureDirectoryTree(GetParentDir(to));
+    if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        WriteLogF(L"Mod %s failed: %s err=%u", enabled ? L"enable" : L"disable", jarName.c_str(), GetLastError());
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::wstring> ListProfileDisabledMods(const std::wstring& runtimeRoot, const std::wstring& id) {
+    std::vector<std::wstring> out;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((ProfileDisabledModsDir(runtimeRoot, id) + L"\\*.jar").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) out.push_back(fd.cFileName); } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 bool SetProfileControllerModEnabled(const std::wstring& runtimeRoot, const std::wstring& id, bool enabled) {

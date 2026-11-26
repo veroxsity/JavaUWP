@@ -32,7 +32,7 @@ b1.7.3	Beta 1.7.3 Babric	babric	none	java21	experimental	babric	Starac 1.3.2+bab
 1.21.7	1.21.7 Forge	forge	57.0.3	java21	experimental	forge	Modern controller and compat target
 1.21.7	1.21.7 NeoForge	neoforge	21.7.25-beta	java21	experimental	neoforge	Modern controller and compat target
 1.21.6	1.21.6 Fabric	fabric	0.19.5	java21	experimental	fabric	Modern controller and compat target
-1.21.6	26.1 Forge	forge	56.0.9	java21	experimental	forge	Modern shared controller target
+1.21.6	1.21.6 Forge	forge	56.0.9	java21	experimental	forge	Modern shared controller target
 1.21.6	1.21.6 NeoForge	neoforge	21.6.20	java21	experimental	neoforge	Modern controller and compat target
 1.21.5	1.21.5 Fabric	fabric	0.19.5	java21	experimental	fabric	Modern controller and compat target
 1.21.5	1.21.5 Forge	forge	55.1.13	java21	experimental	forge	Modern controller and compat target

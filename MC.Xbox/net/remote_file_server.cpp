@@ -994,7 +994,8 @@ async function uploadManual(input){
             << MarkedSentence(L"CurseForge will not let a launcher ship its own key, so browsing and "
                               L"downloading from CurseForge needs one of yours. Make a free Core API key at {0} and paste it here.",
                               { L"console.curseforge.com" }, "code")
-            << "</p>";
+            << "</p><p><a href=\"" << modsource::kCurseForgeKeyUrl << "\" target=\"_blank\" rel=\"noopener noreferrer\">"
+            << HtmlEscape(Tr(L"Open the CurseForge API keys page")) << "</a></p>";
         if (hint.empty()) {
             out << "<p class=\"muted\">No key is set. CurseForge is unavailable until one is.</p>";
         } else {

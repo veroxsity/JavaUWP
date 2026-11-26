@@ -2,6 +2,16 @@
 
 Notable changes to Bandit Launcher. Nightly packages are numbered by build revision rather than by release, so entries here are dated.
 
+## 2026-11-26
+
+### Added
+
+**Turn mods off without deleting them.** Open a profile, pick a mod and press A to turn it off. It stays in the list, greyed out and marked Off, and Minecraft does not load it. Press A again to turn it back on. Mods you turn off are not included when you export the profile as a .mrpack.
+
+**Duplicate a profile.** A profile has a new Duplicate button that makes a full copy, with the same mods, worlds and settings, called "<name> copy". Press Y on the copy to rename it.
+
+**A link to make a CurseForge API key.** The CurseForge key section in Remote Files now links straight to the CurseForge page where you make a key. When CurseForge is picked in Settings and no key is set, Settings shows a QR code for the same page.
+
 ## 2026-11-13
 
 ### Added

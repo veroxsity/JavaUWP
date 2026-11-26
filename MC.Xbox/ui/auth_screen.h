@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "launcher_common.h"
 #include "launcher_mouse.h"
+#include "mod_source.h"
 #include "mods_ui_globals.h"
 #include "profiles.h"
 #include "themes.h"
@@ -711,7 +712,7 @@ private:
             const bool curseForge = state.settingsModSource == ModSource::CurseForge;
             const std::wstring sub = curseForge
                 ? (state.settingsCurseForgeKeyHint.empty()
-                    ? std::wstring(Tr(L"No API key set. Add one in Remote Files or CurseForge stays empty."))
+                    ? std::wstring(Tr(L"No API key set. Scan the code to make one, then add it in Remote Files."))
                     : TrFormat(L"API key saved ({0}).", { state.settingsCurseForgeKeyHint }))
                 : std::wstring(Tr(L"Modrinth needs no key. Switch to CurseForge to browse there instead."));
             const float segW = 164.0f;
@@ -751,11 +752,22 @@ private:
             d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x - 32.0f, mid), 11.0f, 11.0f), line_, 1.5f);
         }
 
+        // the key page link as a QR code, only while curseforge is picked and has no key
+        const bool showKeyQr = state.settingsModSource == ModSource::CurseForge && state.settingsCurseForgeKeyHint.empty();
+        const float keyQrSize = 170.0f;
+        if (showKeyQr) {
+            if (curseForgeKeyQr_.empty()) curseForgeKeyQr_ = GenerateLoginQrMatrix(modsource::kCurseForgeKeyUrl);
+            const D2D1_RECT_F card = D2D1::RectF(R_ - keyQrSize, rowY + 14.0f, R_, rowY + 14.0f + keyQrSize);
+            FillRound(card, MakeBrush(0xFFFFFF), 14.0f);
+            DrawQr(curseForgeKeyQr_, D2D1::RectF(card.left + 12.0f, card.top + 12.0f, card.right - 12.0f, card.bottom - 12.0f));
+            DrawText(Tr(L"CurseForge key"), smallMid_.Get(),
+                D2D1::RectF(card.left - 260.0f, card.top, card.left - 20.0f, card.top + 34.0f), text_);
+        }
         DrawFlow(
             state.settingsConfigured
                 ? Tr(L"Reports use a random id and include launcher and Minecraft versions, loader details, launch stage, memory totals and a mod list hash. Mod jar names and project ids can be sent when a crash needs them. A crash trace can include exception text and Java class names. The launcher does not add your account, gamertag, worlds or access token. Common user and app storage paths are scrubbed. The id stays the same until it is reset.")
                 : Tr(L"No reporting server is configured on this install, so nothing can be sent either way."),
-            captionFormat_.Get(), L_ + 4.0f, rowY + 14.0f, R_ - L_ - 8.0f, 130.0f, muted_);
+            captionFormat_.Get(), L_ + 4.0f, rowY + 14.0f, R_ - L_ - 8.0f - (showKeyQr ? keyQrSize + 300.0f : 0.0f), 130.0f, muted_);
 
         if (!state.settingsNote.empty()) {
             DrawText(state.settingsNote.c_str(), smallMid_.Get(),
@@ -1019,7 +1031,7 @@ private:
         const float btnW = 168.0f;
         const float btnH = 58.0f;
         const float btnGap = 10.0f;
-        const float actionBarW = state.modsProfileBuiltin ? btnW : (btnW * 5.0f + btnGap * 4.0f);
+        const float actionBarW = state.modsProfileBuiltin ? btnW : (btnW * 6.0f + btnGap * 5.0f);
         const float headRight = R_ - actionBarW - 30.0f;
 
         const std::wstring nameShown = state.modsRenaming ? (state.modsRenameText + L"_") : state.modsProfileName;
@@ -1033,7 +1045,10 @@ private:
             : state.modsProfileMods.size() == 1
                 ? TrFormat(L"{0} - {1} mod installed", { state.modsProfileTargetText, modCount })
                 : TrFormat(L"{0} - {1} mods installed", { state.modsProfileTargetText, modCount });
-        DrawText(sub.c_str(), smallMid_.Get(), D2D1::RectF(headX, T_ + 52.0f, headRight, T_ + 84.0f), muted_);
+        const size_t offCount = static_cast<size_t>(std::count(state.modsProfileModOff.begin(), state.modsProfileModOff.end(), true));
+        const std::wstring subShown = offCount == 0 ? sub
+            : sub + L", " + TrFormat(L"{0} off", { std::to_wstring(offCount) });
+        DrawText(subShown.c_str(), smallMid_.Get(), D2D1::RectF(headX, T_ + 52.0f, headRight, T_ + 84.0f), muted_);
 
         // play sits on the right edge and the rest run leftward from it, the order the d-pad walks them
         auto slot = [&](int fromRight) {
@@ -1059,11 +1074,15 @@ private:
             RegisterHit(launchhit::kProfileExport, exportBtn);
             DrawButton(exportBtn, L"\uE898", Tr(L"Export"), state.modsProfileFocus == 4, ButtonKind::Neutral);
 
-            const D2D1_RECT_F backupBtn = slot(3);
+            const D2D1_RECT_F duplicateBtn = slot(3);
+            RegisterHit(launchhit::kProfileDuplicate, duplicateBtn);
+            DrawButton(duplicateBtn, L"\uE8C8", Tr(L"Duplicate"), state.modsProfileFocus == 6, ButtonKind::Neutral);
+
+            const D2D1_RECT_F backupBtn = slot(4);
             RegisterHit(launchhit::kProfileBackup, backupBtn);
             DrawButton(backupBtn, L"\uE74E", Tr(L"Backup"), state.modsProfileFocus == 3, ButtonKind::Neutral);
 
-            const D2D1_RECT_F delBtn = slot(4);
+            const D2D1_RECT_F delBtn = slot(5);
             RegisterHit(launchhit::kProfileDelete, delBtn);
             DrawButton(delBtn, L"\uE74D", Tr(L"Delete"), state.modsProfileFocus == 1, ButtonKind::Danger);
         }
@@ -1108,12 +1127,18 @@ private:
                     const D2D1_RECT_F card = D2D1::RectF(x, y, x + cardW, y + cardH);
                     RegisterHit(launchhit::kProfileGridBase + i, card);
                     const bool sel = gridFocus && i == state.modsProfileSel;
+                    const bool off = static_cast<size_t>(i) < state.modsProfileModOff.size() && state.modsProfileModOff[static_cast<size_t>(i)];
                     FillRound(card, sel ? text_ : surface_, 12.0f);
                     DrawIcon(L"\uE74C", D2D1::RectF(card.left + 14.0f, card.top, card.left + 48.0f, card.bottom), sel ? onLight_ : muted_);
                     std::wstring nm = state.modsProfileMods[static_cast<size_t>(i)];
                     if (nm.size() > 4 && nm.compare(nm.size() - 4, 4, L".jar") == 0) nm = nm.substr(0, nm.size() - 4);
+                    const float offW = off ? 70.0f : 0.0f;
                     DrawText(nm.c_str(), smallMid_.Get(),
-                        D2D1::RectF(card.left + 60.0f, card.top, card.right - 16.0f, card.bottom), sel ? onLight_ : text_);
+                        D2D1::RectF(card.left + 60.0f, card.top, card.right - 16.0f - offW, card.bottom), sel ? onLight_ : (off ? muted_ : text_));
+                    if (off) {
+                        DrawText(Tr(L"Off"), smallMid_.Get(),
+                            D2D1::RectF(card.right - 16.0f - offW, card.top, card.right - 16.0f, card.bottom), sel ? onLight_ : muted_);
+                    }
                 }
             }
 
@@ -1130,7 +1155,8 @@ private:
         if (state.modsRenaming) {
             profileHint = Tr(L"Type a name, then close the keyboard to save");
         } else if (!state.modsProfileBuiltin) {
-            if (gridFocus) profileHint = Tr(L"B  Back      X  Remove mod      Y  Rename");
+            if (gridFocus) profileHint = Tr(L"B  Back      A  Turn on or off      X  Remove mod      Y  Rename");
+            else if (state.modsProfileFocus == 6) profileHint = Tr(L"B  Back      A  Copy this profile with its mods and worlds");
             else if (state.modsProfileFocus == 4) profileHint = Tr(L"B  Back      A  Export .mrpack for PC");
             else if (state.modsProfileFocus == 5) profileHint = Tr(L"B  Back      A  Toggle Bandit controller mod      Y Rename");
             else profileHint = Tr(L"B  Back      A select      X Delete      Y Rename");
@@ -1433,6 +1459,7 @@ private:
     float B_ = 0.0f;
     std::string remoteQrUrl_;
     QrMatrix remoteQr_;
+    QrMatrix curseForgeKeyQr_;
     std::map<std::wstring, ComPtr<ID2D1Bitmap1>> bitmapCache_;
     std::vector<std::wstring> screenshotPaths_;
     ULONGLONG screenshotsScanTick_ = 0;

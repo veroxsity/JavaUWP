@@ -19,6 +19,10 @@ Provide a separate compatibility layer for evaluating Minecraft Chromium Embedde
 
 **This commit does not claim that MCEF is already running.** No MCEF/CEF binaries are included because the exact upstream build, redistribution terms, and UWP compatibility have not yet been verified.
 
+## Babric Beta 1.7.3
+
+Babric is tracked as a separate legacy target. See [BABRIC-1.7.3.md](BABRIC-1.7.3.md); the modern MCEF 1.12.2 API artifact is not a Babric Beta 1.7.3 implementation.
+
 ## AWT / CoreWindow port
 
 See [AWT-COREWINDOW-PORT.md](AWT-COREWINDOW-PORT.md) for the located upstream MCEF 1.12.2 source/release, the API-only asset distinction, and the required AWT-to-CoreWindow work across the requested version families. The upstream 1.12.2 release asset is API-only and is not a complete runnable MCEF/CEF package.

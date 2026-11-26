@@ -2876,7 +2876,7 @@ void ShowModsPage(
                         state.status = Tr(L"Bandit controller enabled; Controlify files preserved");
                     } else {
                         const int removed = DeleteBanditControllerModsFromDir(ProfileModsDir(runtimeRoot, state.modsProfileId));
-                        state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
+                        state.modsProfileMods = ListProfileLocalContentForUi(runtimeRoot, state.modsProfileId);
                         state.status = removed > 0
                             ? Tr(L"Bandit controller mod disabled and removed")
                             : Tr(L"Bandit controller mod disabled");

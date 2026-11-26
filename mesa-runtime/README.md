@@ -20,7 +20,7 @@ The build copies each available runtime file, including `vulkan-1.dll` when supp
 
 ## Vulkan / D3D12 status
 
-The launcher reads `LocalState\\graphics_backend.txt` before starting the JVM. Its default is `opengl`; set the file contents to `vulkan` to opt into the bundled Vulkan loader/Dozen ICD selection, or `opengl` to restore the default. This setting only selects the Vulkan ICD for applications that request Vulkan. Minecraft still needs a compatible Vulkan renderer/mod; the setting does not translate LWJGL OpenGL calls into Vulkan or force the game to use Vulkan.
+The launcher exposes **Settings → Vulkan graphics backend**. The toggle is stored in `LocalState\\graphics_backend.txt`; its default is `opengl`. You can also edit that file manually to `vulkan` or `opengl`. This setting only selects the Vulkan ICD for applications that request Vulkan. Minecraft still needs a compatible Vulkan renderer/mod; the setting does not translate LWJGL OpenGL calls into Vulkan or force the game to use Vulkan.
 
 Dozen translates Vulkan calls to D3D12; it is separate from Mesa's existing OpenGL-on-D3D12 driver. The ICD manifest advertises Vulkan API 1.2 for the Java 26.2 target. This must match the actual `vulkan_dzn.dll`: use a Mesa 26.2 Dozen build (or another build verified to expose Vulkan 1.2). Do not raise this value just to label an older driver as 1.2.
 

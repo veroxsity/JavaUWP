@@ -701,8 +701,8 @@ private:
             FillRound(D2D1::RectF(track.left, track.top, track.left + (track.right - track.left) * memoryFraction, track.bottom), accent_, 7.0f);
         }
 
-        const float rowH = 58.0f;
-        const float rowGap = 6.0f;
+        const float rowH = 54.0f;
+        const float rowGap = 4.0f;
         float rowY = T_ + 138.0f;
         auto row = [&](int index, const wchar_t* label, const wchar_t* sub, float controlW) {
             const D2D1_RECT_F r = D2D1::RectF(L_, rowY, R_, rowY + rowH);
@@ -753,19 +753,24 @@ private:
             onOff(r, state.settingsUpdateCheckOn);
         }
         {
-            const D2D1_RECT_F r = row(4, Tr(L"Language"), Tr(L"Missing translations stay in English."), 260.0f);
+            const D2D1_RECT_F r = row(4, Tr(L"Vulkan graphics backend"),
+                Tr(L"Experimental Dozen Vulkan over Direct3D 12. Requires a Vulkan renderer."), 150.0f);
+            onOff(r, state.settingsVulkanOn);
+        }
+        {
+            const D2D1_RECT_F r = row(5, Tr(L"Language"), Tr(L"Missing translations stay in English."), 260.0f);
             DrawIcon(L"\uE76C", D2D1::RectF(r.right - 48.0f, r.top, r.right - 18.0f, r.bottom), muted_);
             DrawText(state.settingsLanguageName.c_str(), valueFormat_.Get(),
                 D2D1::RectF(r.right - 310.0f, r.top, r.right - 58.0f, r.bottom), text_);
         }
         {
-            const D2D1_RECT_F r = row(5, Tr(L"Theme"), Tr(L"Choose the launcher's appearance."), 310.0f);
+            const D2D1_RECT_F r = row(6, Tr(L"Theme"), Tr(L"Choose the launcher's appearance."), 310.0f);
             DrawIcon(L"\uE76C", D2D1::RectF(r.right - 48.0f, r.top, r.right - 18.0f, r.bottom), muted_);
             DrawText(state.settingsThemeName.c_str(), valueFormat_.Get(),
                 D2D1::RectF(r.right - 310.0f, r.top, r.right - 58.0f, r.bottom), text_);
         }
         {
-            const D2D1_RECT_F r = row(6, Tr(L"Credits"), Tr(L"View project, platform and library credits."), 90.0f);
+            const D2D1_RECT_F r = row(7, Tr(L"Credits"), Tr(L"View project, platform and library credits."), 90.0f);
             DrawIcon(L"\uE946", D2D1::RectF(r.right - 48.0f, r.top, r.right - 18.0f, r.bottom), muted_);
         }
 

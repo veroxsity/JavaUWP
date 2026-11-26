@@ -2,6 +2,7 @@
 #include "i18n.h"
 
 #include "modpack_io.h"
+#include "world_io.h"
 #include "auth_screen.h"
 #include "compat_feed.h"
 #include "curseforge.h"
@@ -115,6 +116,7 @@ static const char* ModrinthProjectType(ContentKind kind) {
     case ContentKind::Modpack: return "modpack";
     case ContentKind::ResourcePack: return "resourcepack";
     case ContentKind::Shader: return "shader";
+    case ContentKind::World: return "";
     case ContentKind::Mod: break;
     }
     return "mod";
@@ -125,6 +127,7 @@ static std::string ModrinthLoaderFor(ContentKind kind, const std::string& target
     switch (kind) {
     case ContentKind::ResourcePack: return "minecraft";
     case ContentKind::Shader: return "iris";
+    case ContentKind::World: return "";
     case ContentKind::Mod:
     case ContentKind::Modpack: break;
     }
@@ -376,6 +379,64 @@ static int RemoveProfileModAndUnusedDependencies(const std::wstring& runtimeRoot
     return removed;
 }
 
+static std::vector<std::wstring> ListProfileLocalContentForUi(
+    const std::wstring& runtimeRoot,
+    const std::wstring& profileId) {
+    std::vector<std::wstring> out;
+    const std::wstring gameDir = ProfileGameDir(runtimeRoot, profileId);
+    const auto appendFolder = [&](const std::wstring& folder, const std::wstring& label, bool jarsOnly) {
+        WIN32_FIND_DATAW fd = {};
+        HANDLE h = FindFirstFileW((gameDir + L"\\" + folder + L"\\*").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) return;
+        do {
+            if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+            if (jarsOnly && ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+                !EndsWithInsensitive(fd.cFileName, L".jar"))) continue;
+            out.push_back(label + L": " + fd.cFileName);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    };
+    appendFolder(L"mods", Tr(L"Mod"), true);
+    appendFolder(L"resourcepacks", Tr(L"Resource pack"), false);
+    appendFolder(L"shaderpacks", Tr(L"Shader pack"), false);
+    std::sort(out.begin(), out.end(), [](const std::wstring& a, const std::wstring& b) {
+        return ToLowerW(a) < ToLowerW(b);
+    });
+    return out;
+}
+
+static int RemoveProfileLocalContentForUi(
+    const std::wstring& runtimeRoot,
+    const std::wstring& profileId,
+    const std::wstring& item) {
+    const std::wstring modPrefix = std::wstring(Tr(L"Mod")) + L": ";
+    const std::wstring resourcePrefix = std::wstring(Tr(L"Resource pack")) + L": ";
+    const std::wstring shaderPrefix = std::wstring(Tr(L"Shader pack")) + L": ";
+    if (item.rfind(modPrefix, 0) == 0) {
+        return RemoveProfileModAndUnusedDependencies(runtimeRoot, profileId, item.substr(modPrefix.size()));
+    }
+
+    std::wstring folder;
+    std::wstring fileName;
+    if (item.rfind(resourcePrefix, 0) == 0) {
+        folder = L"resourcepacks";
+        fileName = item.substr(resourcePrefix.size());
+    } else if (item.rfind(shaderPrefix, 0) == 0) {
+        folder = L"shaderpacks";
+        fileName = item.substr(shaderPrefix.size());
+    } else {
+        // Backward compatibility with an already-open profile panel.
+        return RemoveProfileModAndUnusedDependencies(runtimeRoot, profileId, item);
+    }
+
+    if (!IsSafeWorldName(fileName)) return 0;
+    const std::wstring path = ProfileGameDir(runtimeRoot, profileId) + L"\\" + folder + L"\\" + fileName;
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) return 0;
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) return DeleteDirectoryTree(path) ? 1 : 0;
+    return DeleteFileW(path.c_str()) ? 1 : 0;
+}
+
 static const int kModPageSize = 50;
 
 // fabric api, curseforge project 306612
@@ -454,6 +515,11 @@ static bool FetchTabPage(
     const LaunchTarget target = CurrentModsTarget(state);
     const std::string gameVersion = w2a(target.minecraftVersion);
     const std::wstring& query = state.modsSearchQuery;
+
+    if (tab.kind == ContentKind::World && state.modsSource != ModSource::CurseForge) {
+        error = Tr(L"World downloads are currently available from CurseForge. Select CurseForge as the source.");
+        return false;
+    }
 
     if (state.modsSource != ModSource::CurseForge) {
         const char* index = !query.empty() ? "relevance" : (tab.sortByDownloads ? "downloads" : "newest");
@@ -1302,12 +1368,36 @@ static bool InstallContentPack(
         return false;
     }
 
-    const std::wstring folder = ProfileGameDir(runtimeRoot, profileId) + L"\\" + ContentFolder(card.kind);
-    EnsureDirectoryTree(folder);
-    const std::wstring destination = folder + L"\\" + SafeFileName(fileName);
-    if (!sha1.empty() && FileMatchesSha1(destination, sha1)) {
-        alreadyInstalled = true;
-        return true;
+    std::wstring destination;
+    std::wstring worldName;
+    if (card.kind == ContentKind::World) {
+        if (!fromCurseForge) {
+            error = Tr(L"World downloads require the CurseForge source.");
+            return false;
+        }
+        worldName = SafeFileName(card.title);
+        if (!IsSafeWorldName(worldName)) worldName = SafeFileName(card.slug);
+        if (!IsSafeWorldName(worldName)) {
+            error = Tr(L"Could not create a safe name for this world.");
+            return false;
+        }
+        for (const std::wstring& installedWorld : ListProfileWorlds(runtimeRoot, profileId)) {
+            if (_wcsicmp(installedWorld.c_str(), worldName.c_str()) == 0) {
+                alreadyInstalled = true;
+                return true;
+            }
+        }
+        const std::wstring downloadDir = runtimeRoot + L"\\downloads\\worlds";
+        EnsureDirectoryTree(downloadDir);
+        destination = downloadDir + L"\\" + SafeFileName(idOrSlug) + L".zip";
+    } else {
+        const std::wstring folder = ProfileGameDir(runtimeRoot, profileId) + L"\\" + ContentFolder(card.kind);
+        EnsureDirectoryTree(folder);
+        destination = folder + L"\\" + SafeFileName(fileName);
+        if (!sha1.empty() && FileMatchesSha1(destination, sha1)) {
+            alreadyInstalled = true;
+            return true;
+        }
     }
 
     const std::wstring tempPath = destination + L".download";
@@ -1326,6 +1416,15 @@ static bool InstallContentPack(
         error = TrFormat(L"Verification failed: {0}", { fileName });
         return false;
     }
+    if (card.kind == ContentKind::World) {
+        const bool imported = ImportWorldFromZip(
+            tempPath, runtimeRoot, profileId, worldName, false, error);
+        DeleteFileW(tempPath.c_str());
+        if (!imported) return false;
+        WriteLogF(L"Imported downloaded world %s into profile %s", worldName.c_str(), profileId.c_str());
+        return true;
+    }
+
     if (!MoveFileExW(tempPath.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         WriteLogF(L"MoveFileEx failed for %s %s err=%u", noun, destination.c_str(), GetLastError());
         DeleteFileW(tempPath.c_str());
@@ -2719,8 +2818,8 @@ void ShowModsPage(
             } else if (xDown && !xWasDown) {
                 if (gridFocus && pmTotal > 0 && state.modsProfileSel < pmTotal) {
                     const std::wstring jar = state.modsProfileMods[static_cast<size_t>(state.modsProfileSel)];
-                    const int removed = RemoveProfileModAndUnusedDependencies(runtimeRoot, state.modsProfileId, jar);
-                    state.modsProfileMods = ListProfileMods(runtimeRoot, state.modsProfileId);
+                    const int removed = RemoveProfileLocalContentForUi(runtimeRoot, state.modsProfileId, jar);
+                    state.modsProfileMods = ListProfileLocalContentForUi(runtimeRoot, state.modsProfileId);
                     const int newTotal = static_cast<int>(state.modsProfileMods.size());
                     if (state.modsProfileSel >= newTotal) state.modsProfileSel = (std::max)(0, newTotal - 1);
                     if (newTotal == 0) state.modsProfileFocus = 0;
@@ -3086,7 +3185,7 @@ void ShowModsPage(
                         state.modsProfileTargetText = ProfileDisplayTarget(runtimeRoot, selected.filePath);
                         state.modsProfileBuiltin = (selected.filePath == kVanillaProfileId);
                         state.modsProfileControllerModEnabled = GetProfileById(runtimeRoot, selected.filePath).controllerModEnabled;
-                        state.modsProfileMods = ListProfileMods(runtimeRoot, selected.filePath);
+                        state.modsProfileMods = ListProfileLocalContentForUi(runtimeRoot, selected.filePath);
                         state.modsProfileScroll = 0;
                         state.modsProfileFocus = 0;
                         state.modsProfileSel = 0;

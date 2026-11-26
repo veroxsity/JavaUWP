@@ -22,6 +22,7 @@ inline const wchar_t* ContentNoun(ContentKind kind, bool plural) {
     case ContentKind::Modpack: return plural ? TR_NOOP(L"modpacks") : TR_NOOP(L"modpack");
     case ContentKind::ResourcePack: return plural ? TR_NOOP(L"resource packs") : TR_NOOP(L"resource pack");
     case ContentKind::Shader: return plural ? TR_NOOP(L"shaders") : TR_NOOP(L"shader");
+    case ContentKind::World: return plural ? TR_NOOP(L"worlds") : TR_NOOP(L"world");
     case ContentKind::Mod: break;
     }
     return plural ? TR_NOOP(L"mods") : TR_NOOP(L"mod");

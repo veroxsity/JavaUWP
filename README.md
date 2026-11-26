@@ -42,12 +42,12 @@ These are pre-release testing builds. Nightly builds are experimental and do not
 5. Choose or create a profile, then select its Minecraft version and loader. The default is **Minecraft 1.21.11 with Fabric**.
 6. Press **Play**. The first launch downloads the game, libraries, assets and loader files for that target. Allow time for this to finish.
 
-Use the **Mods** page to manage profiles and install content. Start **Remote Files** to upload worlds, edit configs or download logs from another device.
+Use the **Mods** page to manage profiles and install content. Its **Worlds** tab downloads CurseForge maps for the selected Minecraft version and imports them into that profile's `saves` folder. In a profile's local content list, installed mods, resource packs and shader packs are shown with separate labels. Start **Remote Files** to upload worlds, edit configs or download logs from another device.
 
 ## Features
 
 - Separate profiles for different Minecraft versions, loaders and mod setups.
-- Modrinth and CurseForge browsing for mods, modpacks, resource packs and shaders.
+- Modrinth and CurseForge browsing for mods, modpacks, resource packs and shaders, plus CurseForge world downloads for the selected Minecraft version.
 - Recommended mods filtered for the selected launch target.
 - Bundled Bandit Controller support for targets that list a controller provider.
 - Profile backups and restore options, including undoing the last deleted profile.
@@ -91,7 +91,7 @@ The experimental Minecraft **26.3** and **26.4 Snapshot 8** targets are being pr
   ```
 
 - Packaging `SDL3.dll` does **not** make Minecraft use SDL3. A compatible LWJGL SDL3 binding and working window, input and rendering integration (or a GLFW-to-SDL3 compatibility layer) are still required. Until then, Minecraft continues to use the GLFW shim.
-- The experimental Mesa Dozen Vulkan ICD targets Vulkan over Direct3D 12. Selecting the ICD does not automatically switch Minecraft to Vulkan; the Vulkan loader, UWP permissions and actual LWJGL/game startup still need Xbox testing.
+- The experimental Mesa Dozen Vulkan ICD targets Vulkan over Direct3D 12. Set `LocalState\\graphics_backend.txt` to `vulkan` to select it, or `opengl` to keep the default. This selects the ICD only; Minecraft still needs a Vulkan-capable renderer/mod, and the Vulkan loader, UWP permissions and actual LWJGL/game startup still need Xbox testing.
 
 See [SDL3 UWP and GLFW build notes](sdl3_uwp/README.md) and [Mesa runtime notes](mesa-runtime/README.md). No claim of successful Minecraft 26.3/26.4 SDL3 or Vulkan gameplay is made until those paths are built and tested on Xbox.
 
@@ -99,7 +99,7 @@ See [SDL3 UWP and GLFW build notes](sdl3_uwp/README.md) and [Mesa runtime notes]
 
 Choose the profile and launch target before installing content. Mods must match both the Minecraft version and loader, and must work inside the Xbox UWP sandbox.
 
-The Mods page includes **Popular**, **Latest**, **Recommended**, **Modpacks**, **Resource packs** and **Shaders** tabs. Switch between Modrinth and CurseForge using the source selector or launcher Settings.
+The Mods page includes **Popular**, **Latest**, **Recommended**, **Modpacks**, **Resource packs**, **Shaders** and **Worlds** tabs. Worlds are currently sourced from CurseForge (Minecraft Worlds class); Modrinth's public project-type API does not expose worlds as a downloadable project type. Switch between Modrinth and CurseForge using the source selector or launcher Settings.
 
 **CurseForge needs a personal API key.** Start Remote Files and add it under **Settings**, then select CurseForge in the launcher. Modrinth does not need a key.
 

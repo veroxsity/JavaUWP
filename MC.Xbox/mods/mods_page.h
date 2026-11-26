@@ -12,7 +12,8 @@ constexpr int kRecommended = 3;
 constexpr int kModpacks = 4;
 constexpr int kResourcePacks = 5;
 constexpr int kShaders = 6;
-constexpr int kCount = 7;
+constexpr int kWorlds = 7;
+constexpr int kCount = 8;
 }
 
 struct ModsTabInfo {
@@ -42,6 +43,7 @@ inline const wchar_t* ContentIcon(ContentKind kind) {
     case ContentKind::Modpack: return L"\uE7B8";
     case ContentKind::ResourcePack: return L"\uE790";
     case ContentKind::Shader: return L"\uE706";
+    case ContentKind::World: return L"\uE7C3";
     case ContentKind::Mod: break;
     }
     return L"\uE74C";

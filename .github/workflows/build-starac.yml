@@ -1,4 +1,4 @@
-name: Build Starač for Beta 1.7.3
+name: Prepare Staráč for Babric Beta 1.7.3
 
 on:
   workflow_dispatch:
@@ -11,48 +11,50 @@ permissions:
   contents: read
 
 jobs:
-  build-starac:
+  prepare-babric-mod:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Bandit Launcher
+      - name: Checkout launcher
         uses: actions/checkout@v4
-
-      - name: Checkout upstream Starač source
-        uses: actions/checkout@v4
-        with:
-          repository: matthewperiut/starac
-          ref: master
-          path: starac-source
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-          cache: gradle
-          cache-dependency-path: starac-source/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Build Starač
-        working-directory: starac-source
-        run: |
-          chmod +x ./gradlew
-          ./gradlew --no-daemon clean build
-
-      - name: Collect build outputs and checksums
+      - name: Download official Staráč Babric release
         shell: bash
         run: |
           set -euo pipefail
+          VERSION_ID="fBYyB56e"
+          API="https://api.modrinth.com/v2/version/${VERSION_ID}"
           mkdir -p dist
-          find starac-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' -exec cp {} dist/ \;
-          test -n "$(find dist -maxdepth 1 -type f -name '*.jar' -print -quit)"
-          (cd dist && sha256sum *.jar > SHA256SUMS.txt)
-          printf 'Built JARs:\n'
-          ls -lh dist
+          curl --fail --silent --show-error "$API" -o version.json
 
-      - name: Upload Starač JAR artifacts
+          GAME_VERSION="$(jq -r '.game_versions[]' version.json | grep -Fx 'b1.7.3' || true)"
+          LOADER="$(jq -r '.loaders[]' version.json | grep -Fx 'babric' || true)"
+          if [[ "$GAME_VERSION" != "b1.7.3" || "$LOADER" != "babric" ]]; then
+            echo "Selected Staráč release is not marked for Babric b1.7.3." >&2
+            exit 1
+          fi
+
+          FILE_URL="$(jq -r '.files[] | select(.primary == true) | .url' version.json | head -n1)"
+          FILE_NAME="$(jq -r '.files[] | select(.primary == true) | .filename' version.json | head -n1)"
+          EXPECTED_SHA="$(jq -r '.files[] | select(.primary == true) | .hashes.sha256' version.json | head -n1)"
+          test -n "$FILE_URL"
+          test -n "$FILE_NAME"
+          test -n "$EXPECTED_SHA"
+
+          curl --fail --location --silent --show-error "$FILE_URL" -o "dist/$FILE_NAME"
+          printf '%s  %s\n' "$EXPECTED_SHA" "dist/$FILE_NAME" | sha256sum --check -
+          cp version.json dist/modrinth-version.json
+          printf 'Staráč version: 1.3.2+babric\nMinecraft: b1.7.3\nLoader: Babric\nJava runtime target: 21+\n' > dist/BUILD-INFO.txt
+
+      - name: Upload Babric-ready mod artifact
         uses: actions/upload-artifact@v4
         with:
-          name: starac-beta-1.7.3-java21
+          name: starac-babric-b1.7.3-java21
           path: dist/*
           if-no-files-found: error
           retention-days: 30

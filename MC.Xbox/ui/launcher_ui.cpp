@@ -28,6 +28,24 @@ using namespace ABI::Windows::UI::Core;
 
 extern ComPtr<ICoreWindow> g_authWindow;
 
+static std::wstring GraphicsBackendConfigPath() {
+    return GetLocalStateDir() + L"\\graphics_backend.txt";
+}
+
+static bool ReadVulkanGraphicsBackend() {
+    const std::wstring path = GraphicsBackendConfigPath();
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        WriteTextFile(path, L"opengl\\n");
+    }
+    std::wstring value;
+    if (!ReadTextFile(path, value)) return false;
+    return ToLowerW(TrimWhitespace(value)) == L"vulkan";
+}
+
+static bool WriteVulkanGraphicsBackend(bool enabled) {
+    return WriteTextFile(GraphicsBackendConfigPath(), enabled ? L"vulkan\\n" : L"opengl\\n");
+}
+
 static bool IsVirtualKeyDown(ICoreWindow* window, ABI::Windows::System::VirtualKey key) {
     if (!CoreWindowAcceptsInput()) return false;
     if (!window) return false;
@@ -625,7 +643,7 @@ static void ShowCreditsPage(ICoreWindow* window, AuthScreenRenderer* renderer, A
 }
 
 static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, AuthUiState& state) {
-    constexpr int kSettingsRows = 7;
+    constexpr int kSettingsRows = 8;
     WriteLog(L"Settings page opened");
 
     state.showMainMenu = false;
@@ -641,6 +659,7 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
     state.settingsModSource = modsource::Current();
     state.settingsCurseForgeKeyHint = modsource::CurseForgeKeyHint();
     state.settingsUpdateCheckOn = updates::Enabled();
+    state.settingsVulkanOn = ReadVulkanGraphicsBackend();
     for (const i18n::Language& language : i18n::Languages()) {
         if (language.code == i18n::CurrentCode()) state.settingsLanguageName = language.name;
     }
@@ -751,6 +770,16 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                 state.settingsNote = Tr(L"The update setting could not be saved.");
             }
         } else if (pressed == 4) {
+            const bool turnOn = !state.settingsVulkanOn;
+            if (WriteVulkanGraphicsBackend(turnOn)) {
+                state.settingsVulkanOn = turnOn;
+                state.settingsNote = turnOn
+                    ? Tr(L"Vulkan selected. Minecraft still needs a Vulkan renderer/mod.")
+                    : Tr(L"OpenGL selected as the default graphics backend.");
+            } else {
+                state.settingsNote = Tr(L"The graphics backend setting could not be saved.");
+            }
+        } else if (pressed == 5) {
             const std::vector<i18n::Language> languages = i18n::Languages();
             size_t next = 0;
             for (size_t i = 0; i < languages.size(); ++i) {
@@ -762,7 +791,7 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
                 ? Tr(L"No other languages are installed yet.")
                 : (saved ? Tr(L"Language changed.") : Tr(L"The language was changed but could not be saved."));
             state.settingsThemeName = themes::CurrentName();
-        } else if (pressed == 5) {
+        } else if (pressed == 6) {
             const std::vector<themes::Theme> all = themes::Themes();
             const std::wstring current = themes::CurrentId();
             size_t next = 0;
@@ -773,7 +802,7 @@ static void ShowSettingsPage(ICoreWindow* window, AuthScreenRenderer* renderer, 
             state.settingsThemeName = themes::CurrentName();
             state.settingsNote = saved ? TrFormat(L"Theme set to {0}.", { state.settingsThemeName })
                                        : Tr(L"The theme was changed but could not be saved.");
-        } else if (pressed == 6) {
+        } else if (pressed == 7) {
             ShowCreditsPage(window, renderer, state);
         }
 

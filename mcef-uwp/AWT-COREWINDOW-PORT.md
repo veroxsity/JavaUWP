@@ -30,7 +30,8 @@ This is an architecture note for the requested 1.12.x–1.21.x–26.x range, not
 - [x] Located the upstream 1.12.2 source and release.
 - [x] Identified that the published 1.12.2-1.11 release asset is API-only.
 - [ ] Obtain and pin a complete version-matched MCEF/JCEF runtime.
-- [ ] Implement CoreWindow-backed OSR renderer and input bridge.
+- [x] Add an AWT-free Java CoreWindow browser-surface/input bridge contract at `java/com/onyx/mcef/uwp/CoreWindowBrowserSurface.java`.
+- [ ] Connect the bridge to a UWP host implementation and the selected CEF OSR callbacks.
 - [ ] Build and validate x64 UWP-compatible CEF binaries and subprocess model.
 - [ ] Test browser creation, rendering, input, navigation, and shutdown on Xbox Dev Mode.
 

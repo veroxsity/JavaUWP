@@ -35,7 +35,7 @@ static std::wstring GraphicsBackendConfigPath() {
 static bool ReadVulkanGraphicsBackend() {
     const std::wstring path = GraphicsBackendConfigPath();
     if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        WriteTextFile(path, L"opengl\\n");
+        WriteTextFile(path, L"opengl\n");
     }
     std::wstring value;
     if (!ReadTextFile(path, value)) return false;
@@ -43,7 +43,7 @@ static bool ReadVulkanGraphicsBackend() {
 }
 
 static bool WriteVulkanGraphicsBackend(bool enabled) {
-    return WriteTextFile(GraphicsBackendConfigPath(), enabled ? L"vulkan\\n" : L"opengl\\n");
+    return WriteTextFile(GraphicsBackendConfigPath(), enabled ? L"vulkan\n" : L"opengl\\n");
 }
 
 static bool IsVirtualKeyDown(ICoreWindow* window, ABI::Windows::System::VirtualKey key) {

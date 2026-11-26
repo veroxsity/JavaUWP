@@ -701,8 +701,8 @@ private:
             FillRound(D2D1::RectF(track.left, track.top, track.left + (track.right - track.left) * memoryFraction, track.bottom), accent_, 7.0f);
         }
 
-        const float rowH = 54.0f;
-        const float rowGap = 4.0f;
+        const float rowH = 48.0f;
+        const float rowGap = 2.0f;
         float rowY = T_ + 138.0f;
         auto row = [&](int index, const wchar_t* label, const wchar_t* sub, float controlW) {
             const D2D1_RECT_F r = D2D1::RectF(L_, rowY, R_, rowY + rowH);

@@ -422,9 +422,19 @@ std::wstring CrashTimestampForFileName() {
     return stamp;
 }
 
-bool DeleteDirectoryTree(const std::wstring& path) {
-    if (path.empty() || path.size() < 4) return false;
+// \\?\ lifts MAX_PATH. profiles go past it, neoforge's game\.cache\jij nests jars under 64 char hashes
+static std::wstring ExtendedPath(const std::wstring& path) {
+    if (path.rfind(L"\\\\?\\", 0) == 0) return path;
+    if (path.size() >= 3 && path[1] == L':' && (path[2] == L'\\' || path[2] == L'/')) {
+        std::wstring out = L"\\\\?\\" + path;
+        std::replace(out.begin(), out.end(), L'/', L'\\');
+        while (out.size() > 7 && out.back() == L'\\') out.pop_back();
+        return out;
+    }
+    return path;
+}
 
+static bool DeleteDirectoryTreeExtended(const std::wstring& path) {
     const DWORD attrs = GetFileAttributesW(path.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) return true;
     if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
@@ -439,7 +449,7 @@ bool DeleteDirectoryTree(const std::wstring& path) {
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
             const std::wstring child = path + L"\\" + fd.cFileName;
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                DeleteDirectoryTree(child);
+                DeleteDirectoryTreeExtended(child);
             } else {
                 SetFileAttributesW(child.c_str(), FILE_ATTRIBUTE_NORMAL);
                 DeleteFileW(child.c_str());
@@ -452,6 +462,11 @@ bool DeleteDirectoryTree(const std::wstring& path) {
     return RemoveDirectoryW(path.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND;
 }
 
+bool DeleteDirectoryTree(const std::wstring& path) {
+    if (path.empty() || path.size() < 4) return false;
+    return DeleteDirectoryTreeExtended(ExtendedPath(path));
+}
+
 bool MovePathIfExists(const std::wstring& source, const std::wstring& dest, bool replaceExisting) {
     if (source.empty() || dest.empty()) return false;
     if (GetFileAttributesW(source.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
@@ -460,12 +475,11 @@ bool MovePathIfExists(const std::wstring& source, const std::wstring& dest, bool
     return MoveFileExW(source.c_str(), dest.c_str(), flags) != FALSE;
 }
 
-bool CopyDirectoryTree(const std::wstring& source, const std::wstring& dest) {
-    if (source.empty() || dest.empty()) return false;
-    const DWORD attrs = GetFileAttributesW(source.c_str());
-    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) return false;
-
-    if (!EnsureDirectoryTree(dest)) return false;
+static bool CopyDirectoryTreeExtended(const std::wstring& source, const std::wstring& dest) {
+    if (!CreateDirectoryW(dest.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        WriteLogF(L"Copy could not create %s err=%u", dest.c_str(), GetLastError());
+        return false;
+    }
     WIN32_FIND_DATAW fd = {};
     HANDLE h = FindFirstFileW((source + L"\\*").c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;
@@ -476,16 +490,28 @@ bool CopyDirectoryTree(const std::wstring& source, const std::wstring& dest) {
         const std::wstring childSource = source + L"\\" + fd.cFileName;
         const std::wstring childDest = dest + L"\\" + fd.cFileName;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            ok = CopyDirectoryTree(childSource, childDest) && ok;
+            ok = CopyDirectoryTreeExtended(childSource, childDest) && ok;
         } else {
-            EnsureDirectoryTree(GetParentDir(childDest));
             SetFileAttributesW(childDest.c_str(), FILE_ATTRIBUTE_NORMAL);
-            ok = CopyFileW(childSource.c_str(), childDest.c_str(), FALSE) != FALSE && ok;
+            if (!CopyFileW(childSource.c_str(), childDest.c_str(), FALSE)) {
+                WriteLogF(L"Copy failed %s err=%u", childSource.c_str(), GetLastError());
+                ok = false;
+            }
         }
     } while (FindNextFileW(h, &fd));
     if (GetLastError() != ERROR_NO_MORE_FILES) ok = false;
     FindClose(h);
     return ok;
+}
+
+bool CopyDirectoryTree(const std::wstring& source, const std::wstring& dest) {
+    if (source.empty() || dest.empty()) return false;
+    const std::wstring from = ExtendedPath(source);
+    const std::wstring to = ExtendedPath(dest);
+    const DWORD attrs = GetFileAttributesW(from.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) return false;
+    if (!EnsureDirectoryTree(GetParentDir(dest))) return false;
+    return CopyDirectoryTreeExtended(from, to);
 }
 
 std::wstring SafeFileName(std::wstring value) {

@@ -14,6 +14,8 @@ Notable changes to Bandit Launcher. Nightly packages are numbered by build revis
 
 ### Fixed
 
+**Backing up a NeoForge profile works.** NeoForge keeps a cache of the jars bundled inside mods in very deep folders, and Backup failed on them because the path was too long for the console. Backup, Duplicate and deleting a profile now handle paths of any length.
+
 **Files with long names download reliably.** Files now download into a short temporary folder first and are then moved into place, so a file with a very long name, like NeoForge's listenablefuture jar, stays under the console's path length limit.
 
 ## 2026-11-13

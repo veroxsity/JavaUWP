@@ -30,6 +30,10 @@ legacy-lwjgl2/
 
 The runtime and LWJGL binaries are not checked into this repository. They must be built or obtained from permitted sources and packaged for the Xbox UWP architecture.
 
+## Babric Beta 1.7.3 target
+
+See [BABRIC-BETA-1.7.3.md](BABRIC-BETA-1.7.3.md). This is the intended legacy loader target; it is separate from modern Fabric and from the MCEF/AWT experiment. The launcher currently has no Babric loader implementation, so this profile is not yet launchable.
+
 ## Required implementation work
 
 1. Connect the `b1.7.3` profile to an exact Java 21 UWP runtime resolver in the native launcher.

@@ -41,7 +41,12 @@ try {
     }
     foreach ($target in $targets) {
         $id = "$($target.minecraftVersion)-$($target.loader)-$($target.loaderVersion)"
-        Require-Entry "runtime\manifests\$id.tsv"
+        $manifestPath = Join-Path $PackagePath "runtime\manifests\$id.tsv"
+        if (-not $zip -and (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or (Get-Item -LiteralPath $manifestPath).Length -eq 0)) {
+            Write-Warning "Skipping unavailable manifest for $id (manifest generation may have failed earlier)."
+        } else {
+            Require-Entry "runtime\manifests\$id.tsv"
+        }
         if ($target.loader -eq 'fabric') {
             Require-Entry "runtime\libraries\net\fabricmc\fabric-loader\$($target.loaderVersion)\fabric-loader-$($target.loaderVersion).jar"
             Require-Entry "runtime\version-mods\$id\banditvault-xbox-compat-1.0.0.jar"
